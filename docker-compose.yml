@@ -19,9 +19,15 @@ services:
     volumes:
       - ./config/openresty/nginx.conf:/usr/local/openresty/nginx/conf/nginx.conf:ro
       - ./config/openresty/lua:/etc/nginx/lua:ro
-      - ./config/openresty/keys.json:/etc/nginx/keys.json:ro
+      - ./data:/etc/nginx/data
     ports:
-      - "8888:8080"
+      - "${PROXY_PORT:-8888}:8080"
+    entrypoint:
+      - /bin/sh
+      - -c
+      - |
+        test -f /etc/nginx/data/keys.json || echo '{}' > /etc/nginx/data/keys.json
+        exec /usr/local/openresty/bin/openresty -g 'daemon off;'
     networks:
       - gateii
     healthcheck:
@@ -67,7 +73,7 @@ services:
       - ./grafana/dashboards:/var/lib/grafana/dashboards:ro
       - grafana_data:/var/lib/grafana
     ports:
-      - "3001:3000"
+      - "${GRAFANA_PORT:-3001}:3000"
     networks:
       - gateii
     healthcheck:
