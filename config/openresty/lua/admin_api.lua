@@ -6,6 +6,8 @@ local counters = ngx.shared.counters
 local method = ngx.req.get_method()
 local uri = ngx.var.uri
 
+ngx.header["Content-Type"] = "application/json"
+
 -- Sanitize user for key construction
 local function sanitize(s)
     return (tostring(s or ""):gsub("[:|%s]", "_"):sub(1, 64))
@@ -22,7 +24,7 @@ if uri == "/internal/admin/block" and method == "POST" then
     end
     local ttl = tonumber(args.ttl) or 86400
     blocking_dict:set("blocked|" .. user, "manual", ttl)
-    ngx.say('{"ok":true,"user":"' .. user .. '","ttl":' .. ttl .. '}')
+    ngx.say(cjson.encode({ok = true, user = user, ttl = ttl}))
     return
 end
 
@@ -36,7 +38,7 @@ if uri == "/internal/admin/unblock" and method == "POST" then
         return
     end
     blocking_dict:delete("blocked|" .. user)
-    ngx.say('{"ok":true,"user":"' .. user .. '"}')
+    ngx.say(cjson.encode({ok = true, user = user}))
     return
 end
 
@@ -63,7 +65,7 @@ if uri == "/internal/admin/limit" and method == "POST" then
         return
     end
     blocking_dict:set("limits|" .. user, cjson.encode(limits))
-    ngx.say('{"ok":true,"user":"' .. user .. '"}')
+    ngx.say(cjson.encode({ok = true, user = user}))
     return
 end
 

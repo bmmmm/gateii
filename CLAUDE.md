@@ -8,7 +8,7 @@ No Redis, no external dependencies, no application framework.
 
 ```bash
 # Start stack
-docker compose up -d
+DOCKER_CONTEXT=colima docker compose up -d
 
 # Reload nginx after Lua changes (no restart needed)
 docker exec gateii-proxy openresty -s reload
@@ -23,6 +23,15 @@ bash scripts/smoke-test.sh
 ./scripts/admin.sh switch local    # through proxy (checks health first)
 ./scripts/admin.sh switch direct   # direct to Anthropic
 ```
+
+## Gotchas
+
+- `DOCKER_CONTEXT=colima` required — no Docker Desktop, Colima provides the daemon
+- `ngx.print()` not `ngx.say()` for forwarded response bodies — `ngx.say` adds `\n`, breaks Content-Length
+- Shared dict key separator is `|` not `:` — colons break key parsing (sanitize replaces `:|` with `_`)
+- Rate limiter only active in `apikey` mode — passthrough has no rate limit
+- `.env` is gitignored — never `git add .env`, use `.env.example` for defaults
+- Proxy routing order: start stack → switch local; switch direct → stop stack (never reverse)
 
 ## Key files
 

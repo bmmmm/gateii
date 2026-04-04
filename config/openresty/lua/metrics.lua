@@ -54,10 +54,20 @@ for _, key in ipairs(keys) do
     end
 end
 
+-- Escape label values per Prometheus spec: \ → \\, " → \", newline → \n
+local function escape_label(s)
+    return s:gsub("\\", "\\\\"):gsub('"', '\\"'):gsub("\n", "\\n")
+end
+
 -- Build output
 local lines = {}
 local function add(s)
     lines[#lines + 1] = s
+end
+
+-- Helper: escaped labels + format string for a given label set
+local function labels_upm(user, provider, model)
+    return escape_label(user), escape_label(provider), escape_label(model)
 end
 
 -- Tokens
@@ -65,11 +75,12 @@ add("# HELP gateii_tokens_total Token usage by user/provider/model/type")
 add("# TYPE gateii_tokens_total counter")
 for upm, data in pairs(usage) do
     local user, provider, model = upm:match("^([^|]+)|([^|]+)|(.+)$")
+    local eu, ep, em = labels_upm(user, provider, model)
     for _, typ in ipairs({"input", "output"}) do
         local val = data[typ] or 0
         if val > 0 then
-            add(string.format('gateii_tokens_total{user="%s",provider="%s",model="%s",type="%s"} %g',
-                user, provider, model, typ, val))
+            add(string.format('gateii_tokens_total{user="%s",provider="%s",model="%s",type="%s"} %d',
+                eu, ep, em, typ, val))
         end
     end
 end
@@ -79,10 +90,11 @@ add("# HELP gateii_requests_total Total proxied requests by user/provider/model"
 add("# TYPE gateii_requests_total counter")
 for upm, data in pairs(usage) do
     local user, provider, model = upm:match("^([^|]+)|([^|]+)|(.+)$")
+    local eu, ep, em = labels_upm(user, provider, model)
     local val = data.requests or 0
     if val > 0 then
-        add(string.format('gateii_requests_total{user="%s",provider="%s",model="%s"} %g',
-            user, provider, model, val))
+        add(string.format('gateii_requests_total{user="%s",provider="%s",model="%s"} %d',
+            eu, ep, em, val))
     end
 end
 
@@ -91,10 +103,11 @@ add("# HELP gateii_request_duration_ms_total Cumulative upstream latency in ms")
 add("# TYPE gateii_request_duration_ms_total counter")
 for upm, data in pairs(usage) do
     local user, provider, model = upm:match("^([^|]+)|([^|]+)|(.+)$")
+    local eu, ep, em = labels_upm(user, provider, model)
     local val = data.latency_ms_sum or 0
     if val > 0 then
-        add(string.format('gateii_request_duration_ms_total{user="%s",provider="%s",model="%s"} %g',
-            user, provider, model, val))
+        add(string.format('gateii_request_duration_ms_total{user="%s",provider="%s",model="%s"} %.2f',
+            eu, ep, em, val))
     end
 end
 
@@ -103,10 +116,11 @@ add("# HELP gateii_upstream_errors_total Upstream non-200 responses")
 add("# TYPE gateii_upstream_errors_total counter")
 for upm, data in pairs(usage) do
     local user, provider, model = upm:match("^([^|]+)|([^|]+)|(.+)$")
+    local eu, ep, em = labels_upm(user, provider, model)
     local val = data.errors or 0
     if val > 0 then
-        add(string.format('gateii_upstream_errors_total{user="%s",provider="%s",model="%s"} %g',
-            user, provider, model, val))
+        add(string.format('gateii_upstream_errors_total{user="%s",provider="%s",model="%s"} %d',
+            eu, ep, em, val))
     end
 end
 
@@ -115,14 +129,15 @@ add("# HELP gateii_cost_dollars_total Estimated API cost in USD (Anthropic prici
 add("# TYPE gateii_cost_dollars_total counter")
 for upm, data in pairs(usage) do
     local user, provider, model = upm:match("^([^|]+)|([^|]+)|(.+)$")
+    local eu, ep, em = labels_upm(user, provider, model)
     local price = model_price(model)
     if price then
         for _, typ in ipairs({"input", "output"}) do
             local tokens = data[typ] or 0
             if tokens > 0 then
                 local cost = tokens * price[typ] / 1000000
-                add(string.format('gateii_cost_dollars_total{user="%s",provider="%s",model="%s",type="%s"} %g',
-                    user, provider, model, typ, cost))
+                add(string.format('gateii_cost_dollars_total{user="%s",provider="%s",model="%s",type="%s"} %.6f',
+                    eu, ep, em, typ, cost))
             end
         end
     end
@@ -134,8 +149,8 @@ add("# TYPE gateii_stop_reason_total counter")
 for key, val in pairs(stops) do
     local user, provider, model, reason = key:match("^([^|]+)|([^|]+)|([^|]+)|(.+)$")
     if user and val > 0 then
-        add(string.format('gateii_stop_reason_total{user="%s",provider="%s",model="%s",reason="%s"} %g',
-            user, provider, model, reason, val))
+        add(string.format('gateii_stop_reason_total{user="%s",provider="%s",model="%s",reason="%s"} %d',
+            escape_label(user), escape_label(provider), escape_label(model), escape_label(reason), val))
     end
 end
 
@@ -146,7 +161,7 @@ local block_keys = blocking_dict:get_keys(0)
 for _, key in ipairs(block_keys) do
     if key:sub(1, 8) == "blocked|" then
         local buser = key:sub(9)
-        add(string.format('gateii_user_blocked{user="%s"} 1', buser))
+        add(string.format('gateii_user_blocked{user="%s"} 1', escape_label(buser)))
     end
 end
 
