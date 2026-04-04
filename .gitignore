@@ -1,0 +1,17 @@
+# Secrets
+.env
+
+# Docker local data
+data/
+
+# macOS
+.DS_Store
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+
+# Temp
+tmp/
+*.log
