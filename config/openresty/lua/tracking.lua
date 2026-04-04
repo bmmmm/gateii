@@ -1,4 +1,4 @@
--- tracking.lua: token usage counters + cache hit/miss stats + latency + errors + stop_reason
+-- tracking.lua: token usage counters + latency + errors + stop_reason + daily usage
 local redis = require "resty.redis"
 
 local _M = {}
@@ -16,9 +16,9 @@ local function sanitize(s)
     return (tostring(s or "unknown"):gsub("[:%s]", "_"):sub(1, 64))
 end
 
--- record(user, provider, model, input_tokens, output_tokens, is_cache_hit, opts)
+-- record(user, provider, model, input_tokens, output_tokens, opts)
 -- opts = { latency_ms=N, status=N, stop_reason="end_turn"|... }
-function _M.record(user, provider, model, input_tokens, output_tokens, is_cache_hit, opts)
+function _M.record(user, provider, model, input_tokens, output_tokens, opts)
     user     = sanitize(user)
     provider = sanitize(provider)
     model    = sanitize(model)
@@ -47,23 +47,28 @@ function _M.record(user, provider, model, input_tokens, output_tokens, is_cache_
         red:hincrbyfloat(usage_key, "latency_ms_sum", opts.latency_ms)
     end
 
-    -- Upstream error count (status != 200 and not a cache hit)
-    if not is_cache_hit and opts.status and opts.status ~= 200 then
+    -- Upstream error count (status != 200)
+    if opts.status and opts.status ~= 200 then
         red:hincrby(usage_key, "errors", 1)
     end
 
-    -- Cache hit/miss global counters
-    if is_cache_hit then
-        red:incr("cache:hits")
-    else
-        red:incr("cache:misses")
+    -- Daily usage tracking (for per-user limits)
+    local today = os.date("!%Y-%m-%d")
+    local day_key = "usage_day:" .. user .. ":" .. today
+    if input_tokens > 0 then
+        red:hincrby(day_key, "input", input_tokens)
     end
+    if output_tokens > 0 then
+        red:hincrby(day_key, "output", output_tokens)
+    end
+    red:hincrby(day_key, "requests", 1)
+    red:expire(day_key, 90000)  -- 25h TTL — auto-cleanup
 
     red:commit_pipeline()
 
     -- stop_reason counter (separate key — multiple values per user/model)
     if opts.stop_reason and opts.stop_reason ~= ngx.null and opts.stop_reason ~= "" then
-        local stop_key = "stop:" .. user .. ":" .. provider .. ":" .. model .. ":" .. opts.stop_reason
+        local stop_key = "stop:" .. user .. ":" .. provider .. ":" .. model .. ":" .. sanitize(opts.stop_reason)
         red:incr(stop_key)
     end
 
