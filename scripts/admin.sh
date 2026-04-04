@@ -1,9 +1,11 @@
 #!/bin/bash
-# gateii admin — key management and usage stats
-# Requires: docker compose up -d (gateii-redis must be running)
+# gateii admin — key management, blocking, and usage stats
+# Uses keys.json for API key management and HTTP admin API for blocking
 set -euo pipefail
 
-REDIS="docker exec gateii-redis redis-cli"
+PROXY="http://localhost:8888"
+ADMIN="http://localhost:8888/internal/admin"
+KEYS_FILE="$(cd "$(dirname "$0")/.." && pwd)/config/openresty/keys.json"
 SUBCMD="${1:-help}"
 shift 2>/dev/null || true
 
@@ -21,45 +23,45 @@ validate_key() {
     }
 }
 
+reload_proxy() {
+    docker exec gateii-proxy nginx -s reload 2>/dev/null || true
+}
+
 case "$SUBCMD" in
 
   status)
     echo ""
     echo -e "${BOLD}gateii — status${NC}"
     echo ""
-    KEYS_COUNT=$($REDIS HLEN keys 2>/dev/null || echo 0)
-    BLOCKED=$($REDIS --scan --pattern 'blocked:*' 2>/dev/null | wc -l | tr -d ' ')
+    KEYS_COUNT=$(python3 -c "import json; print(len(json.load(open('$KEYS_FILE'))))" 2>/dev/null || echo 0)
     echo -e "  Proxy keys:      ${CYN}${KEYS_COUNT}${NC}"
-    echo -e "  Blocked users:   ${RED}${BLOCKED}${NC}"
+    BLOCKED=$(curl -sf "$ADMIN/status" 2>/dev/null || echo '{"blocked":[]}')
+    BLOCKED_COUNT=$(echo "$BLOCKED" | python3 -c "import sys,json; print(len(json.load(sys.stdin).get('blocked',[])))" 2>/dev/null || echo 0)
+    echo -e "  Blocked users:   ${RED}${BLOCKED_COUNT}${NC}"
     echo ""
     ;;
 
   users)
     echo ""
-    echo -e "${BOLD}Token usage per user${NC}"
+    echo -e "${BOLD}Usage stats${NC}"
     echo ""
-    for KEY in $($REDIS --scan --pattern 'usage:*'); do
-        # Skip daily usage keys (usage_day:*)
-        [[ "$KEY" == usage_day:* ]] && continue
-        PARTS=$(echo "$KEY" | awk -F: '{print $2, $3, $4}')
-        USER=$(echo "$PARTS" | awk '{print $1}')
-        MODEL=$(echo "$PARTS" | awk '{print $3}')
-        IN=$($REDIS HGET "$KEY" input 2>/dev/null || echo 0)
-        OUT=$($REDIS HGET "$KEY" output 2>/dev/null || echo 0)
-        REQS=$($REDIS HGET "$KEY" requests 2>/dev/null || echo 0)
-        echo -e "  ${BOLD}$USER${NC} / ${DIM}$MODEL${NC}"
-        echo -e "    requests: $REQS  input: $IN  output: $OUT"
-    done
+    echo -e "  ${DIM}Check Grafana at http://localhost:3001 for detailed stats${NC}"
+    echo -e "  ${DIM}Or curl http://localhost:8888/metrics for raw counters${NC}"
     echo ""
     ;;
 
   keys)
     echo ""
     echo -e "${BOLD}Proxy keys${NC}"
-    $REDIS HGETALL keys | paste - - | while read -r key user; do
-        MASKED="${key:0:12}...${key: -6}"
-        echo -e "  ${CYN}$MASKED${NC}  →  ${BOLD}$user${NC}"
-    done
+    python3 -c "
+import json
+keys = json.load(open('$KEYS_FILE'))
+for key, user in keys.items():
+    masked = key[:12] + '...' + key[-6:]
+    print(f'  \033[0;36m{masked}\033[0m  ->  \033[1m{user}\033[0m')
+if not keys:
+    print('  \033[2mNo keys configured\033[0m')
+" 2>/dev/null || echo -e "  ${DIM}Could not read keys.json${NC}"
     echo ""
     ;;
 
@@ -68,7 +70,13 @@ case "$SUBCMD" in
     KEY="${2:-sk-proxy-$(openssl rand -hex 16)}"
     validate_user "$USER"
     validate_key "$KEY"
-    $REDIS HSET keys "$KEY" "$USER"
+    python3 -c "
+import json
+keys = json.load(open('$KEYS_FILE'))
+keys['$KEY'] = '$USER'
+json.dump(keys, open('$KEYS_FILE', 'w'), indent=2)
+"
+    reload_proxy
     echo -e "${GRN}Added key for ${BOLD}$USER${NC}"
     echo -e "  Key: ${CYN}$KEY${NC}"
     echo -e "  ${DIM}Set ANTHROPIC_API_KEY=$KEY in your Claude settings${NC}"
@@ -77,11 +85,17 @@ case "$SUBCMD" in
   revoke)
     KEY="${1:?Usage: admin.sh revoke <key>}"
     validate_key "$KEY"
-    USER=$($REDIS HGET keys "$KEY")
-    if [ -z "$USER" ] || [ "$USER" = "(nil)" ]; then
+    USER=$(python3 -c "import json; keys=json.load(open('$KEYS_FILE')); print(keys.get('$KEY',''))" 2>/dev/null)
+    if [ -z "$USER" ]; then
       echo -e "${RED}Key not found${NC}" >&2; exit 1
     fi
-    $REDIS HDEL keys "$KEY"
+    python3 -c "
+import json
+keys = json.load(open('$KEYS_FILE'))
+keys.pop('$KEY', None)
+json.dump(keys, open('$KEYS_FILE', 'w'), indent=2)
+"
+    reload_proxy
     echo -e "${GRN}Revoked key for ${BOLD}$USER${NC}"
     echo -e "  ${DIM}Auth cache expires in up to 5 minutes${NC}"
     ;;
@@ -89,18 +103,22 @@ case "$SUBCMD" in
   rotate)
     USER="${1:?Usage: admin.sh rotate <user>}"
     validate_user "$USER"
-    OLD_KEYS=$($REDIS HGETALL keys | paste - - | awk -v u="$USER" '$2==u {print $1}')
     NEW_KEY="sk-proxy-$(openssl rand -hex 16)"
     validate_key "$NEW_KEY"
-    $REDIS HSET keys "$NEW_KEY" "$USER"
+    python3 -c "
+import json
+keys = json.load(open('$KEYS_FILE'))
+# Remove all old keys for this user
+old = [k for k, v in keys.items() if v == '$USER']
+for k in old:
+    del keys[k]
+    masked = k[:12] + '...' + k[-6:]
+    print(f'  \033[2mRevoked: {masked}\033[0m')
+keys['$NEW_KEY'] = '$USER'
+json.dump(keys, open('$KEYS_FILE', 'w'), indent=2)
+"
+    reload_proxy
     echo -e "${GRN}New key for ${BOLD}$USER${NC}: ${CYN}$NEW_KEY${NC}"
-    if [ -n "$OLD_KEYS" ]; then
-      echo "$OLD_KEYS" | while read -r k; do
-        [ -z "$k" ] && continue
-        $REDIS HDEL keys "$k"
-        echo -e "  ${DIM}Revoked: ${k:0:12}...${k: -6}${NC}"
-      done
-    fi
     ;;
 
   block)
@@ -108,18 +126,22 @@ case "$SUBCMD" in
     validate_user "$USER"
     TTL="${2:-86400}"
     [[ "$TTL" =~ ^[0-9]+$ ]] || { echo -e "${RED}Invalid TTL — must be a positive integer (seconds)${NC}" >&2; exit 1; }
-    $REDIS SET "blocked:${USER}" "manual" EX "$TTL"
-    echo -e "${GRN}Blocked ${BOLD}$USER${NC} for ${TTL}s"
+    RESULT=$(curl -sf -X POST "$ADMIN/block?user=$USER&ttl=$TTL" 2>/dev/null || echo "")
+    if echo "$RESULT" | grep -q '"ok":true'; then
+      echo -e "${GRN}Blocked ${BOLD}$USER${NC} for ${TTL}s"
+    else
+      echo -e "${RED}Failed to block user — is the proxy running?${NC}" >&2; exit 1
+    fi
     ;;
 
   unblock)
     USER="${1:?Usage: admin.sh unblock <user>}"
     validate_user "$USER"
-    RESULT=$($REDIS DEL "blocked:${USER}")
-    if [ "$RESULT" = "1" ] || [ "$RESULT" = "(integer) 1" ]; then
+    RESULT=$(curl -sf -X POST "$ADMIN/unblock?user=$USER" 2>/dev/null || echo "")
+    if echo "$RESULT" | grep -q '"ok":true'; then
       echo -e "${GRN}Unblocked ${BOLD}$USER${NC}"
     else
-      echo -e "${YEL}${BOLD}$USER${NC} was not blocked"
+      echo -e "${RED}Failed to unblock user — is the proxy running?${NC}" >&2; exit 1
     fi
     ;;
 
@@ -128,81 +150,105 @@ case "$SUBCMD" in
     FIELD="${2:?Usage: admin.sh limit <user> <field> <value>}"
     VALUE="${3:?Usage: admin.sh limit <user> <field> <value>}"
     validate_user "$USER"
-    # Whitelist allowed fields
     case "$FIELD" in
-      tokens_per_day|requests_per_day|tokens_per_month) ;;
-      *) echo -e "${RED}Invalid field '$FIELD' — allowed: tokens_per_day, requests_per_day, tokens_per_month${NC}" >&2; exit 1 ;;
+      tokens_per_day|requests_per_day) ;;
+      *) echo -e "${RED}Invalid field '$FIELD' — allowed: tokens_per_day, requests_per_day${NC}" >&2; exit 1 ;;
     esac
     [[ "$VALUE" =~ ^[0-9]+$ ]] || { echo -e "${RED}Invalid value — must be a positive integer${NC}" >&2; exit 1; }
-    $REDIS HSET "limits:${USER}" "$FIELD" "$VALUE"
-    echo -e "${GRN}Set ${BOLD}$USER${NC} ${FIELD}=${VALUE}"
+    RESULT=$(curl -sf -X POST "$ADMIN/limit?user=$USER" -d "{\"$FIELD\":$VALUE}" 2>/dev/null || echo "")
+    if echo "$RESULT" | grep -q '"ok":true'; then
+      echo -e "${GRN}Set ${BOLD}$USER${NC} ${FIELD}=${VALUE}"
+    else
+      echo -e "${RED}Failed to set limit — is the proxy running?${NC}" >&2; exit 1
+    fi
     ;;
 
   limits)
     USER="${1:?Usage: admin.sh limits <user>}"
     validate_user "$USER"
     echo ""
-    echo -e "${BOLD}Limits for $USER${NC}"
+    echo -e "${BOLD}Usage for $USER${NC}"
     echo ""
-    DATA=$($REDIS HGETALL "limits:${USER}" 2>/dev/null)
-    if [ -z "$DATA" ] || [ "$DATA" = "" ]; then
-      echo -e "  ${DIM}No limits configured${NC}"
+    RESULT=$(curl -sf "$ADMIN/usage?user=$USER" 2>/dev/null || echo "")
+    if [ -n "$RESULT" ]; then
+      python3 -c "
+import sys, json
+d = json.loads('$RESULT')
+print(f\"  Today ({d['today']}): {d['daily_requests']} reqs, {d['daily_input']} in + {d['daily_output']} out tokens\")
+" 2>/dev/null || echo -e "  ${DIM}Could not parse response${NC}"
     else
-      echo "$DATA" | paste - - | while read -r field value; do
-        echo -e "  ${CYN}$field${NC}: $value"
-      done
+      echo -e "  ${RED}Could not reach admin API — is the proxy running?${NC}"
     fi
-    BLOCKED=$($REDIS GET "blocked:${USER}" 2>/dev/null)
-    if [ -n "$BLOCKED" ] && [ "$BLOCKED" != "(nil)" ]; then
-      TTL=$($REDIS TTL "blocked:${USER}" 2>/dev/null)
-      echo -e "  ${RED}BLOCKED${NC}: $BLOCKED (TTL: ${TTL}s)"
-    fi
-    # Show today's usage
-    TODAY=$(date -u +%Y-%m-%d)
-    DAY_KEY="usage_day:${USER}:${TODAY}"
-    DAY_IN=$($REDIS HGET "$DAY_KEY" input 2>/dev/null || echo 0)
-    DAY_OUT=$($REDIS HGET "$DAY_KEY" output 2>/dev/null || echo 0)
-    DAY_REQS=$($REDIS HGET "$DAY_KEY" requests 2>/dev/null || echo 0)
-    [ "$DAY_IN" = "(nil)" ] && DAY_IN=0
-    [ "$DAY_OUT" = "(nil)" ] && DAY_OUT=0
-    [ "$DAY_REQS" = "(nil)" ] && DAY_REQS=0
-    echo ""
-    echo -e "  ${DIM}Today ($TODAY):${NC} ${DAY_REQS} reqs, ${DAY_IN} in + ${DAY_OUT} out tokens"
     echo ""
     ;;
 
-  reset)
-    USER="${1:?Usage: admin.sh reset <user>}"
-    validate_user "$USER"
-    COUNT=0
-    for KEY in $(docker exec gateii-redis redis-cli --scan --pattern "usage:${USER}:*"); do
-      $REDIS DEL "$KEY"; COUNT=$((COUNT+1))
-    done
-    for KEY in $(docker exec gateii-redis redis-cli --scan --pattern "stop:${USER}:*"); do
-      $REDIS DEL "$KEY"
-    done
-    for KEY in $(docker exec gateii-redis redis-cli --scan --pattern "usage_day:${USER}:*"); do
-      $REDIS DEL "$KEY"
-    done
-    echo -e "${GRN}Reset ${BOLD}$USER${NC} — $COUNT usage key(s) deleted"
+  switch)
+    TARGET="${1:?Usage: admin.sh switch <local|direct>}"
+    CLAUDE_SETTINGS="$HOME/.claude/settings.json"
+    if [ ! -f "$CLAUDE_SETTINGS" ]; then
+      echo -e "${RED}Claude settings not found at $CLAUDE_SETTINGS${NC}" >&2; exit 1
+    fi
+
+    case "$TARGET" in
+      local)
+        # Safety: check proxy is reachable before switching
+        if ! curl -sf --max-time 2 "$PROXY/health" >/dev/null 2>&1; then
+          echo -e "${RED}Proxy not reachable at $PROXY — start it first:${NC}" >&2
+          echo -e "  ${DIM}cd $(dirname "$0")/.. && docker compose up -d${NC}" >&2
+          exit 1
+        fi
+        python3 -c "
+import json, sys
+with open('$CLAUDE_SETTINGS') as f:
+    s = json.load(f)
+s.setdefault('env', {})['ANTHROPIC_BASE_URL'] = '$PROXY'
+with open('$CLAUDE_SETTINGS', 'w') as f:
+    json.dump(s, f, indent=2)
+"
+        echo -e "${GRN}Switched to local proxy${NC} ($PROXY)"
+        echo -e "  ${DIM}Restart Claude Code to apply${NC}"
+        ;;
+      direct)
+        python3 -c "
+import json, sys
+with open('$CLAUDE_SETTINGS') as f:
+    s = json.load(f)
+s.get('env', {}).pop('ANTHROPIC_BASE_URL', None)
+with open('$CLAUDE_SETTINGS', 'w') as f:
+    json.dump(s, f, indent=2)
+"
+        echo -e "${GRN}Switched to direct Anthropic connection${NC}"
+        echo -e "  ${DIM}Restart Claude Code to apply. Safe to stop the proxy now.${NC}"
+        ;;
+      *)
+        echo -e "${RED}Unknown target '$TARGET' — use 'local' or 'direct'${NC}" >&2; exit 1
+        ;;
+    esac
     ;;
 
   help|--help|-h|"")
     echo ""
     echo -e "${BOLD}gateii admin${NC}"
     echo ""
-    echo "  status                          Key count, blocked users"
-    echo "  users                           Token usage per user"
+    echo "  ${BOLD}Proxy routing${NC}"
+    echo "  switch local                    Route Claude Code through proxy (checks health first)"
+    echo "  switch direct                   Route Claude Code directly to Anthropic"
+    echo ""
+    echo "  ${BOLD}Key management${NC} (apikey mode)"
     echo "  keys                            All proxy keys (masked)"
     echo "  add <user> [key]                Add proxy key (random if omitted)"
     echo "  revoke <key>                    Revoke a key"
     echo "  rotate <user>                   New key, revoke all old ones"
-    echo "  reset <user>                    Reset usage counters"
     echo ""
+    echo "  ${BOLD}Limits & blocking${NC}"
     echo "  block <user> [seconds]          Block user (default 86400 = 1 day)"
     echo "  unblock <user>                  Unblock user"
-    echo "  limit <user> <field> <value>    Set limit (tokens_per_day, requests_per_day, tokens_per_month)"
-    echo "  limits <user>                   Show limits + today's usage"
+    echo "  limit <user> <field> <value>    Set limit (tokens_per_day, requests_per_day)"
+    echo "  limits <user>                   Show today's usage"
+    echo ""
+    echo "  ${BOLD}Info${NC}"
+    echo "  status                          Key count, blocked users"
+    echo "  users                           Usage stats (→ Grafana)"
     echo ""
     ;;
 

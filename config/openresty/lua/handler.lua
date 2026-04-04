@@ -48,7 +48,7 @@ end
 
 local is_streaming = body_obj.stream == true
 local user = ngx.ctx.user
--- Trim model name (whitespace in model names would break Redis keys)
+-- Trim model name (whitespace in model names would break counter keys)
 local model = (body_obj.model or "unknown"):match("^%s*(.-)%s*$")
 
 -- Build upstream request
@@ -111,7 +111,7 @@ if not is_streaming then
     end
 
     ngx.print(response_body)
-    ngx.flush(true)  -- send to client before Redis tracking write
+    ngx.flush(true)  -- send to client before tracking write
     pcall(tracking.record, user, provider_name, model, input_tokens, output_tokens,
           { latency_ms = latency_ms, status = res.status, stop_reason = stop_reason })
     return
