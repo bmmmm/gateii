@@ -3,9 +3,26 @@
 # Uses keys.json for API key management and HTTP admin API for blocking
 set -euo pipefail
 
-PROXY="http://localhost:8888"
-ADMIN="http://localhost:8888/internal/admin"
-KEYS_FILE="$(cd "$(dirname "$0")/.." && pwd)/config/openresty/keys.json"
+PROJECT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
+
+# Source .env for port/host configuration
+if [ -f "$PROJECT_DIR/.env" ]; then
+    set -a; source "$PROJECT_DIR/.env"; set +a
+fi
+
+PROXY_HOST="${PROXY_HOST:-localhost}"
+PROXY_PORT="${PROXY_PORT:-8888}"
+GRAFANA_PORT="${GRAFANA_PORT:-3001}"
+
+PROXY="http://${PROXY_HOST}:${PROXY_PORT}"
+ADMIN="${PROXY}/internal/admin"
+KEYS_FILE="${PROJECT_DIR}/data/keys.json"
+
+# Ensure keys.json exists
+if [ ! -f "$KEYS_FILE" ]; then
+    mkdir -p "$(dirname "$KEYS_FILE")"
+    echo '{}' > "$KEYS_FILE"
+fi
 SUBCMD="${1:-help}"
 shift 2>/dev/null || true
 
@@ -24,7 +41,7 @@ validate_key() {
 }
 
 reload_proxy() {
-    docker exec gateii-proxy nginx -s reload 2>/dev/null || true
+    docker compose -f "$PROJECT_DIR/docker-compose.yml" exec -T openresty nginx -s reload 2>/dev/null || true
 }
 
 case "$SUBCMD" in
@@ -45,8 +62,8 @@ case "$SUBCMD" in
     echo ""
     echo -e "${BOLD}Usage stats${NC}"
     echo ""
-    echo -e "  ${DIM}Check Grafana at http://localhost:3001 for detailed stats${NC}"
-    echo -e "  ${DIM}Or curl http://localhost:8888/metrics for raw counters${NC}"
+    echo -e "  ${DIM}Check Grafana at http://${PROXY_HOST}:${GRAFANA_PORT} for detailed stats${NC}"
+    echo -e "  ${DIM}Or curl ${PROXY}/metrics for raw counters${NC}"
     echo ""
     ;;
 

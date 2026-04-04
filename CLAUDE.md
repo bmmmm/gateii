@@ -44,7 +44,7 @@ bash scripts/smoke-test.sh
 | `config/openresty/lua/admin_api.lua` | HTTP admin API (block/unblock/limit) |
 | `config/openresty/lua/providers/anthropic.lua` | Anthropic header building, token extraction |
 | `config/openresty/nginx.conf` | Env whitelist, shared dicts, routes |
-| `config/openresty/keys.json` | API key → user mapping (apikey mode) |
+| `data/keys.json` | API key → user mapping (apikey mode, gitignored) |
 
 ## Architecture decisions
 
