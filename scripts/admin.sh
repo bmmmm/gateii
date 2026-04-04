@@ -35,7 +35,7 @@ case "$SUBCMD" in
     echo ""
     KEYS_COUNT=$(python3 -c "import json; print(len(json.load(open('$KEYS_FILE'))))" 2>/dev/null || echo 0)
     echo -e "  Proxy keys:      ${CYN}${KEYS_COUNT}${NC}"
-    BLOCKED=$(curl -sf "$ADMIN/status" 2>/dev/null || echo '{"blocked":[]}')
+    BLOCKED=$(curl -sf --max-time 5 "$ADMIN/status" 2>/dev/null || echo '{"blocked":[]}')
     BLOCKED_COUNT=$(echo "$BLOCKED" | python3 -c "import sys,json; print(len(json.load(sys.stdin).get('blocked',[])))" 2>/dev/null || echo 0)
     echo -e "  Blocked users:   ${RED}${BLOCKED_COUNT}${NC}"
     echo ""
@@ -126,7 +126,7 @@ json.dump(keys, open('$KEYS_FILE', 'w'), indent=2)
     validate_user "$USER"
     TTL="${2:-86400}"
     [[ "$TTL" =~ ^[0-9]+$ ]] || { echo -e "${RED}Invalid TTL — must be a positive integer (seconds)${NC}" >&2; exit 1; }
-    RESULT=$(curl -sf -X POST "$ADMIN/block?user=$USER&ttl=$TTL" 2>/dev/null || echo "")
+    RESULT=$(curl -sf --max-time 5 -X POST "$ADMIN/block?user=$USER&ttl=$TTL" 2>/dev/null || echo "")
     if echo "$RESULT" | grep -q '"ok":true'; then
       echo -e "${GRN}Blocked ${BOLD}$USER${NC} for ${TTL}s"
     else
@@ -137,7 +137,7 @@ json.dump(keys, open('$KEYS_FILE', 'w'), indent=2)
   unblock)
     USER="${1:?Usage: admin.sh unblock <user>}"
     validate_user "$USER"
-    RESULT=$(curl -sf -X POST "$ADMIN/unblock?user=$USER" 2>/dev/null || echo "")
+    RESULT=$(curl -sf --max-time 5 -X POST "$ADMIN/unblock?user=$USER" 2>/dev/null || echo "")
     if echo "$RESULT" | grep -q '"ok":true'; then
       echo -e "${GRN}Unblocked ${BOLD}$USER${NC}"
     else
@@ -155,7 +155,7 @@ json.dump(keys, open('$KEYS_FILE', 'w'), indent=2)
       *) echo -e "${RED}Invalid field '$FIELD' — allowed: tokens_per_day, requests_per_day${NC}" >&2; exit 1 ;;
     esac
     [[ "$VALUE" =~ ^[0-9]+$ ]] || { echo -e "${RED}Invalid value — must be a positive integer${NC}" >&2; exit 1; }
-    RESULT=$(curl -sf -X POST "$ADMIN/limit?user=$USER" -d "{\"$FIELD\":$VALUE}" 2>/dev/null || echo "")
+    RESULT=$(curl -sf --max-time 5 -X POST "$ADMIN/limit?user=$USER" -d "{\"$FIELD\":$VALUE}" 2>/dev/null || echo "")
     if echo "$RESULT" | grep -q '"ok":true'; then
       echo -e "${GRN}Set ${BOLD}$USER${NC} ${FIELD}=${VALUE}"
     else
@@ -169,11 +169,11 @@ json.dump(keys, open('$KEYS_FILE', 'w'), indent=2)
     echo ""
     echo -e "${BOLD}Usage for $USER${NC}"
     echo ""
-    RESULT=$(curl -sf "$ADMIN/usage?user=$USER" 2>/dev/null || echo "")
+    RESULT=$(curl -sf --max-time 5 "$ADMIN/usage?user=$USER" 2>/dev/null || echo "")
     if [ -n "$RESULT" ]; then
-      python3 -c "
+      echo "$RESULT" | python3 -c "
 import sys, json
-d = json.loads('$RESULT')
+d = json.load(sys.stdin)
 print(f\"  Today ({d['today']}): {d['daily_requests']} reqs, {d['daily_input']} in + {d['daily_output']} out tokens\")
 " 2>/dev/null || echo -e "  ${DIM}Could not parse response${NC}"
     else
@@ -192,7 +192,7 @@ print(f\"  Today ({d['today']}): {d['daily_requests']} reqs, {d['daily_input']} 
     case "$TARGET" in
       local)
         # Safety: check proxy is reachable before switching
-        if ! curl -sf --max-time 2 "$PROXY/health" >/dev/null 2>&1; then
+        if ! curl -sf --max-time 5 --max-time 2 "$PROXY/health" >/dev/null 2>&1; then
           echo -e "${RED}Proxy not reachable at $PROXY — start it first:${NC}" >&2
           echo -e "  ${DIM}cd $(dirname "$0")/.. && docker compose up -d${NC}" >&2
           exit 1

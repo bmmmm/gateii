@@ -182,11 +182,13 @@ end
 
 -- Accumulate chunks for SSE token parsing while streaming to client
 local chunks = {}
+local had_read_err = false
 local reader = res.body_reader
 repeat
     local chunk, read_err = reader(8192)
     if read_err then
         ngx.log(ngx.ERR, "streaming read error (user=", user, "): ", read_err)
+        had_read_err = true
         break
     end
     if chunk then
@@ -195,7 +197,11 @@ repeat
         chunks[#chunks+1] = chunk
     end
 until not chunk
-httpc:set_keepalive()
+if had_read_err then
+    httpc:close()
+else
+    httpc:set_keepalive()
+end
 
 -- Parse SSE events for token tracking (Anthropic sends usage in message_start + message_delta)
 -- Handle both \r\n (HTTP spec) and \n (common in practice) line endings
