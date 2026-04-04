@@ -54,6 +54,9 @@ def save_snap(data):
 def collect():
     stats = {"ts": time.time(), "users": {}}
     for key in sorted(all_scan("usage:*")):
+        # Skip daily windowed keys — those are usage_day:* which also match usage:*
+        if key.startswith("usage_day:"):
+            continue
         parts = key.split(":", 3)
         if len(parts) != 4:
             continue
@@ -68,8 +71,6 @@ def collect():
             "errors":      int(d.get("errors", 0)),
             "latency_sum": float(d.get("latency_ms_sum", 0)),
         }
-    stats["cache_hits"]   = int(redis("GET", "cache:hits") or 0)
-    stats["cache_misses"] = int(redis("GET", "cache:misses") or 0)
     stats["stop"] = {}
     for key in all_scan("stop:*"):
         parts = key.split(":", 4)
@@ -142,9 +143,6 @@ def cmd_status():
     total_input  = sum(u["input"]    for u in now["users"].values())
     total_output = sum(u["output"]   for u in now["users"].values())
     total_errs   = sum(u["errors"]   for u in now["users"].values())
-    hits   = now["cache_hits"]
-    misses = now["cache_misses"]
-    hit_rate = 100 * hits / max(hits + misses, 1)
 
     mt = sum(v for k, v in now["stop"].items() if k.endswith(":max_tokens"))
     et = sum(v for k, v in now["stop"].items() if k.endswith(":end_turn"))
@@ -156,7 +154,6 @@ def cmd_status():
     print(f"  Tokens  input   : {fmt(total_input)}")
     print(f"  Tokens  output  : {fmt(total_output)}")
     print(f"  Error rate      : {pct(total_errs, total_reqs)}")
-    print(f"  Cache hit rate  : {hit_rate:.1f}%  ({fmt(hits)} hits / {fmt(misses)} misses)")
     print(f"  Active users    : {len(now['users'])}")
 
     if et + mt > 0:
@@ -171,8 +168,6 @@ def cmd_status():
 
     print()
     alerts = []
-    if hit_rate < 10 and total_reqs > 10:
-        alerts.append("i  Cache hit rate low — same requests would be served from cache")
     if total_reqs > 0 and total_errs / total_reqs > 0.5:
         alerts.append("!! >50% errors — check Anthropic billing / API key validity")
     if et + mt > 0 and mt / (et + mt) > 0.2:
