@@ -115,13 +115,19 @@ Client settings:
 }
 ```
 
-Keys are stored in `config/openresty/keys.json` (mounted read-only into the proxy).
+Keys are stored in `data/keys.json` (auto-created on first run, gitignored).
 
 ---
 
 ## Monitoring
 
 Grafana at `http://localhost:3001` -- no login, dashboard auto-provisioned.
+
+![Requests, tokens, cost overview](docs/dashboard-overview.png)
+
+![Token and cost breakdown per model](docs/dashboard-models.png)
+
+![Error rate, stop reasons, request rate](docs/dashboard-health.png)
 
 ### Metrics
 

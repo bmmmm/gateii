@@ -19,7 +19,7 @@ end
 
 -- Load keys from JSON file (apikey mode)
 local function load_keys()
-    local f = io.open("/etc/nginx/keys.json", "r")
+    local f = io.open("/etc/nginx/data/keys.json", "r")
     if not f then return {} end
     local data = f:read("*a")
     f:close()
