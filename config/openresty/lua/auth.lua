@@ -59,11 +59,20 @@ if proxy_mode == "passthrough" then
     end
 else
     -- Apikey mode: check shared dict cache, then keys.json
-    user = auth_cache:get(api_key)
+    local cached = auth_cache:get(api_key)
+    if cached == false then
+        -- Negative cache hit — known invalid key
+        ngx.status = 401
+        ngx.header["Content-Type"] = "application/json"
+        ngx.say('{"error":"Invalid API key — check your key or run admin.sh add <user>"}')
+        return ngx.exit(401)
+    end
+    user = cached
     if not user then
         local keys = load_keys()
         local val = keys[api_key]
         if not val or val == "" then
+            auth_cache:set(api_key, false, 60)  -- negative cache: 60s
             ngx.status = 401
             ngx.header["Content-Type"] = "application/json"
             ngx.say('{"error":"Invalid API key — check your key or run admin.sh add <user>"}')
