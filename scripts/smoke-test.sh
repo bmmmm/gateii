@@ -25,7 +25,7 @@ echo ""
 
 # --- Container health ---
 echo -e "${BOLD}Containers${NC}"
-for CONTAINER in gateii-proxy gateii-redis gateii-exporter gateii-prometheus gateii-grafana; do
+for CONTAINER in gateii-proxy gateii-prometheus gateii-grafana; do
   STATUS=$(docker inspect --format='{{.State.Health.Status}}' "$CONTAINER" 2>/dev/null || echo "missing")
   if [ "$STATUS" = "healthy" ]; then
     ok "$CONTAINER — healthy"
@@ -67,9 +67,9 @@ fi
 
 echo ""
 
-# --- Exporter / Prometheus metrics ---
-echo -e "${BOLD}Exporter :9091${NC}"
-METRICS=$(curl -sf http://localhost:9091/metrics 2>/dev/null || echo "")
+# --- Metrics (from proxy /metrics) ---
+echo -e "${BOLD}Metrics :8888/metrics${NC}"
+METRICS=$(curl -sf http://localhost:8888/metrics 2>/dev/null || echo "")
 if echo "$METRICS" | grep -q "# HELP gateii_requests_total"; then
   ok "/metrics — gateii_requests_total present"
 else
@@ -138,7 +138,7 @@ if [ "$FAIL" -eq 0 ]; then
   echo -e "${GRN}${BOLD}All $TOTAL checks passed.${NC}"
   echo -e "  Grafana:  ${DIM}http://localhost:3001${NC}"
   echo -e "  Proxy:    ${DIM}http://localhost:8888${NC}"
-  echo -e "  Metrics:  ${DIM}http://localhost:9091/metrics${NC}"
+  echo -e "  Metrics:  ${DIM}http://localhost:8888/metrics${NC}"
 else
   echo -e "${RED}${BOLD}$FAIL/$TOTAL checks failed.${NC}"
   exit 1

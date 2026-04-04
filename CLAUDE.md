@@ -1,46 +1,50 @@
 # gateii — Claude Code Instructions
 
 ## Project
-Minimal self-hosted Anthropic API proxy. OpenResty (nginx + LuaJIT) + Redis + Python exporter.
-No application framework, no Node.js, no external LLM calls from the project itself.
+Minimal self-hosted Anthropic API proxy. 3 containers: OpenResty (nginx + LuaJIT), Prometheus, Grafana.
+No Redis, no external dependencies, no application framework.
 
 ## Local development
 
 ```bash
-# Start full stack
-docker compose up -d --build
+# Start stack
+docker compose up -d
 
 # Reload nginx after Lua changes (no restart needed)
 docker exec gateii-proxy openresty -s reload
 
-# Rebuild exporter after main.py changes
-docker compose up -d --build --force-recreate exporter
-
 # Tail proxy logs
 docker logs -f gateii-proxy
 
-# Redis CLI
-docker exec -it gateii-redis redis-cli
+# Smoke test
+bash scripts/smoke-test.sh
+
+# Switch Claude Code routing
+./scripts/admin.sh switch local    # through proxy (checks health first)
+./scripts/admin.sh switch direct   # direct to Anthropic
 ```
 
 ## Key files
 
 | File | Role |
 |------|------|
-| `config/openresty/lua/auth.lua` | Key validation, passthrough detection, rate limiting |
-| `config/openresty/lua/handler.lua` | Cache L1/L2, proxy, SSE token parsing, header forwarding |
-| `config/openresty/lua/tracking.lua` | Redis counters (tokens, latency, errors, cache, stop_reason) |
+| `config/openresty/lua/auth.lua` | Key validation, passthrough detection, blocking, rate limiting |
+| `config/openresty/lua/handler.lua` | Proxy to upstream, SSE token parsing, header forwarding |
+| `config/openresty/lua/tracking.lua` | Shared dict counters (tokens, latency, errors, stop_reason) |
+| `config/openresty/lua/metrics.lua` | Prometheus exposition format from shared dicts |
+| `config/openresty/lua/admin_api.lua` | HTTP admin API (block/unblock/limit) |
 | `config/openresty/lua/providers/anthropic.lua` | Anthropic header building, token extraction |
-| `config/exporter/main.py` | Prometheus metrics from Redis SCAN |
-| `config/openresty/nginx.conf` | Env whitelist, shared dicts, route to auth/handler |
+| `config/openresty/nginx.conf` | Env whitelist, shared dicts, routes |
+| `config/openresty/keys.json` | API key → user mapping (apikey mode) |
 
 ## Architecture decisions
 
+- **No Redis** — all state in nginx shared dicts. Counters don't survive container restarts; Prometheus stores the time series
 - **ngx.ctx** passes auth state (user, upstream_key, auth_type) from auth.lua to handler.lua
-- **passthrough mode** — client's key forwarded as-is; `ngx.ctx.upstream_auth_type` preserves Bearer vs x-api-key format (OAuth tokens must stay as Bearer)
-- **SSE parsing** — chunks accumulated in memory during streaming, then parsed for `message_start` + `message_delta` events using `\r?\n` patterns
-- **Cache key** — includes system prompt + all sampling parameters; streaming always bypasses cache
-- **Cost metric** — calculated in the exporter (knows model names → prices), not in PromQL
+- **passthrough mode** — client's key forwarded as-is; `ngx.ctx.upstream_auth_type` preserves Bearer vs x-api-key format
+- **SSE parsing** — chunks accumulated in memory during streaming, then parsed for `message_start` + `message_delta` events
+- **Cost metric** — calculated in metrics.lua (model name → pricing table), not in PromQL
+- **Blocking** — `blocked|<user>` in shared dict with TTL; daily limits auto-block until midnight UTC
 
 ## Providers
 
@@ -52,20 +56,12 @@ Each provider in `config/openresty/lua/providers/` must export:
 ## Testing
 
 ```bash
-# Health check
 curl http://localhost:8888/health
-
-# Test proxy (passthrough — your real key)
-curl http://localhost:8888/v1/messages \
-  -H "Authorization: Bearer $ANTHROPIC_API_KEY" \
-  -H "Content-Type: application/json" \
-  -d '{"model":"claude-haiku-4-5-20251001","max_tokens":10,"messages":[{"role":"user","content":"hi"}]}'
-
-# Check metrics
-curl http://localhost:9091/metrics | grep gateii_
+curl http://localhost:8888/metrics | grep gateii_
+bash scripts/smoke-test.sh
 ```
 
 ## Do not
 - Read or commit `.env` (contains API keys)
-- Use `docker system prune` (destroys Redis data volume)
 - Change `ssl_verify` to true without adding CA certs to the image
+- Stop the proxy before running `admin.sh switch direct` (loses Claude Code connection)

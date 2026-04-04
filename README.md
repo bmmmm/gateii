@@ -5,11 +5,11 @@ Runs on any Docker host. No cloud, no signup, no SaaS.
 
 ```
 Claude Code / your app
-        │
-        ▼
-  gateii :8888   ←── token tracking, caching, rate limiting
-        │
-        ▼
+        |
+        v
+  gateii :8888   <-- token tracking, rate limiting, monitoring
+        |
+        v
   api.anthropic.com
 ```
 
@@ -22,11 +22,24 @@ gateii fixes that.
 
 | Problem | gateii answer |
 |---------|---------------|
-| No visibility into token usage | Per-user, per-model counters in Redis → Grafana dashboard |
+| No visibility into token usage | Per-user, per-model counters in Grafana dashboard |
 | Sharing one API key is risky | Issue proxy keys via `admin.sh add <user>` |
-| Identical prompts waste tokens | SHA-256 exact-match cache (Redis + in-process) |
-| Don't want another SaaS | Self-hosted, all state in Redis, no external dependencies |
-| Claude Max plan (OAuth) | `passthrough` mode — your token forwarded as-is, no server key |
+| Don't want another SaaS | Self-hosted, stateless proxy, no external dependencies |
+| Claude Max plan (OAuth) | `passthrough` mode -- your token forwarded as-is, no server key |
+
+### Why no Redis?
+
+Early versions used Redis for response caching, auth key storage, and metrics
+counters. We removed it because:
+
+- **Cache was useless**: Claude Code sends `stream: true` on every request --
+  streaming bypasses the cache. Zero hits in practice.
+- **Shared dicts are faster**: nginx shared memory has no network hop, no
+  serialization overhead. Counters survive worker restarts.
+- **Less moving parts**: 3 containers instead of 5. No Redis tuning, no
+  persistence config, no connection pool management.
+- **Prometheus is the real store**: Counter values in shared dicts don't need
+  to survive container restarts -- Prometheus already has the time series.
 
 ---
 
@@ -39,10 +52,10 @@ cd gateii
 cp .env.example .env        # edit PASSTHROUGH_USER if you want a name in the dashboard
 
 # 2. Start
-docker compose up -d --build
+docker compose up -d
 
 # 3. Tell Claude Code to use it
-# Add to ~/.claude/settings.json → env:
+# Add to ~/.claude/settings.json -> env:
 #   "ANTHROPIC_BASE_URL": "http://localhost:8888"
 
 # 4. Open dashboard
@@ -55,7 +68,7 @@ That's it. Your existing Anthropic key (or Claude Max OAuth token) flows through
 
 ## Modes
 
-### passthrough — Claude Max plan / own key
+### passthrough -- Claude Max plan / own key
 
 No API key stored on the server. gateii forwards whatever the client sends.
 
@@ -74,9 +87,9 @@ Client settings (`~/.claude/settings.json`):
 }
 ```
 
-Your Anthropic key stays where it is. gateii intercepts, tracks, caches, and forwards.
+Your Anthropic key stays where it is. gateii intercepts, tracks, and forwards.
 
-### apikey — shared team key
+### apikey -- shared team key
 
 gateii holds one Anthropic key. Users get proxy keys from `admin.sh`.
 
@@ -89,7 +102,7 @@ ANTHROPIC_API_KEY=sk-ant-...
 ```bash
 # Issue a proxy key
 ./scripts/admin.sh add alice
-# → sk-proxy-4a7f...  (set as ANTHROPIC_API_KEY in client settings)
+# -> sk-proxy-4a7f...  (set as ANTHROPIC_API_KEY in client settings)
 ```
 
 Client settings:
@@ -102,59 +115,56 @@ Client settings:
 }
 ```
 
+Keys are stored in `config/openresty/keys.json` (mounted read-only into the proxy).
+
 ---
 
 ## Monitoring
 
-Grafana at `http://localhost:3001` — no login, dashboard auto-provisioned.
-
-![Dashboard showing token rate, cache hit rate, latency, and cost panels]
+Grafana at `http://localhost:3001` -- no login, dashboard auto-provisioned.
 
 ### Metrics
 
 | Metric | Labels | What it tells you |
 |--------|--------|-------------------|
-| `gateii_tokens_total` | user, model, type | Input/output tokens consumed |
-| `gateii_cost_dollars_total` | user, model, type | Estimated cost (Anthropic pricing) |
-| `gateii_requests_total` | user, model | Request count |
-| `gateii_request_duration_ms_total` | user, model | Cumulative latency (÷ requests = avg) |
-| `gateii_upstream_errors_total` | user, model | Non-200 upstream responses |
-| `gateii_cache_hits_total` | — | Cache hits |
-| `gateii_cache_misses_total` | — | Cache misses |
-| `gateii_stop_reason_total` | user, model, reason | end_turn / max_tokens / tool_use |
+| `gateii_tokens_total` | user, provider, model, type | Input/output tokens consumed |
+| `gateii_cost_dollars_total` | user, provider, model, type | Estimated cost (Anthropic pricing) |
+| `gateii_requests_total` | user, provider, model | Request count |
+| `gateii_request_duration_ms_total` | user, provider, model | Cumulative latency (/ requests = avg) |
+| `gateii_upstream_errors_total` | user, provider, model | Non-200 upstream responses |
+| `gateii_stop_reason_total` | user, provider, model, reason | end_turn / max_tokens / tool_use |
+| `gateii_user_blocked` | user | 1 if user is currently blocked |
 
-Prometheus scrape endpoint: `http://localhost:9091/metrics`
-
----
-
-## Caching
-
-Non-streaming requests are cached by SHA-256 of the full canonical request:
-
-```
-provider | model | system | temperature, max_tokens, top_p, top_k,
-         stop_sequences, tools, tool_choice | messages
-```
-
-Two layers:
-1. **L1** — in-process shared dict, 50 MB, max 5 min TTL
-2. **L2** — Redis, configurable TTL via `CACHE_TTL` (default 3600 s)
-
-Streaming requests (`"stream": true`) bypass the cache.
-Cache hit sets `X-Cache: HIT` response header.
+Prometheus scrape endpoint: `http://localhost:8888/metrics`
 
 ---
+
+## Proxy routing
+
+```bash
+./scripts/admin.sh switch local    # route Claude Code through proxy (checks health first)
+./scripts/admin.sh switch direct   # route directly to Anthropic (safe to stop proxy after)
+```
+
+**Important**: Always `switch direct` before stopping the proxy, or Claude Code loses its connection.
 
 ## Key management
 
 ```bash
-./scripts/admin.sh status          # cache stats, key count
-./scripts/admin.sh users           # token usage per user
+./scripts/admin.sh status          # key count, blocked users
 ./scripts/admin.sh keys            # all keys, masked
 ./scripts/admin.sh add alice       # new random proxy key for alice
 ./scripts/admin.sh revoke sk-proxy-...
 ./scripts/admin.sh rotate alice    # new key, revoke all old ones
-./scripts/admin.sh reset alice     # zero usage counters
+```
+
+### Blocking and limits
+
+```bash
+./scripts/admin.sh block alice 86400    # block for 1 day
+./scripts/admin.sh unblock alice
+./scripts/admin.sh limit alice tokens_per_day 1000000
+./scripts/admin.sh limits alice         # show today's usage
 ```
 
 ---
@@ -163,13 +173,11 @@ Cache hit sets `X-Cache: HIT` response header.
 
 | Container | Image | Port | Role |
 |-----------|-------|------|------|
-| `gateii-proxy` | `openresty/openresty:alpine` | 8888 | nginx + LuaJIT proxy |
-| `gateii-redis` | `redis:7-alpine` | — | auth keys, cache, counters |
-| `gateii-exporter` | local Python build | 9091 | Prometheus metrics |
-| `gateii-prometheus` | `prom/prometheus` | — | metrics storage |
+| `gateii-proxy` | `openresty/openresty:alpine` | 8888 | nginx + LuaJIT proxy + metrics |
+| `gateii-prometheus` | `prom/prometheus` | 9090 | metrics storage |
 | `gateii-grafana` | `grafana/grafana` | 3001 | dashboard |
 
-All state lives in Redis. No databases, no files to back up (except Redis data volume).
+All runtime state lives in nginx shared memory. Prometheus stores the time series.
 
 ### Vendored Lua libraries
 
@@ -178,7 +186,7 @@ These are included in `config/openresty/lua/resty/` because they're not in the `
 | Library | Purpose |
 |---------|---------|
 | `lua-resty-http` | HTTPS upstream requests + streaming |
-| `lua-resty-string` | SHA-256 hex encoding for cache keys |
+| `lua-resty-string` | Hex encoding (used internally by lua-resty-http) |
 
 ---
 
@@ -190,8 +198,7 @@ All configuration via `.env`:
 |----------|---------|-------------|
 | `PROXY_MODE` | `passthrough` | `passthrough` or `apikey` |
 | `PASSTHROUGH_USER` | _(key suffix)_ | Display name in passthrough mode |
-| `ANTHROPIC_API_KEY` | — | Required when `PROXY_MODE=apikey` |
-| `CACHE_TTL` | `3600` | Cache TTL in seconds |
+| `ANTHROPIC_API_KEY` | -- | Required when `PROXY_MODE=apikey` |
 
 ---
 
@@ -236,10 +243,10 @@ providers["myprovider"] = require("providers.myprovider")
 
 | Topic | Status |
 |-------|--------|
-| `ssl_verify=false` upstream | alpine has no CA bundle — MITM on Anthropic connection possible. Fix: add `ca-certificates` to a custom Dockerfile |
-| Redis no password | Network is isolated (bridge); `requirepass` recommended before exposing to untrusted networks |
-| Auth cache TTL | Revoked keys work for up to 5 min — reduce in `config/openresty/lua/auth.lua` if needed |
-| Request size limit | 10 MB max body (supports vision payloads) — set in `nginx.conf` |
+| `ssl_verify=false` upstream | alpine has no CA bundle -- MITM on Anthropic connection possible. Fix: add `ca-certificates` to a custom Dockerfile |
+| Auth cache TTL | Revoked keys work for up to 5 min -- reduce in `auth.lua` if needed |
+| Request size limit | 10 MB max body (supports vision payloads) -- set in `nginx.conf` |
+| Admin API | Internal only -- restricted to localhost and Docker network IPs |
 
 ---
 
