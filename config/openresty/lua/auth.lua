@@ -153,8 +153,8 @@ do
     end
 end
 
--- 4. Rate limit per user
-if lim then
+-- 4. Rate limit per user (apikey mode only — in passthrough you're limiting yourself)
+if proxy_mode ~= "passthrough" and lim then
     local delay, err = lim:incoming(user, true)
     if not delay then
         if err == "rejected" then
