@@ -125,6 +125,7 @@ local t0_stream = ngx.now()
 local parsed_uri, parse_err2 = httpc:parse_uri(upstream_url, false)
 if not parsed_uri then
     ngx.log(ngx.ERR, "streaming URI parse error: ", parse_err2)
+    httpc:close()
     ngx.status = 500
     ngx.header["Content-Type"] = "application/json"
     ngx.say('{"error":"Internal proxy error"}')
@@ -143,6 +144,7 @@ local ok, conn_err = httpc:connect({
 })
 if not ok then
     ngx.log(ngx.ERR, "streaming connect error (user=", user, "): ", conn_err)
+    httpc:close()
     ngx.status = 502
     ngx.header["Content-Type"] = "application/json"
     ngx.say('{"error":"Failed to connect to upstream"}')
