@@ -18,7 +18,6 @@ services:
         condition: service_healthy
     environment:
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
-      - CACHE_TTL=${CACHE_TTL:-3600}
       - PROXY_MODE=${PROXY_MODE:-passthrough}
       - PASSTHROUGH_USER=${PASSTHROUGH_USER:-}
     volumes:
