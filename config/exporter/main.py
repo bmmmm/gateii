@@ -1,12 +1,11 @@
 import json
 import os
 import re
-import threading
 from http.server import BaseHTTPRequestHandler, HTTPServer
 
 import redis
 from prometheus_client import CONTENT_TYPE_LATEST, REGISTRY, generate_latest
-from prometheus_client.core import CounterMetricFamily
+from prometheus_client.core import CounterMetricFamily, GaugeMetricFamily
 
 REDIS_HOST = os.getenv("REDIS_HOST", "redis")
 REDIS_PORT = int(os.getenv("REDIS_PORT", "6379"))
@@ -41,6 +40,15 @@ def model_price(model: str) -> dict | None:
 
 class GateiiCollector:
     def collect(self):
+        try:
+            yield from self._collect()
+        except redis.ConnectionError:
+            # Redis down — return empty metrics rather than crashing the scrape
+            return
+        except redis.TimeoutError:
+            return
+
+    def _collect(self):
         # --- Token usage + request stats + cost: scan usage:* ---
         tokens = CounterMetricFamily(
             "gateii_tokens_total",
@@ -72,6 +80,9 @@ class GateiiCollector:
         while True:
             cursor, keys = rdb.scan(cursor, match="usage:*", count=100)
             for key in keys:
+                # Skip daily usage keys (usage_day:*)
+                if key.startswith("usage_day:"):
+                    continue
                 # Split at most 3 times so model (last segment) may contain colons
                 parts = key.split(":", 3)
                 if len(parts) != 4:
@@ -104,15 +115,6 @@ class GateiiCollector:
         yield errors_c
         yield cost_c
 
-        # --- Cache hit/miss global counters ---
-        hits = CounterMetricFamily("gateii_cache_hits_total", "Total cache hits")
-        hits.add_metric([], float(rdb.get("cache:hits") or 0))
-        yield hits
-
-        misses = CounterMetricFamily("gateii_cache_misses_total", "Total cache misses")
-        misses.add_metric([], float(rdb.get("cache:misses") or 0))
-        yield misses
-
         # --- Stop reason counters: scan stop:* ---
         stop_reasons = CounterMetricFamily(
             "gateii_stop_reason_total",
@@ -142,6 +144,22 @@ class GateiiCollector:
                 break
         yield stop_reasons
 
+        # --- Blocked users: scan blocked:* ---
+        blocked_g = GaugeMetricFamily(
+            "gateii_user_blocked",
+            "1 if user is currently blocked, 0 otherwise",
+            labels=["user"],
+        )
+        cursor = 0
+        while True:
+            cursor, keys = rdb.scan(cursor, match="blocked:*", count=100)
+            for key in keys:
+                user = key.split(":", 1)[1]
+                blocked_g.add_metric([sanitize_label(user)], 1.0)
+            if cursor == 0:
+                break
+        yield blocked_g
+
 
 REGISTRY.register(GateiiCollector())
 
@@ -164,8 +182,8 @@ class Handler(BaseHTTPRequestHandler):
                 rdb.ping()
                 body = b'{"status":"ok"}'
                 self.send_response(200)
-            except Exception as e:
-                body = json.dumps({"status": "error", "detail": str(e)}).encode()
+            except Exception:
+                body = b'{"status":"error","detail":"Redis unreachable -- check container logs"}'
                 self.send_response(503)
             self.send_header("Content-Type", "application/json")
             self.send_header("Content-Length", str(len(body)))

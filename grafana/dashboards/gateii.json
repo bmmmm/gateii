@@ -199,7 +199,7 @@
       "gridPos": {
         "x": 0,
         "y": 4,
-        "w": 16,
+        "w": 24,
         "h": 8
       },
       "datasource": {
@@ -230,139 +230,14 @@
       }
     },
     {
-      "id": 2,
-      "title": "Cache-Trefferquote",
-      "description": "Anteil der Requests die aus dem Cache bedient wurden",
-      "type": "gauge",
-      "gridPos": {
-        "x": 16,
-        "y": 4,
-        "w": 8,
-        "h": 8
-      },
-      "datasource": {
-        "type": "prometheus"
-      },
-      "targets": [
-        {
-          "datasource": {
-            "type": "prometheus"
-          },
-          "expr": "100 * rate(gateii_cache_hits_total[5m]) / clamp_min(rate(gateii_cache_hits_total[5m]) + rate(gateii_cache_misses_total[5m]), 0.001)",
-          "legendFormat": "Hit Rate"
-        }
-      ],
-      "fieldConfig": {
-        "defaults": {
-          "unit": "percent",
-          "min": 0,
-          "max": 100,
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "red",
-                "value": null
-              },
-              {
-                "color": "yellow",
-                "value": 20
-              },
-              {
-                "color": "green",
-                "value": 50
-              }
-            ]
-          }
-        }
-      },
-      "options": {
-        "reduceOptions": {
-          "calcs": [
-            "lastNotNull"
-          ]
-        }
-      }
-    },
-    {
-      "id": 3,
-      "title": "Cache Hits vs. Misses",
-      "type": "timeseries",
-      "gridPos": {
-        "x": 0,
-        "y": 12,
-        "w": 12,
-        "h": 8
-      },
-      "datasource": {
-        "type": "prometheus"
-      },
-      "targets": [
-        {
-          "datasource": {
-            "type": "prometheus"
-          },
-          "expr": "rate(gateii_cache_hits_total[5m])",
-          "legendFormat": "hits"
-        },
-        {
-          "datasource": {
-            "type": "prometheus"
-          },
-          "expr": "rate(gateii_cache_misses_total[5m])",
-          "legendFormat": "misses"
-        }
-      ],
-      "fieldConfig": {
-        "defaults": {
-          "unit": "reqps",
-          "custom": {
-            "lineWidth": 2
-          }
-        },
-        "overrides": [
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "hits"
-            },
-            "properties": [
-              {
-                "id": "color",
-                "value": {
-                  "fixedColor": "green",
-                  "mode": "fixed"
-                }
-              }
-            ]
-          },
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "misses"
-            },
-            "properties": [
-              {
-                "id": "color",
-                "value": {
-                  "fixedColor": "orange",
-                  "mode": "fixed"
-                }
-              }
-            ]
-          }
-        ]
-      }
-    },
-    {
       "id": 4,
       "title": "Tokens letzte 24h (pro User + Modell)",
       "description": "Gesamtverbrauch der letzten 24 Stunden",
       "type": "bargauge",
       "gridPos": {
-        "x": 12,
+        "x": 0,
         "y": 12,
-        "w": 12,
+        "w": 24,
         "h": 8
       },
       "datasource": {
