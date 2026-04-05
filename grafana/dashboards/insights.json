@@ -16,8 +16,8 @@
   "panels": [
     {
       "id": 1,
-      "title": "Aktivit\u00e4t",
-      "description": "Prompt-Dichte \u00fcber Zeit \u2014 dunklere Felder = mehr Aktivit\u00e4t",
+      "title": "Activity",
+      "description": "Prompt density over time \u2014 darker cells = more activity",
       "type": "heatmap",
       "gridPos": {
         "x": 0,
@@ -133,7 +133,7 @@
     {
       "id": 3,
       "title": "Tokens / Prompt",
-      "description": "Durchschnitt letzte 24h \u2014 weniger = effizienter",
+      "description": "Average last 24h \u2014 lower = more efficient",
       "type": "stat",
       "gridPos": {
         "x": 6,
@@ -194,8 +194,8 @@
     },
     {
       "id": 4,
-      "title": "Kosten / Prompt",
-      "description": "Durchschnittliche Kosten pro Prompt (24h)",
+      "title": "Cost / Prompt",
+      "description": "Average cost per prompt (24h)",
       "type": "stat",
       "gridPos": {
         "x": 12,
@@ -256,8 +256,8 @@
     },
     {
       "id": 5,
-      "title": "Monatsprognose",
-      "description": "Hochrechnung basierend auf den letzten 7 Tagen",
+      "title": "Monthly Forecast",
+      "description": "Projection based on the last 7 days",
       "type": "stat",
       "gridPos": {
         "x": 18,
@@ -274,7 +274,7 @@
             "type": "prometheus"
           },
           "expr": "sum(increase(gateii_cost_dollars_total[7d])) / 7 * 30",
-          "legendFormat": "Prognose",
+          "legendFormat": "Forecast",
           "instant": true
         }
       ],
@@ -322,8 +322,8 @@
     },
     {
       "id": 6,
-      "title": "Tageskosten vs Abo-Modelle",
-      "description": "Gestrichelte Linien = Tages\u00e4quivalent der Abo-Preise. Liegt dein Verbrauch darunter, ist API g\u00fcnstiger.",
+      "title": "Daily Costs vs Subscriptions",
+      "description": "Dashed lines = daily equivalent of subscription prices. If your usage is below, API is cheaper.",
       "type": "timeseries",
       "gridPos": {
         "x": 0,
@@ -340,7 +340,7 @@
             "type": "prometheus"
           },
           "expr": "sum(increase(gateii_cost_dollars_total[24h]))",
-          "legendFormat": "API-Kosten / Tag",
+          "legendFormat": "API Cost / Day",
           "refId": "A"
         },
         {
@@ -499,8 +499,8 @@
     },
     {
       "id": 7,
-      "title": "Effizienz-Trend",
-      "description": "Tokens pro Prompt \u00fcber Zeit \u2014 sinkender Trend = steigende Effizienz",
+      "title": "Efficiency Trend",
+      "description": "Tokens per prompt over time \u2014 declining trend = increasing efficiency",
       "type": "timeseries",
       "gridPos": {
         "x": 12,
@@ -567,7 +567,7 @@
     {
       "id": 8,
       "title": "Cache Hit Rate",
-      "description": "Anteil der Input-Tokens die aus dem Cache gelesen werden. H\u00f6her = g\u00fcnstiger.",
+      "description": "Proportion of input tokens read from cache. Higher = cheaper.",
       "type": "stat",
       "gridPos": {
         "x": 0,
@@ -628,8 +628,8 @@
     },
     {
       "id": 9,
-      "title": "Cache-Ersparnis (24h)",
-      "description": "Was du durch Prompt Caching sparst (Cache-Reads kosten 90% weniger als volle Input-Tokens)",
+      "title": "Cache Savings (24h)",
+      "description": "What you save through prompt caching (cache reads cost 90% less than full input tokens)",
       "type": "stat",
       "gridPos": {
         "x": 8,
@@ -646,7 +646,7 @@
             "type": "prometheus"
           },
           "expr": "sum(increase(gateii_cost_dollars_total{type=\"cache_read\"}[24h])) * 9",
-          "legendFormat": "Cache-Ersparnis",
+          "legendFormat": "Cache Savings",
           "instant": true,
           "refId": "A"
         }
@@ -684,7 +684,7 @@
     {
       "id": 10,
       "title": "Output / Input Ratio",
-      "description": "Verh\u00e4ltnis Output zu Input Tokens. H\u00f6her = Modell generiert mehr pro Prompt.",
+      "description": "Ratio of output to input tokens. Higher = model generates more per prompt.",
       "type": "stat",
       "gridPos": {
         "x": 16,
