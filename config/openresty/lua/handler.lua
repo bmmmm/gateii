@@ -109,15 +109,16 @@ if not is_streaming then
         end
     end
 
-    local input_tokens, output_tokens, stop_reason = 0, 0, nil
+    local input_tokens, output_tokens, stop_reason, cache_creation, cache_read = 0, 0, nil, 0, 0
     if res.status == 200 then
-        input_tokens, output_tokens, stop_reason = provider.extract_tokens(response_body)
+        input_tokens, output_tokens, stop_reason, cache_creation, cache_read = provider.extract_tokens(response_body)
     end
 
     ngx.print(response_body)
     ngx.flush(true)  -- send to client before tracking write
     pcall(tracking.record, user, provider_name, model, input_tokens, output_tokens,
-          { latency_ms = latency_ms, status = res.status, stop_reason = stop_reason })
+          { latency_ms = latency_ms, status = res.status, stop_reason = stop_reason,
+            cache_creation = cache_creation, cache_read = cache_read })
     return
 end
 
@@ -210,13 +211,17 @@ end
 -- Parse SSE events for token tracking (Anthropic sends usage in message_start + message_delta)
 -- Handle both \r\n (HTTP spec) and \n (common in practice) line endings
 local input_tokens, output_tokens, stop_reason = 0, 0, nil
+local cache_creation, cache_read = 0, 0
 if res.status == 200 then
     local body = table.concat(chunks)
     local data = body:match("event: message_start\r?\ndata: ([^\r\n]+)")
     if data then
         local obj, err = cjson.decode(data)
         if obj and obj.message and obj.message.usage then
-            input_tokens = obj.message.usage.input_tokens or 0
+            local u = obj.message.usage
+            input_tokens = u.input_tokens or 0
+            cache_creation = u.cache_creation_input_tokens or 0
+            cache_read = u.cache_read_input_tokens or 0
         elseif not obj then
             ngx.log(ngx.WARN, "failed to decode message_start SSE: ", err)
         end
@@ -234,4 +239,5 @@ if res.status == 200 then
 end
 
 pcall(tracking.record, user, provider_name, model, input_tokens, output_tokens,
-      { latency_ms = (ngx.now() - t0_stream) * 1000, status = res.status, stop_reason = stop_reason })
+      { latency_ms = (ngx.now() - t0_stream) * 1000, status = res.status, stop_reason = stop_reason,
+        cache_creation = cache_creation, cache_read = cache_read })
