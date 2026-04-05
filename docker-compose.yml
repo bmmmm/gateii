@@ -94,3 +94,30 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
+
+  # --- Plugins (opt-in via docker compose --profile <name> up -d) ---
+
+  git-stats:
+    profiles: ["git-stats"]
+    image: alpine:3.19
+    container_name: gateii-git-stats
+    restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    volumes:
+      - ./scripts/git-stats.sh:/app/git-stats.sh:ro
+      - ./data:/data
+      - ${GIT_REPOS_PATH:-.}:/repos:ro
+    environment:
+      - GIT_AUTHOR=${GIT_AUTHOR:-}
+      - GIT_STATS_INTERVAL=${GIT_STATS_INTERVAL:-300}
+    entrypoint:
+      - /bin/sh
+      - -c
+      - |
+        apk add --no-cache git >/dev/null 2>&1
+        exec /bin/sh /app/git-stats.sh --container
+    networks:
+      - gateii
