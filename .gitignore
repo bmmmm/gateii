@@ -6,6 +6,7 @@ config/openresty/keys.json
 
 # Docker local data
 data/
+docker-compose.override.yml
 
 # macOS
 .DS_Store
