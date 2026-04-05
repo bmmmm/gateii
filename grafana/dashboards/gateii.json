@@ -131,8 +131,8 @@
     },
     {
       "id": 11,
-      "title": "Gesch\u00e4tzte Kosten (24h)",
-      "description": "Basierend auf Anthropic-Preisen (April 2026). Opus 4.6: $5/$25, Sonnet 4.6: $3/$15, Haiku 4.5: $1/$5 pro 1M (input/output). Cache-Reads: 0.1x, Cache-Writes: 1.25x.",
+      "title": "Estimated Costs (24h)",
+      "description": "Based on Anthropic pricing (April 2026). Opus 4.6: $5/$25, Sonnet 4.6: $3/$15, Haiku 4.5: $1/$5 per 1M (input/output). Cache reads: 0.1x, cache writes: 1.25x.",
       "type": "stat",
       "gridPos": {
         "x": 16,
@@ -149,7 +149,7 @@
             "type": "prometheus"
           },
           "expr": "sum(increase(gateii_cost_dollars_total[24h]))",
-          "legendFormat": "Kosten",
+          "legendFormat": "Cost",
           "instant": true
         }
       ],
@@ -194,7 +194,7 @@
     {
       "id": 1,
       "title": "Token-Rate (input + output)",
-      "description": "Tokens pro Sekunde, aufgeteilt nach User, Modell und Typ",
+      "description": "Tokens per second, split by user, model, and type",
       "type": "timeseries",
       "gridPos": {
         "x": 0,
@@ -231,8 +231,8 @@
     },
     {
       "id": 4,
-      "title": "Tokens letzte 24h (pro User + Modell)",
-      "description": "Gesamtverbrauch der letzten 24 Stunden",
+      "title": "Tokens last 24h (per user + model)",
+      "description": "Total consumption over the last 24 hours",
       "type": "bargauge",
       "gridPos": {
         "x": 0,
@@ -287,8 +287,8 @@
     },
     {
       "id": 12,
-      "title": "Kosten pro User + Modell (24h)",
-      "description": "Gesch\u00e4tzte API-Kosten der letzten 24h nach Anthropic-Preisliste",
+      "title": "Costs per user + model (24h)",
+      "description": "Estimated API costs over the last 24h based on Anthropic pricing",
       "type": "bargauge",
       "gridPos": {
         "x": 0,
@@ -344,8 +344,8 @@
     },
     {
       "id": 5,
-      "title": "Durchschnittliche Latenz (upstream)",
-      "description": "Mittlere Antwortzeit der Anthropic API in ms",
+      "title": "Average Latency (upstream)",
+      "description": "Mean response time of the Anthropic API in ms",
       "type": "timeseries",
       "gridPos": {
         "x": 12,
@@ -399,8 +399,8 @@
     },
     {
       "id": 6,
-      "title": "Fehlerrate (upstream non-200)",
-      "description": "Anteil fehlgeschlagener Upstream-Requests",
+      "title": "Error Rate (upstream non-200)",
+      "description": "Proportion of failed upstream requests",
       "type": "timeseries",
       "gridPos": {
         "x": 0,
@@ -449,8 +449,8 @@
     },
     {
       "id": 7,
-      "title": "Stop-Reason Verteilung",
-      "description": "end_turn = normal abgeschlossen | max_tokens = Antwort abgeschnitten (max_tokens zu niedrig gesetzt)",
+      "title": "Stop Reason Distribution",
+      "description": "end_turn = completed normally | max_tokens = response truncated (max_tokens set too low)",
       "type": "bargauge",
       "gridPos": {
         "x": 12,
@@ -529,8 +529,8 @@
     },
     {
       "id": 8,
-      "title": "Request-Rate (pro User + Modell)",
-      "description": "Requests pro Sekunde, aufgeteilt nach User und Modell",
+      "title": "Request Rate (per user + model)",
+      "description": "Requests per second, split by user and model",
       "type": "timeseries",
       "gridPos": {
         "x": 0,
