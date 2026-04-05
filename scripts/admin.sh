@@ -233,7 +233,13 @@ case "$SUBCMD" in
   plugin)
     ACTION="${1:-list}"
     PLUGIN="${2:-}"
+    shift 2 2>/dev/null || shift $# 2>/dev/null || true
+    OVERRIDE="$PROJECT_DIR/docker-compose.override.yml"
     COMPOSE="docker compose -f $PROJECT_DIR/docker-compose.yml"
+    # Include override if it exists
+    if [ -f "$OVERRIDE" ]; then
+      COMPOSE="$COMPOSE -f $OVERRIDE"
+    fi
 
     # Available plugins (profile name → description)
     PLUGINS="git-stats:Track git activity (commits, lines) alongside token usage"
@@ -251,9 +257,37 @@ case "$SUBCMD" in
         ;;
       enable)
         if [ -z "$PLUGIN" ]; then
-          echo -e "${RED}Usage: admin.sh plugin enable <name>${NC}" >&2; exit 1
+          echo -e "${RED}Usage: admin.sh plugin enable <name> [paths...]${NC}" >&2; exit 1
         fi
-        echo -e "${BOLD}Enabling $PLUGIN...${NC}"
+
+        # git-stats: generate override with repo volume mounts
+        if [ "$PLUGIN" = "git-stats" ]; then
+          REPO_PATHS=("$@")
+          if [ ${#REPO_PATHS[@]} -eq 0 ]; then
+            echo -e "${RED}Usage: admin.sh plugin enable git-stats <repo-path> [repo-path...]${NC}" >&2
+            echo -e "${DIM}  Example: admin.sh plugin enable git-stats ~/offline_coding ~/servers${NC}" >&2
+            exit 1
+          fi
+
+          # Generate override with volume mounts
+          {
+            echo "services:"
+            echo "  git-stats:"
+            echo "    volumes:"
+            for rpath in "${REPO_PATHS[@]}"; do
+              # Resolve to absolute path
+              abs="$(cd "$rpath" 2>/dev/null && pwd)" || {
+                echo -e "${RED}Path not found: $rpath${NC}" >&2; exit 1
+              }
+              name="$(basename "$abs")"
+              echo "      - ${abs}:/repos/${name}:ro"
+              echo -e "  ${DIM}+ $abs${NC}"
+            done
+          } > "$OVERRIDE"
+          echo ""
+        fi
+
+        COMPOSE="docker compose -f $PROJECT_DIR/docker-compose.yml -f $OVERRIDE"
         $COMPOSE --profile "$PLUGIN" up -d "$PLUGIN" 2>&1
         echo -e "${GRN}Plugin $PLUGIN enabled${NC}"
         ;;
@@ -261,8 +295,10 @@ case "$SUBCMD" in
         if [ -z "$PLUGIN" ]; then
           echo -e "${RED}Usage: admin.sh plugin disable <name>${NC}" >&2; exit 1
         fi
-        $COMPOSE stop "$PLUGIN" 2>/dev/null && $COMPOSE rm -f "$PLUGIN" 2>/dev/null
-        # Clean up metrics file
+        $COMPOSE --profile "$PLUGIN" stop "$PLUGIN" 2>/dev/null
+        $COMPOSE --profile "$PLUGIN" rm -f "$PLUGIN" 2>/dev/null
+        # Clean up override and metrics
+        rm -f "$OVERRIDE" 2>/dev/null || true
         rm -f "$PROJECT_DIR/data/git-metrics.txt" 2>/dev/null || true
         echo -e "${GRN}Plugin $PLUGIN disabled${NC}"
         ;;
@@ -271,9 +307,15 @@ case "$SUBCMD" in
         echo -e "${BOLD}Plugin status${NC}"
         echo ""
         echo "$PLUGINS" | while IFS=: read -r name desc; do
-          if $COMPOSE ps --format '{{.Name}}' 2>/dev/null | grep -q "gateii-$name"; then
-            uptime=$($COMPOSE ps --format '{{.Status}}' 2>/dev/null | head -1)
+          if $COMPOSE --profile "$name" ps --format '{{.Name}}' 2>/dev/null | grep -q "gateii-$name"; then
+            uptime=$($COMPOSE --profile "$name" ps --format '{{.Status}}' 2>/dev/null | grep "$name" | head -1)
             echo -e "  ${CYN}$name${NC}  ${GRN}active${NC}  ($uptime)"
+            # Show mounted repos
+            if [ "$name" = "git-stats" ] && [ -f "$OVERRIDE" ]; then
+              grep ':/repos/' "$OVERRIDE" 2>/dev/null | sed 's|.*- ||;s|:/repos/.*||' | while read -r rp; do
+                echo -e "    ${DIM}$rp${NC}"
+              done
+            fi
           else
             echo -e "  ${CYN}$name${NC}  ${DIM}inactive${NC}"
           fi

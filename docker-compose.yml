@@ -109,7 +109,7 @@ services:
     volumes:
       - ./scripts/git-stats.sh:/app/git-stats.sh:ro
       - ./data:/data
-      - ${GIT_REPOS_PATH:-.}:/repos:ro
+      # Repo mounts added by: admin.sh plugin enable git-stats <path> [path...]
     environment:
       - GIT_AUTHOR=${GIT_AUTHOR:-}
       - GIT_STATS_INTERVAL=${GIT_STATS_INTERVAL:-300}
