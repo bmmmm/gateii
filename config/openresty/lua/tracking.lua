@@ -11,7 +11,7 @@ end
 -- record(user, provider, model, input_tokens, output_tokens, opts)
 -- opts = { latency_ms=N, status=N, stop_reason="end_turn"|... }
 function _M.record(user, provider, model, input_tokens, output_tokens, opts)
-    user     = sanitize(user)
+    -- user is pre-sanitized by auth.lua; provider/model may contain unsafe chars
     provider = sanitize(provider)
     model    = sanitize(model)
     opts = opts or {}

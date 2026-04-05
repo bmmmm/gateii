@@ -9,7 +9,7 @@ networks:
 # Core services — 3 containers: proxy, prometheus, grafana
 services:
   openresty:
-    image: openresty/openresty:alpine
+    image: openresty/openresty:1.27.1.2-0-alpine
     container_name: gateii-proxy
     restart: unless-stopped
     environment:
@@ -26,20 +26,29 @@ services:
       - /bin/sh
       - -c
       - |
+        apk add --no-cache ca-certificates >/dev/null 2>&1
         test -f /etc/nginx/data/keys.json || echo '{}' > /etc/nginx/data/keys.json
         exec /usr/local/openresty/bin/openresty -g 'daemon off;'
     networks:
       - gateii
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
     healthcheck:
       test: ["CMD", "wget", "-qO/dev/null", "http://127.0.0.1:8080/health"]
       interval: 10s
-      timeout: 5s
+      timeout: 10s
       retries: 5
 
   prometheus:
-    image: prom/prometheus:latest
+    image: prom/prometheus:v3.11.0
     container_name: gateii-prometheus
     restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
     command:
       - --config.file=/etc/prometheus/prometheus.yml
       - --storage.tsdb.path=/prometheus
@@ -58,15 +67,19 @@ services:
       retries: 5
 
   grafana:
-    image: grafana/grafana:latest
+    image: grafana/grafana:12.4.2
     container_name: gateii-grafana
     restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
     depends_on:
       prometheus:
         condition: service_healthy
     environment:
       - GF_AUTH_ANONYMOUS_ENABLED=true
-      - GF_AUTH_ANONYMOUS_ORG_ROLE=Admin
+      - GF_AUTH_ANONYMOUS_ORG_ROLE=Viewer
       - GF_AUTH_DISABLE_LOGIN_FORM=true
     volumes:
       - ./grafana/provisioning:/etc/grafana/provisioning:ro

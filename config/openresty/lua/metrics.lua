@@ -22,7 +22,7 @@ end
 ngx.header["Content-Type"] = "text/plain; version=0.0.4; charset=utf-8"
 
 -- Collect all counter keys and group by user|provider|model
-local keys = counters:get_keys(0)
+local keys = counters:get_keys(0) or {}
 local usage = {}   -- { "user|provider|model" = { input=N, output=N, ... } }
 local stops = {}   -- { "user|provider|model|reason" = N }
 
@@ -157,7 +157,7 @@ end
 -- Blocked users
 add("# HELP gateii_user_blocked 1 if user is currently blocked")
 add("# TYPE gateii_user_blocked gauge")
-local block_keys = blocking_dict:get_keys(0)
+local block_keys = blocking_dict:get_keys(0) or {}
 for _, key in ipairs(block_keys) do
     if key:sub(1, 8) == "blocked|" then
         local buser = key:sub(9)
