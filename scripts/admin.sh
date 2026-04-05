@@ -230,6 +230,62 @@ case "$SUBCMD" in
     esac
     ;;
 
+  plugin)
+    ACTION="${1:-list}"
+    PLUGIN="${2:-}"
+    COMPOSE="docker compose -f $PROJECT_DIR/docker-compose.yml"
+
+    # Available plugins (profile name → description)
+    PLUGINS="git-stats:Track git activity (commits, lines) alongside token usage"
+
+    case "$ACTION" in
+      list|ls)
+        echo ""
+        echo -e "${BOLD}Available plugins${NC}"
+        echo ""
+        echo "$PLUGINS" | while IFS=: read -r name desc; do
+          active=$($COMPOSE ps --format '{{.Name}}' 2>/dev/null | grep -q "gateii-$name" && echo "${GRN}active${NC}" || echo "${DIM}inactive${NC}")
+          echo -e "  ${CYN}$name${NC}  $desc  [$active]"
+        done
+        echo ""
+        ;;
+      enable)
+        if [ -z "$PLUGIN" ]; then
+          echo -e "${RED}Usage: admin.sh plugin enable <name>${NC}" >&2; exit 1
+        fi
+        echo -e "${BOLD}Enabling $PLUGIN...${NC}"
+        $COMPOSE --profile "$PLUGIN" up -d "$PLUGIN" 2>&1
+        echo -e "${GRN}Plugin $PLUGIN enabled${NC}"
+        ;;
+      disable)
+        if [ -z "$PLUGIN" ]; then
+          echo -e "${RED}Usage: admin.sh plugin disable <name>${NC}" >&2; exit 1
+        fi
+        $COMPOSE stop "$PLUGIN" 2>/dev/null && $COMPOSE rm -f "$PLUGIN" 2>/dev/null
+        # Clean up metrics file
+        rm -f "$PROJECT_DIR/data/git-metrics.txt" 2>/dev/null || true
+        echo -e "${GRN}Plugin $PLUGIN disabled${NC}"
+        ;;
+      status)
+        echo ""
+        echo -e "${BOLD}Plugin status${NC}"
+        echo ""
+        echo "$PLUGINS" | while IFS=: read -r name desc; do
+          if $COMPOSE ps --format '{{.Name}}' 2>/dev/null | grep -q "gateii-$name"; then
+            uptime=$($COMPOSE ps --format '{{.Status}}' 2>/dev/null | head -1)
+            echo -e "  ${CYN}$name${NC}  ${GRN}active${NC}  ($uptime)"
+          else
+            echo -e "  ${CYN}$name${NC}  ${DIM}inactive${NC}"
+          fi
+        done
+        echo ""
+        ;;
+      *)
+        echo -e "${RED}Unknown plugin action '$ACTION' — use list, enable, disable, status${NC}" >&2; exit 1
+        ;;
+    esac
+    ;;
+
   help|--help|-h|"")
     echo ""
     echo -e "${BOLD}gateii admin${NC}"
@@ -249,6 +305,12 @@ case "$SUBCMD" in
     echo "  unblock <user>                  Unblock user"
     echo "  limit <user> <field> <value>    Set limit (tokens_per_day, requests_per_day)"
     echo "  limits <user>                   Show today's usage"
+    echo ""
+    echo "  ${BOLD}Plugins${NC}"
+    echo "  plugin list                     Available plugins and status"
+    echo "  plugin enable <name>            Start a plugin"
+    echo "  plugin disable <name>           Stop a plugin"
+    echo "  plugin status                   Detailed plugin status"
     echo ""
     echo "  ${BOLD}Info${NC}"
     echo "  status                          Key count, blocked users"
