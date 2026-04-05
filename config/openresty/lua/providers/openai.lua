@@ -6,8 +6,7 @@ local _M = {}
 
 _M.upstream_url = "https://api.openai.com"
 
-function _M.build_headers(upstream_key)
-    -- TODO: OpenAI uses "Authorization: Bearer <key>" not x-api-key
+function _M.build_headers(upstream_key, auth_type)
     return {
         ["Content-Type"]  = "application/json",
         ["Authorization"] = "Bearer " .. (upstream_key or os.getenv("OPENAI_API_KEY") or ""),

@@ -6,8 +6,7 @@ local _M = {}
 
 _M.upstream_url = "https://openrouter.ai/api"
 
-function _M.build_headers(upstream_key)
-    -- TODO: OpenRouter uses Authorization Bearer + optional HTTP-Referer/X-Title headers
+function _M.build_headers(upstream_key, auth_type)
     return {
         ["Content-Type"]  = "application/json",
         ["Authorization"] = "Bearer " .. (upstream_key or os.getenv("OPENROUTER_API_KEY") or ""),
