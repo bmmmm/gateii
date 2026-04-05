@@ -1,14 +1,29 @@
 -- metrics.lua: Prometheus exposition format from shared dicts
+local cjson = require "cjson.safe"
 local counters = ngx.shared.counters
 local blocking_dict = ngx.shared.blocking
 
--- Anthropic public pricing per 1M tokens (USD) — updated April 2026
--- Cache write = 1.25x base input, cache read = 0.1x base input
+-- Load pricing from config file (falls back to defaults if missing)
 local pricing = {
-    { pattern = "opus",   input = 5.0,    output = 25.0 },
-    { pattern = "sonnet", input = 3.0,    output = 15.0 },
-    { pattern = "haiku",  input = 1.0,    output = 5.0  },
+    { pattern = "opus",   input = 5.0,  output = 25.0 },
+    { pattern = "sonnet", input = 3.0,  output = 15.0 },
+    { pattern = "haiku",  input = 1.0,  output = 5.0  },
 }
+local cache_write_mult = 1.25
+local cache_read_mult = 0.1
+
+local f = io.open("/etc/nginx/lua/pricing.json", "r")
+    or io.open("/usr/local/openresty/nginx/conf/pricing.json", "r")
+if f then
+    local data = f:read("*a")
+    f:close()
+    local cfg = cjson.decode(data)
+    if cfg and cfg.models then
+        pricing = cfg.models
+        cache_write_mult = cfg.cache_write_multiplier or cache_write_mult
+        cache_read_mult = cfg.cache_read_multiplier or cache_read_mult
+    end
+end
 
 local function model_price(model)
     local m = model:lower()
@@ -142,17 +157,17 @@ for upm, data in pairs(usage) do
                     eu, ep, em, typ, cost))
             end
         end
-        -- Cache write tokens (1.25x base input price)
+        -- Cache write tokens
         local cache_create = data.cache_creation or 0
         if cache_create > 0 then
-            local cost = cache_create * (price.input * 1.25) / 1000000
+            local cost = cache_create * (price.input * cache_write_mult) / 1000000
             add(string.format('gateii_cost_dollars_total{user="%s",provider="%s",model="%s",type="%s"} %.6f',
                 eu, ep, em, "cache_write", cost))
         end
-        -- Cache read tokens (0.1x base input price)
+        -- Cache read tokens
         local cache_rd = data.cache_read or 0
         if cache_rd > 0 then
-            local cost = cache_rd * (price.input * 0.1) / 1000000
+            local cost = cache_rd * (price.input * cache_read_mult) / 1000000
             add(string.format('gateii_cost_dollars_total{user="%s",provider="%s",model="%s",type="%s"} %.6f',
                 eu, ep, em, "cache_read", cost))
         end
@@ -187,8 +202,8 @@ add("# TYPE gateii_model_pricing_per_mtok gauge")
 for _, p in ipairs(pricing) do
     add(string.format('gateii_model_pricing_per_mtok{model="%s",type="input"} %.2f', p.pattern, p.input))
     add(string.format('gateii_model_pricing_per_mtok{model="%s",type="output"} %.2f', p.pattern, p.output))
-    add(string.format('gateii_model_pricing_per_mtok{model="%s",type="cache_write"} %.2f', p.pattern, p.input * 1.25))
-    add(string.format('gateii_model_pricing_per_mtok{model="%s",type="cache_read"} %.2f', p.pattern, p.input * 0.1))
+    add(string.format('gateii_model_pricing_per_mtok{model="%s",type="cache_write"} %.2f', p.pattern, p.input * cache_write_mult))
+    add(string.format('gateii_model_pricing_per_mtok{model="%s",type="cache_read"} %.2f', p.pattern, p.input * cache_read_mult))
 end
 
 ngx.print(table.concat(lines, "\n") .. "\n")
