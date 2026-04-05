@@ -281,10 +281,12 @@ case "$SUBCMD" in
               }
               name="$(basename "$abs")"
               echo "      - ${abs}:/repos/${name}:ro"
-              echo -e "  ${DIM}+ $abs${NC}"
             done
           } > "$OVERRIDE"
-          echo ""
+          # Show mounted paths
+          for rpath in "${REPO_PATHS[@]}"; do
+            echo -e "  ${DIM}+ $(cd "$rpath" && pwd)${NC}"
+          done
         fi
 
         COMPOSE="docker compose -f $PROJECT_DIR/docker-compose.yml -f $OVERRIDE"
