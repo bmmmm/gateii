@@ -9,7 +9,8 @@ local function sanitize(s)
 end
 
 -- record(user, provider, model, input_tokens, output_tokens, opts)
--- opts = { latency_ms=N, status=N, stop_reason="end_turn"|... }
+-- opts = { latency_ms=N, status=N, stop_reason="end_turn"|...,
+--          cache_creation=N, cache_read=N }
 function _M.record(user, provider, model, input_tokens, output_tokens, opts)
     -- user is pre-sanitized by auth.lua; provider/model may contain unsafe chars
     provider = sanitize(provider)
@@ -24,6 +25,14 @@ function _M.record(user, provider, model, input_tokens, output_tokens, opts)
     end
     if output_tokens > 0 then
         counters:incr(prefix .. "|output", output_tokens, 0)
+    end
+
+    -- Cache token counts
+    if opts.cache_creation and opts.cache_creation > 0 then
+        counters:incr(prefix .. "|cache_creation", opts.cache_creation, 0)
+    end
+    if opts.cache_read and opts.cache_read > 0 then
+        counters:incr(prefix .. "|cache_read", opts.cache_read, 0)
     end
 
     -- Request count + latency sum (for average latency computation in Grafana)

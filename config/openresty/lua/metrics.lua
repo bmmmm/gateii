@@ -2,11 +2,12 @@
 local counters = ngx.shared.counters
 local blocking_dict = ngx.shared.blocking
 
--- Anthropic public pricing per 1M tokens (USD)
+-- Anthropic public pricing per 1M tokens (USD) — updated April 2026
+-- Cache write = 1.25x base input, cache read = 0.1x base input
 local pricing = {
-    { pattern = "opus",   input = 15.0,   output = 75.0 },
+    { pattern = "opus",   input = 5.0,    output = 25.0 },
     { pattern = "sonnet", input = 3.0,    output = 15.0 },
-    { pattern = "haiku",  input = 0.25,   output = 1.25 },
+    { pattern = "haiku",  input = 1.0,    output = 5.0  },
 }
 
 local function model_price(model)
@@ -70,13 +71,13 @@ local function labels_upm(user, provider, model)
     return escape_label(user), escape_label(provider), escape_label(model)
 end
 
--- Tokens
+-- Tokens (input, output, cache_creation, cache_read)
 add("# HELP gateii_tokens_total Token usage by user/provider/model/type")
 add("# TYPE gateii_tokens_total counter")
 for upm, data in pairs(usage) do
     local user, provider, model = upm:match("^([^|]+)|([^|]+)|(.+)$")
     local eu, ep, em = labels_upm(user, provider, model)
-    for _, typ in ipairs({"input", "output"}) do
+    for _, typ in ipairs({"input", "output", "cache_creation", "cache_read"}) do
         local val = data[typ] or 0
         if val > 0 then
             add(string.format('gateii_tokens_total{user="%s",provider="%s",model="%s",type="%s"} %d',
@@ -124,7 +125,7 @@ for upm, data in pairs(usage) do
     end
 end
 
--- Cost
+-- Cost (cache-aware: cache_write = 1.25x input, cache_read = 0.1x input)
 add("# HELP gateii_cost_dollars_total Estimated API cost in USD (Anthropic pricing)")
 add("# TYPE gateii_cost_dollars_total counter")
 for upm, data in pairs(usage) do
@@ -132,6 +133,7 @@ for upm, data in pairs(usage) do
     local eu, ep, em = labels_upm(user, provider, model)
     local price = model_price(model)
     if price then
+        -- Standard input/output tokens
         for _, typ in ipairs({"input", "output"}) do
             local tokens = data[typ] or 0
             if tokens > 0 then
@@ -139,6 +141,20 @@ for upm, data in pairs(usage) do
                 add(string.format('gateii_cost_dollars_total{user="%s",provider="%s",model="%s",type="%s"} %.6f',
                     eu, ep, em, typ, cost))
             end
+        end
+        -- Cache write tokens (1.25x base input price)
+        local cache_create = data.cache_creation or 0
+        if cache_create > 0 then
+            local cost = cache_create * (price.input * 1.25) / 1000000
+            add(string.format('gateii_cost_dollars_total{user="%s",provider="%s",model="%s",type="%s"} %.6f',
+                eu, ep, em, "cache_write", cost))
+        end
+        -- Cache read tokens (0.1x base input price)
+        local cache_rd = data.cache_read or 0
+        if cache_rd > 0 then
+            local cost = cache_rd * (price.input * 0.1) / 1000000
+            add(string.format('gateii_cost_dollars_total{user="%s",provider="%s",model="%s",type="%s"} %.6f',
+                eu, ep, em, "cache_read", cost))
         end
     end
 end
@@ -163,6 +179,16 @@ for _, key in ipairs(block_keys) do
         local buser = key:sub(9)
         add(string.format('gateii_user_blocked{user="%s"} 1', escape_label(buser)))
     end
+end
+
+-- Model pricing (gauge — tracks price changes over time via Prometheus)
+add("# HELP gateii_model_pricing_per_mtok Current Anthropic pricing per 1M tokens (USD)")
+add("# TYPE gateii_model_pricing_per_mtok gauge")
+for _, p in ipairs(pricing) do
+    add(string.format('gateii_model_pricing_per_mtok{model="%s",type="input"} %.2f', p.pattern, p.input))
+    add(string.format('gateii_model_pricing_per_mtok{model="%s",type="output"} %.2f', p.pattern, p.output))
+    add(string.format('gateii_model_pricing_per_mtok{model="%s",type="cache_write"} %.2f', p.pattern, p.input * 1.25))
+    add(string.format('gateii_model_pricing_per_mtok{model="%s",type="cache_read"} %.2f', p.pattern, p.input * 0.1))
 end
 
 ngx.print(table.concat(lines, "\n") .. "\n")

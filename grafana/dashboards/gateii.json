@@ -132,7 +132,7 @@
     {
       "id": 11,
       "title": "Gesch\u00e4tzte Kosten (24h)",
-      "description": "Basierend auf \u00f6ffentlichen Anthropic-Preisen. Sonnet: $3/$15 pro 1M, Haiku: $0.25/$1.25, Opus: $15/$75 (input/output).",
+      "description": "Basierend auf Anthropic-Preisen (April 2026). Opus 4.6: $5/$25, Sonnet 4.6: $3/$15, Haiku 4.5: $1/$5 pro 1M (input/output). Cache-Reads: 0.1x, Cache-Writes: 1.25x.",
       "type": "stat",
       "gridPos": {
         "x": 16,
