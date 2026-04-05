@@ -108,5 +108,71 @@ if uri == "/internal/admin/usage" and method == "GET" then
     return
 end
 
+-- GET /internal/admin/keys — list all proxy keys (masked)
+if uri == "/internal/admin/keys" and method == "GET" then
+    local keys_data = {}
+    local count = 0
+    local f = io.open("/etc/nginx/data/keys.json", "r")
+    if f then
+        local raw = f:read("*a")
+        f:close()
+        local parsed = cjson.decode(raw)
+        if parsed then
+            for key, user in pairs(parsed) do
+                count = count + 1
+                local masked = key:sub(1, 12) .. "..." .. key:sub(-6)
+                keys_data[#keys_data + 1] = { key = masked, user = user }
+            end
+        end
+    end
+    ngx.say(cjson.encode({ keys = keys_data, count = count }))
+    return
+end
+
+-- GET /internal/admin/overview — combined status for console
+if uri == "/internal/admin/overview" and method == "GET" then
+    -- Proxy mode
+    local mode = os.getenv("PROXY_MODE") or "passthrough"
+    local passthrough_user = os.getenv("PASSTHROUGH_USER") or ""
+
+    -- Key count
+    local key_count = 0
+    local f = io.open("/etc/nginx/data/keys.json", "r")
+    if f then
+        local raw = f:read("*a")
+        f:close()
+        local parsed = cjson.decode(raw)
+        if parsed then
+            for _ in pairs(parsed) do key_count = key_count + 1 end
+        end
+    end
+
+    -- Blocked count
+    local blocked_count = 0
+    local block_keys = blocking_dict:get_keys(0) or {}
+    for _, key in ipairs(block_keys) do
+        if key:sub(1, 8) == "blocked|" then
+            blocked_count = blocked_count + 1
+        end
+    end
+
+    -- Git-stats plugin active?
+    local git_stats = false
+    local gf = io.open("/etc/nginx/data/git-metrics.txt", "r")
+    if gf then
+        git_stats = true
+        gf:close()
+    end
+
+    ngx.say(cjson.encode({
+        proxy_mode = mode,
+        passthrough_user = passthrough_user,
+        key_count = key_count,
+        blocked_count = blocked_count,
+        plugins = { git_stats = git_stats },
+    }))
+    return
+end
+
 ngx.status = 404
-ngx.say('{"error":"Unknown admin endpoint — available: /internal/admin/{block,unblock,limit,status,usage}"}')
+ngx.say('{"error":"Unknown admin endpoint — available: /internal/admin/{block,unblock,limit,status,usage,keys,overview}"}')

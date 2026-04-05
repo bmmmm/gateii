@@ -19,6 +19,7 @@ services:
     volumes:
       - ./config/openresty/nginx.conf:/usr/local/openresty/nginx/conf/nginx.conf:ro
       - ./config/openresty/lua:/etc/nginx/lua:ro
+      - ./config/openresty/html:/etc/nginx/html:ro
       - ./data:/etc/nginx/data
     ports:
       - "${PROXY_PORT:-8888}:8080"
