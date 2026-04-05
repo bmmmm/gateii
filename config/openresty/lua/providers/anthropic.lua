@@ -19,15 +19,18 @@ function _M.build_headers(upstream_key, auth_type)
     return headers
 end
 
--- Returns: input_tokens, output_tokens, stop_reason
+-- Returns: input_tokens, output_tokens, stop_reason, cache_creation_tokens, cache_read_tokens
 function _M.extract_tokens(response_body)
-    if not response_body then return 0, 0, nil end
+    if not response_body then return 0, 0, nil, 0, 0 end
     local obj, err = cjson.decode(response_body)
-    if not obj then return 0, 0, nil end
-    local input  = (obj.usage and obj.usage.input_tokens)  or 0
-    local output = (obj.usage and obj.usage.output_tokens) or 0
+    if not obj then return 0, 0, nil, 0, 0 end
+    local u = obj.usage or {}
+    local input  = u.input_tokens or 0
+    local output = u.output_tokens or 0
+    local cache_create = u.cache_creation_input_tokens or 0
+    local cache_read   = u.cache_read_input_tokens or 0
     local stop   = obj.stop_reason  -- "end_turn", "max_tokens", "stop_sequence", "tool_use"
-    return input, output, stop
+    return input, output, stop, cache_create, cache_read
 end
 
 return _M
