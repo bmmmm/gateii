@@ -1,0 +1,290 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>gateii console</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;600&display=swap" rel="stylesheet">
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+:root{
+  --bg:#0a0a0a;--fg:#00ff41;--dim:#00802080;--warn:#ffb000;--err:#ff3333;
+  --border:#00ff4130;--glow:0 0 8px #00ff4140;--font:'IBM Plex Mono',monospace;
+}
+html{background:#000;height:100%}
+body{
+  font-family:var(--font);font-size:13px;color:var(--fg);background:var(--bg);
+  min-height:100%;position:relative;overflow-x:hidden;line-height:1.5;
+}
+/* CRT scanlines */
+body::after{
+  content:'';position:fixed;inset:0;pointer-events:none;z-index:999;
+  background:repeating-linear-gradient(0deg,transparent,transparent 2px,rgba(0,0,0,.08) 2px,rgba(0,0,0,.08) 4px);
+}
+/* Vignette */
+body::before{
+  content:'';position:fixed;inset:0;pointer-events:none;z-index:998;
+  background:radial-gradient(ellipse at center,transparent 60%,rgba(0,0,0,.6) 100%);
+}
+.crt{max-width:960px;margin:0 auto;padding:24px 20px 40px}
+/* Title */
+.title{
+  text-align:center;letter-spacing:.5em;font-size:1.6rem;font-weight:600;
+  text-shadow:0 0 20px #00ff4180,0 0 40px #00ff4140;
+  margin-bottom:4px;padding-top:8px;
+}
+.subtitle{text-align:center;color:var(--dim);font-size:11px;margin-bottom:24px;letter-spacing:.15em}
+.status-line{
+  text-align:center;font-size:11px;margin-bottom:20px;
+  color:var(--dim);letter-spacing:.05em;
+}
+.status-line .online{color:var(--fg)}
+.status-line .offline{color:var(--err)}
+/* Panels */
+.panel{border:1px solid var(--border);margin-bottom:16px;position:relative}
+.panel-head{
+  padding:6px 12px;font-size:11px;letter-spacing:.12em;text-transform:uppercase;
+  border-bottom:1px solid var(--border);color:var(--dim);
+  display:flex;justify-content:space-between;align-items:center;
+}
+.panel-body{padding:12px}
+/* Stats grid */
+.stats{display:grid;grid-template-columns:repeat(4,1fr);gap:1px;background:var(--border)}
+.stat{background:var(--bg);padding:16px 12px;text-align:center}
+.stat-val{
+  font-size:2.4rem;font-weight:600;line-height:1;
+  text-shadow:var(--glow);transition:color .3s;
+}
+.stat-label{font-size:10px;color:var(--dim);letter-spacing:.1em;margin-top:6px;text-transform:uppercase}
+/* Threshold colors */
+.c-green{color:var(--fg)}.c-yellow{color:var(--warn)}.c-red{color:var(--err)}
+/* Tables */
+table{width:100%;border-collapse:collapse;font-size:12px}
+th{text-align:left;color:var(--dim);font-weight:400;padding:4px 8px;letter-spacing:.08em;font-size:10px;text-transform:uppercase;border-bottom:1px solid var(--border)}
+td{padding:5px 8px;border-bottom:1px solid #00ff4110}
+tr:hover td{background:#00ff4108}
+/* Keys */
+.key-masked{color:var(--dim);font-size:11px}
+.key-user{color:var(--fg)}
+/* Blocked */
+.blocked-row{display:flex;justify-content:space-between;align-items:center;padding:6px 0;border-bottom:1px solid #00ff4110}
+.blocked-row:last-child{border:none}
+.btn{
+  background:transparent;color:var(--fg);border:1px solid var(--border);
+  padding:3px 10px;font-family:var(--font);font-size:11px;cursor:pointer;
+  letter-spacing:.05em;transition:all .15s;
+}
+.btn:hover{background:#00ff4118;border-color:var(--fg);text-shadow:var(--glow)}
+.btn-danger{color:var(--err);border-color:#ff333340}
+.btn-danger:hover{background:#ff333318;border-color:var(--err)}
+/* Plugin badge */
+.badge{display:inline-block;padding:2px 8px;font-size:10px;letter-spacing:.08em;border:1px solid var(--border)}
+.badge-on{color:var(--fg);border-color:var(--fg);text-shadow:var(--glow)}
+.badge-off{color:var(--dim);border-color:var(--dim)}
+/* Footer */
+.footer{text-align:center;color:var(--dim);font-size:10px;padding:16px 0;letter-spacing:.08em}
+.blink{animation:blink 1s step-end infinite}
+@keyframes blink{50%{opacity:0}}
+/* Phosphor persistence on value changes */
+.flash{animation:phosphor .6s ease-out}
+@keyframes phosphor{0%{text-shadow:0 0 16px #00ff41,0 0 30px #00ff4180}100%{text-shadow:var(--glow)}}
+/* Empty state */
+.empty{color:var(--dim);font-style:italic;font-size:12px;padding:8px 0}
+/* Responsive */
+@media(max-width:640px){
+  .stats{grid-template-columns:repeat(2,1fr)}
+  .stat-val{font-size:1.8rem}
+  .crt{padding:12px 10px 30px}
+  .title{font-size:1.2rem}
+}
+</style>
+</head>
+<body>
+<div class="crt">
+  <div class="title">GATEII</div>
+  <div class="subtitle">LLM PROXY CONSOLE</div>
+  <div class="status-line" id="status-line">CONNECTING<span class="blink">_</span></div>
+
+  <!-- Stats -->
+  <div class="panel">
+    <div class="panel-head"><span>Live Metrics (24h)</span><span id="metric-age"></span></div>
+    <div class="stats">
+      <div class="stat"><div class="stat-val c-green" id="s-req">-</div><div class="stat-label">Requests</div></div>
+      <div class="stat"><div class="stat-val c-green" id="s-tok">-</div><div class="stat-label">Tokens</div></div>
+      <div class="stat"><div class="stat-val c-green" id="s-cost">-</div><div class="stat-label">Cost</div></div>
+      <div class="stat"><div class="stat-val c-green" id="s-cache">-</div><div class="stat-label">Cache Hit</div></div>
+    </div>
+  </div>
+
+  <!-- Pricing -->
+  <div class="panel">
+    <div class="panel-head"><span>Model Pricing ($/MTok)</span></div>
+    <div class="panel-body">
+      <table>
+        <tr><th>Model</th><th>Input</th><th>Output</th><th>Cache Write</th><th>Cache Read</th></tr>
+        <tbody id="pricing-body"><tr><td colspan="5" class="empty">loading...</td></tr></tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- Keys -->
+  <div class="panel" id="keys-panel">
+    <div class="panel-head"><span>Proxy Keys</span><span id="key-count">-</span></div>
+    <div class="panel-body" id="keys-body"><div class="empty">loading...</div></div>
+  </div>
+
+  <!-- Blocked -->
+  <div class="panel">
+    <div class="panel-head"><span>Blocked Users</span><span id="blocked-count">0</span></div>
+    <div class="panel-body" id="blocked-body"><div class="empty">none</div></div>
+  </div>
+
+  <!-- Plugins -->
+  <div class="panel">
+    <div class="panel-head"><span>Plugins</span></div>
+    <div class="panel-body" id="plugins-body"><div class="empty">loading...</div></div>
+  </div>
+
+  <div class="footer">
+    LAST REFRESH <span id="last-refresh">-</span> &middot; AUTO-REFRESH 30s <span class="blink">&#9608;</span>
+  </div>
+</div>
+
+<script>
+const $ = id => document.getElementById(id);
+
+function parseMetrics(text) {
+  const m = {};
+  for (const line of text.split('\n')) {
+    if (line.startsWith('#') || !line.trim()) continue;
+    const match = line.match(/^(\w+)\{([^}]*)\}\s+(.+)$/);
+    if (match) {
+      const [, name, labels, value] = match;
+      if (!m[name]) m[name] = [];
+      const lo = {};
+      labels.split(',').forEach(l => {
+        const eq = l.indexOf('=');
+        if (eq > 0) lo[l.slice(0, eq)] = l.slice(eq + 1).replace(/"/g, '');
+      });
+      m[name].push({ l: lo, v: parseFloat(value) });
+    }
+  }
+  return m;
+}
+
+function fmt(n) {
+  if (n >= 1e6) return (n / 1e6).toFixed(1) + 'M';
+  if (n >= 1e3) return (n / 1e3).toFixed(1) + 'K';
+  return Math.round(n).toString();
+}
+
+function setVal(id, val, prev) {
+  const el = $(id);
+  el.textContent = val;
+  if (prev !== undefined && prev !== val) el.classList.add('flash');
+  el.addEventListener('animationend', () => el.classList.remove('flash'), { once: true });
+}
+
+function threshold(el, val, y, r) {
+  el.className = 'stat-val ' + (val >= r ? 'c-red' : val >= y ? 'c-yellow' : 'c-green');
+}
+
+let prev = {};
+
+async function refresh() {
+  try {
+    // Health
+    const h = await fetch('/health').then(r => r.ok);
+    $('status-line').innerHTML = h
+      ? '<span class="online">ONLINE</span> &middot; <span id="mode-display">-</span>'
+      : '<span class="offline">OFFLINE</span>';
+
+    // Overview
+    const ov = await fetch('/internal/admin/overview').then(r => r.json());
+    const md = document.getElementById('mode-display');
+    if (md) md.textContent = ov.proxy_mode.toUpperCase() + (ov.passthrough_user ? ' (' + ov.passthrough_user + ')' : '');
+
+    // Metrics
+    const raw = await fetch('/metrics').then(r => r.text());
+    const m = parseMetrics(raw);
+
+    const reqTotal = (m.gateii_requests_total || []).reduce((s, e) => s + e.v, 0);
+    const tokTotal = (m.gateii_tokens_total || []).reduce((s, e) => s + e.v, 0);
+    const costTotal = (m.gateii_cost_dollars_total || []).reduce((s, e) => s + e.v, 0);
+    const cacheRead = (m.gateii_tokens_total || []).filter(e => e.l.type === 'cache_read').reduce((s, e) => s + e.v, 0);
+    const cacheCreate = (m.gateii_tokens_total || []).filter(e => e.l.type === 'cache_creation').reduce((s, e) => s + e.v, 0);
+    const inputTok = (m.gateii_tokens_total || []).filter(e => e.l.type === 'input').reduce((s, e) => s + e.v, 0);
+    const cacheRate = (inputTok + cacheRead + cacheCreate) > 0
+      ? Math.round(cacheRead / (inputTok + cacheRead + cacheCreate) * 100) : 0;
+
+    setVal('s-req', fmt(reqTotal), prev.req); prev.req = fmt(reqTotal);
+    setVal('s-tok', fmt(tokTotal), prev.tok); prev.tok = fmt(tokTotal);
+    setVal('s-cost', '$' + costTotal.toFixed(2), prev.cost); prev.cost = '$' + costTotal.toFixed(2);
+    setVal('s-cache', cacheRate + '%', prev.cache); prev.cache = cacheRate + '%';
+
+    threshold($('s-cost'), costTotal, 5, 20);
+    threshold($('s-cache'), 100 - cacheRate, 60, 80); // invert: low cache = bad
+
+    // Pricing
+    const pricing = m.gateii_model_pricing_per_mtok || [];
+    const models = {};
+    pricing.forEach(p => {
+      const mod = p.l.model;
+      if (!models[mod]) models[mod] = {};
+      models[mod][p.l.type] = p.v;
+    });
+    const pBody = $('pricing-body');
+    if (Object.keys(models).length) {
+      pBody.innerHTML = Object.entries(models).map(([mod, p]) =>
+        `<tr><td>${mod}</td><td>$${(p.input||0).toFixed(2)}</td><td>$${(p.output||0).toFixed(2)}</td><td>$${(p.cache_write||0).toFixed(2)}</td><td>$${(p.cache_read||0).toFixed(2)}</td></tr>`
+      ).join('');
+    }
+
+    // Keys
+    const keys = await fetch('/internal/admin/keys').then(r => r.json());
+    $('key-count').textContent = keys.count;
+    if (ov.proxy_mode === 'passthrough') {
+      $('keys-body').innerHTML = '<div class="empty">passthrough mode &mdash; no proxy keys needed</div>';
+    } else if (keys.count === 0) {
+      $('keys-body').innerHTML = '<div class="empty">no keys configured &mdash; run admin.sh add &lt;user&gt;</div>';
+    } else {
+      $('keys-body').innerHTML = '<table><tr><th>Key</th><th>User</th></tr>' +
+        keys.keys.map(k => `<tr><td class="key-masked">${k.key}</td><td class="key-user">${k.user}</td></tr>`).join('') +
+        '</table>';
+    }
+
+    // Blocked
+    const status = await fetch('/internal/admin/status').then(r => r.json());
+    $('blocked-count').textContent = status.blocked.length;
+    if (status.blocked.length === 0) {
+      $('blocked-body').innerHTML = '<div class="empty">none</div>';
+    } else {
+      $('blocked-body').innerHTML = status.blocked.map(b => {
+        const ttl = b.ttl > 3600 ? Math.round(b.ttl / 3600) + 'h' : Math.round(b.ttl / 60) + 'm';
+        return `<div class="blocked-row"><span>${b.user} <span style="color:var(--dim)">(${ttl} remaining)</span></span>` +
+          `<button class="btn btn-danger" onclick="unblock('${b.user}')">UNBLOCK</button></div>`;
+      }).join('');
+    }
+
+    // Plugins
+    const pluginHtml = [];
+    pluginHtml.push(`<span>git-stats</span> <span class="badge ${ov.plugins.git_stats ? 'badge-on' : 'badge-off'}">${ov.plugins.git_stats ? 'ACTIVE' : 'INACTIVE'}</span>`);
+    $('plugins-body').innerHTML = pluginHtml.join('');
+
+    $('last-refresh').textContent = new Date().toLocaleTimeString();
+  } catch (e) {
+    $('status-line').innerHTML = '<span class="offline">ERROR: ' + e.message + '</span>';
+  }
+}
+
+async function unblock(user) {
+  await fetch('/internal/admin/unblock?user=' + encodeURIComponent(user), { method: 'POST' });
+  refresh();
+}
+
+refresh();
+setInterval(refresh, 30000);
+</script>
+</body>
+</html>
