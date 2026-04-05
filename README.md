@@ -249,7 +249,7 @@ providers["myprovider"] = require("providers.myprovider")
 
 | Topic | Status |
 |-------|--------|
-| `ssl_verify=false` upstream | alpine has no CA bundle -- MITM on Anthropic connection possible. Fix: add `ca-certificates` to a custom Dockerfile |
+| SSL verification | Enabled -- `ca-certificates` installed at container startup |
 | Auth cache TTL | Revoked keys work for up to 5 min -- reduce in `auth.lua` if needed |
 | Request size limit | 10 MB max body (supports vision payloads) -- set in `nginx.conf` |
 | Admin API | Internal only -- restricted to localhost and Docker network IPs |
