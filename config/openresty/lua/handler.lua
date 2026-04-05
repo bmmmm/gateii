@@ -10,7 +10,11 @@ if not body_str then
     local body_file = ngx.req.get_body_file()
     if body_file then
         local f = io.open(body_file, "rb")
-        if f then body_str = f:read("*a"); f:close() end
+        if f then
+            local ok, result = pcall(f.read, f, "*a")
+            f:close()
+            if ok then body_str = result end
+        end
     end
 end
 if not body_str or body_str == "" then
@@ -81,7 +85,7 @@ if not is_streaming then
         method  = ngx.var.request_method,
         body    = body_str,
         headers = upstream_headers,
-        ssl_verify = false,
+        ssl_verify = true,
     })
     local latency_ms = (ngx.now() - t0) * 1000
 
@@ -140,7 +144,7 @@ local ok, conn_err = httpc:connect({
     host            = host,
     port            = port,
     ssl_server_name = host,
-    ssl_verify      = false,
+    ssl_verify      = true,
 })
 if not ok then
     ngx.log(ngx.ERR, "streaming connect error (user=", user, "): ", conn_err)
@@ -210,15 +214,19 @@ if res.status == 200 then
     local body = table.concat(chunks)
     local data = body:match("event: message_start\r?\ndata: ([^\r\n]+)")
     if data then
-        local obj = cjson.decode(data)
+        local obj, err = cjson.decode(data)
         if obj and obj.message and obj.message.usage then
             input_tokens = obj.message.usage.input_tokens or 0
+        elseif not obj then
+            ngx.log(ngx.WARN, "failed to decode message_start SSE: ", err)
         end
     end
     data = body:match("event: message_delta\r?\ndata: ([^\r\n]+)")
     if data then
-        local obj = cjson.decode(data)
-        if obj then
+        local obj, err = cjson.decode(data)
+        if not obj then
+            ngx.log(ngx.WARN, "failed to decode message_delta SSE: ", err)
+        elseif obj then
             if obj.usage then output_tokens = obj.usage.output_tokens or 0 end
             if obj.delta then stop_reason = obj.delta.stop_reason end
         end

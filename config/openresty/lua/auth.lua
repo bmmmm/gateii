@@ -17,6 +17,12 @@ local function sanitize(s)
     return (tostring(s or "unknown"):gsub("[:|%s]", "_"):sub(1, 64))
 end
 
+-- TTL until next midnight UTC (+ 60s buffer for clock skew)
+local function ttl_until_midnight()
+    local now = os.time()
+    return (86400 - (now % 86400)) + 60
+end
+
 -- Load keys from JSON file (apikey mode)
 local function load_keys()
     local f = io.open("/etc/nginx/data/keys.json", "r")
@@ -105,22 +111,22 @@ do
         return ngx.exit(429)
     end
 
-    -- 3b. Daily token limit check
+    -- 3b. Daily limit checks (atomic via incr return value to avoid TOCTOU races)
     local limits_raw = blocking_dict:get("limits|" .. user)
     if limits_raw then
-        local limits = cjson.decode(limits_raw)
-        if limits then
+        local limits, decode_err = cjson.decode(limits_raw)
+        if not limits then
+            ngx.log(ngx.WARN, "failed to decode limits for user ", user, ": ", decode_err)
+        else
             local today = os.date("!%Y-%m-%d")
             local day_prefix = "day|" .. user .. "|" .. today
 
             if limits.tokens_per_day then
-                local used_in  = counters:get(day_prefix .. "|input") or 0
-                local used_out = counters:get(day_prefix .. "|output") or 0
+                -- Use incr(0) for atomic read — returns current value without race window
+                local used_in  = counters:incr(day_prefix .. "|input", 0, 0, 90000) or 0
+                local used_out = counters:incr(day_prefix .. "|output", 0, 0, 90000) or 0
                 if (used_in + used_out) >= limits.tokens_per_day then
-                    -- Auto-block until end of day (UTC)
-                    local now = os.time()
-                    local midnight = now + (86400 - (now % 86400))
-                    local ttl = midnight - now + 60
+                    local ttl = ttl_until_midnight()
                     blocking_dict:set("blocked|" .. user, "auto:tokens_per_day", ttl)
                     ngx.status = 429
                     ngx.header["Content-Type"] = "application/json"
@@ -132,11 +138,9 @@ do
 
             -- 3c. Daily request limit check
             if limits.requests_per_day then
-                local used_reqs = counters:get(day_prefix .. "|requests") or 0
+                local used_reqs = counters:incr(day_prefix .. "|requests", 0, 0, 90000) or 0
                 if used_reqs >= limits.requests_per_day then
-                    local now = os.time()
-                    local midnight = now + (86400 - (now % 86400))
-                    local ttl = midnight - now + 60
+                    local ttl = ttl_until_midnight()
                     blocking_dict:set("blocked|" .. user, "auto:requests_per_day", ttl)
                     ngx.status = 429
                     ngx.header["Content-Type"] = "application/json"
