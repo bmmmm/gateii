@@ -41,9 +41,10 @@ bash scripts/smoke-test.sh
 | `config/openresty/lua/handler.lua` | Proxy to upstream, SSE token parsing, header forwarding |
 | `config/openresty/lua/tracking.lua` | Shared dict counters (tokens, latency, errors, stop_reason) |
 | `config/openresty/lua/metrics.lua` | Prometheus exposition format from shared dicts |
-| `config/openresty/lua/admin_api.lua` | HTTP admin API (block/unblock/limit) |
+| `config/openresty/lua/admin_api.lua` | HTTP admin API (block/unblock/limit, /providers, /llm-prices) |
 | `config/openresty/lua/providers/anthropic.lua` | Anthropic header building, token extraction |
-| `config/openresty/nginx.conf` | Env whitelist, shared dicts, routes |
+| `config/openresty/lua/providers.json` | Multi-provider pricing config, active provider selector |
+| `config/openresty/nginx.conf` | Env whitelist, shared dicts, routes, /internal/prometheus proxy |
 | `data/keys.json` | API key → user mapping (apikey mode, gitignored) |
 
 ## Architecture decisions
