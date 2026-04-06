@@ -31,7 +31,8 @@ local function try_providers_json()
     return false
 end
 
-if not try_providers_json() then
+local pricing_loaded = try_providers_json()
+if not pricing_loaded then
     local f = io.open("/etc/nginx/lua/pricing.json", "r")
         or io.open("/usr/local/openresty/nginx/conf/pricing.json", "r")
     if f then
@@ -42,8 +43,12 @@ if not try_providers_json() then
             pricing = cfg.models
             cache_write_mult = cfg.cache_write_multiplier or cache_write_mult
             cache_read_mult = cfg.cache_read_multiplier or cache_read_mult
+            pricing_loaded = true
         end
     end
+end
+if not pricing_loaded then
+    ngx.log(ngx.WARN, "metrics: providers.json and pricing.json not found, using hardcoded defaults -- update providers.json")
 end
 
 local function model_price(model)
