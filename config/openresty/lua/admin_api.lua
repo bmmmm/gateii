@@ -404,7 +404,7 @@ if uri == "/internal/admin/openrouter-models" and method == "GET" then
     local http = require "resty.http"
     local httpc = http.new()
     httpc:set_timeouts(5000, 5000, 15000)
-    local res, err = httpc:request_uri("https://openrouter.ai/api/v1/models", {
+    local res, err = httpc:request_uri("https://openrouter.ai/api/v1/models?order=top-weekly&categories=programming", {
         ssl_verify = false,
         headers = { ["User-Agent"] = "gateii-proxy/1.0", ["Accept"] = "application/json" },
     })
