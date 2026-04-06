@@ -122,21 +122,25 @@ do
             local day_prefix = "day|" .. user .. "|" .. today
 
             if limits.tokens_per_day then
-                -- Use incr(0) for atomic read — returns current value without race window
                 local used_in  = counters:incr(day_prefix .. "|input", 0, 0, 90000) or 0
                 local used_out = counters:incr(day_prefix .. "|output", 0, 0, 90000) or 0
-                if (used_in + used_out) >= limits.tokens_per_day then
+                local used_total = used_in + used_out
+                if used_total >= limits.tokens_per_day then
                     local ttl = ttl_until_midnight()
                     blocking_dict:set("blocked|" .. user, "auto:tokens_per_day", ttl)
                     ngx.status = 429
                     ngx.header["Content-Type"] = "application/json"
                     ngx.header["Retry-After"] = tostring(ttl)
-                    ngx.say('{"error":"Daily token limit reached — resets at midnight UTC"}')
+                    ngx.say(cjson.encode({
+                        error = "Daily token limit reached — resets at midnight UTC",
+                        usage = { used = used_total, limit = limits.tokens_per_day },
+                        retry_after = ttl,
+                        console = "http://localhost:8888/console"
+                    }))
                     return ngx.exit(429)
                 end
             end
 
-            -- 3c. Daily request limit check
             if limits.requests_per_day then
                 local used_reqs = counters:incr(day_prefix .. "|requests", 0, 0, 90000) or 0
                 if used_reqs >= limits.requests_per_day then
@@ -145,7 +149,12 @@ do
                     ngx.status = 429
                     ngx.header["Content-Type"] = "application/json"
                     ngx.header["Retry-After"] = tostring(ttl)
-                    ngx.say('{"error":"Daily request limit reached — resets at midnight UTC"}')
+                    ngx.say(cjson.encode({
+                        error = "Daily request limit reached — resets at midnight UTC",
+                        usage = { used = used_reqs, limit = limits.requests_per_day },
+                        retry_after = ttl,
+                        console = "http://localhost:8888/console"
+                    }))
                     return ngx.exit(429)
                 end
             end

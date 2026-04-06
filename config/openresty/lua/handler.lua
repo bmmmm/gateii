@@ -231,7 +231,7 @@ if res.status == 200 then
         local obj, err = cjson.decode(data)
         if not obj then
             ngx.log(ngx.WARN, "failed to decode message_delta SSE: ", err)
-        elseif obj then
+        else
             if obj.usage then output_tokens = obj.usage.output_tokens or 0 end
             if obj.delta then stop_reason = obj.delta.stop_reason end
         end
