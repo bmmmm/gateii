@@ -332,5 +332,62 @@ if uri == "/internal/admin/addkey" and method == "POST" then
     return
 end
 
+-- GET /internal/admin/providers — multi-provider pricing config
+if uri == "/internal/admin/providers" and method == "GET" then
+    local f = io.open("/etc/nginx/lua/providers.json", "r")
+    if not f then
+        ngx.status = 404
+        ngx.say('{"error":"providers.json not found — create config/openresty/lua/providers.json"}')
+        return
+    end
+    local data = f:read("*a")
+    f:close()
+    ngx.say(data)
+    return
+end
+
+-- GET /internal/admin/llm-prices — proxy llm-prices.com with 1hr cache
+if uri == "/internal/admin/llm-prices" and method == "GET" then
+    local cache_key = "llm_prices_cache"
+    local cache_ttl_key = "llm_prices_ttl"
+    local cached = counters:get(cache_key)
+
+    -- Return cached data if fresh (< 1hr)
+    if cached then
+        ngx.header["X-Cache"] = "HIT"
+        ngx.say(cached)
+        return
+    end
+
+    -- Fetch from llm-prices.com
+    ngx.header["X-Cache"] = "MISS"
+    local http = require "resty.http"
+    local httpc = http.new()
+    httpc:set_timeouts(5000, 5000, 10000)
+    local res, err = httpc:request_uri("https://www.llm-prices.com/current-v1.json", {
+        ssl_verify = false,
+        headers = { ["User-Agent"] = "gateii-proxy/1.0" },
+    })
+    if not res then
+        ngx.status = 502
+        ngx.say(cjson.encode({error = "Failed to fetch llm-prices: " .. (err or "unknown")}))
+        return
+    end
+    if res.status ~= 200 then
+        ngx.status = res.status
+        ngx.say(cjson.encode({error = "llm-prices returned HTTP " .. res.status}))
+        return
+    end
+
+    -- Cache for 1hr (3600s) — uses counters dict for storage
+    local ok, cerr = counters:set(cache_key, res.body, 3600)
+    if not ok then
+        ngx.log(ngx.WARN, "llm-prices cache write failed: ", cerr)
+    end
+
+    ngx.say(res.body)
+    return
+end
+
 ngx.status = 404
-ngx.say('{"error":"Unknown admin endpoint — available: /internal/admin/{block,unblock,limit,status,usage,keys,addkey,overview}"}')
+ngx.say('{"error":"Unknown admin endpoint — available: /internal/admin/{block,unblock,limit,status,usage,keys,addkey,overview,providers}"}')
