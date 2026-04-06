@@ -38,7 +38,7 @@ function _M.record(user, provider, model, input_tokens, output_tokens, opts)
     -- Request count + latency sum (for average latency computation in Grafana)
     counters:incr(prefix .. "|requests", 1, 0)
     if opts.latency_ms then
-        counters:incr(prefix .. "|latency_ms_sum", opts.latency_ms, 0)
+        counters:incr(prefix .. "|latency_ms_sum", math.floor(opts.latency_ms + 0.5), 0)
     end
 
     -- Upstream error count (status != 200)
