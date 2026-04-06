@@ -595,7 +595,7 @@ function renderPricing(m) {
 
   // Show source attribution
   {
-    const orLink = `<a href="https://openrouter.ai/models?fmt=cards&categories=programming" target="_blank" style="color:var(--blue);text-decoration:none;border-bottom:1px solid #5b9aff30">openrouter.ai</a>`;
+    const orLink = `<a href="https://openrouter.ai/models?categories=programming&fmt=cards&order=top-weekly" target="_blank" style="color:var(--blue);text-decoration:none;border-bottom:1px solid #5b9aff30">openrouter.ai</a>`;
     const llmPricesLink = `<a href="https://github.com/simonw/llm-prices" target="_blank" style="color:var(--blue);text-decoration:none;border-bottom:1px solid #5b9aff30">simonw/llm-prices</a>`;
     const hasOrLive = compModels.some(cm => cm._or_live);
     const parts = [`Rankings: ${orLink} · top weekly programming`];
