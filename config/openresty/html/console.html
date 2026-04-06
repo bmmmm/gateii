@@ -59,7 +59,7 @@ body{
 .toolbar .mode-tag b{color:var(--fg);font-weight:600}
 
 /* Stats row */
-.stats{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:20px}
+.stats{display:grid;grid-template-columns:repeat(5,1fr);gap:10px;margin-bottom:20px}
 .stat-card{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:18px 16px;text-align:center;transition:border-color .2s}
 .stat-card:hover{border-color:var(--border-bright)}
 .stat-val{font-family:var(--font-display);font-size:2rem;font-weight:700;line-height:1.1;color:var(--accent);transition:color .3s}
@@ -148,11 +148,32 @@ select.input{cursor:pointer;-webkit-appearance:none;padding-right:28px;
 .flash{animation:glow-flash .5s ease-out}
 @keyframes glow-flash{0%{color:#fff}100%{}}
 
+/* Attribution bar */
+.provider-attr{padding:6px 16px;font-size:11px;color:var(--dim);border-bottom:1px solid var(--border);display:flex;gap:8px;align-items:center}
+.provider-attr a{color:var(--blue);text-decoration:none;border-bottom:1px solid #5b9aff30}
+.provider-attr a:hover{color:var(--accent);border-color:var(--accent-dim)}
+
+/* Comparison bars */
+.comp-row{display:flex;align-items:center;gap:12px;padding:8px 0;border-bottom:1px solid #ffffff08}
+.comp-row:last-child{border:none}
+.comp-provider{min-width:200px;font-size:13px;font-weight:500;display:flex;align-items:center;gap:8px}
+.comp-vendor{font-size:10px;color:var(--dim);background:var(--surface2);padding:1px 6px;border-radius:3px;letter-spacing:.04em}
+.comp-current{border:1px solid var(--accent-dim);color:var(--accent);background:var(--accent-subtle)}
+.comp-bar-wrap{flex:1;height:10px;background:var(--surface2);border-radius:5px;overflow:hidden}
+.comp-bar{height:100%;border-radius:5px;transition:width .5s ease}
+.comp-cost{min-width:80px;text-align:right;font-size:13px;font-weight:600;font-family:var(--font-display)}
+.comp-cheapest{color:var(--accent)}
+.comp-expensive{color:var(--dim)}
+.comp-bar.cheapest{background:var(--accent)}
+.comp-bar.mid{background:var(--blue)}
+.comp-bar.expensive{background:var(--warn)}
+
 /* Two-column layout for bottom panels */
 .grid-2{display:grid;grid-template-columns:1fr 1fr;gap:16px}
 
 @media(max-width:700px){
   .stats{grid-template-columns:repeat(2,1fr)}
+  .stats .stat-card:nth-child(5){grid-column:1/-1}
   .stat-val{font-size:1.5rem}
   .shell{padding:16px 12px 32px}
   .header{flex-direction:column;gap:12px;align-items:flex-start}
@@ -200,23 +221,41 @@ select.input{cursor:pointer;-webkit-appearance:none;padding-right:28px;
       <div class="stat-label">Est. Cost 24h</div>
     </div>
     <div class="stat-card">
+      <div class="stat-val c-blue" id="s-monthly">-</div>
+      <div class="stat-label">Est. Monthly</div>
+      <div class="stat-sub" id="s-monthly-detail"></div>
+    </div>
+    <div class="stat-card">
       <div class="stat-val c-green" id="s-latency">-</div>
       <div class="stat-label">Avg Latency</div>
       <div class="stat-sub" id="s-latency-detail"></div>
     </div>
   </div>
 
-  <!-- Pricing with summary -->
+  <!-- Your pricing (actual provider) -->
   <div class="panel">
-    <div class="panel-head"><span>Model Pricing &amp; Cost Breakdown</span></div>
+    <div class="panel-head">
+      <span>Your Pricing</span>
+      <span id="pricing-attr" class="count" style="font-weight:400;font-size:11px;text-transform:none;letter-spacing:normal">-</span>
+    </div>
     <div class="panel-body" style="padding:0">
       <table>
         <thead>
-          <tr><th>Model</th><th class="text-right">Input</th><th class="text-right">Output</th><th class="text-right">Cache Write</th><th class="text-right">Cache Read</th><th class="text-right">Total Cost</th></tr>
+          <tr><th>Model</th><th class="text-right">Input $/MTok</th><th class="text-right">Output $/MTok</th><th class="text-right">Cache Write</th><th class="text-right">Cache Read</th><th class="text-right">Est. Cost</th></tr>
         </thead>
         <tbody id="pricing-body"><tr><td colspan="6" class="empty" style="padding:12px 16px">loading...</td></tr></tbody>
       </table>
     </div>
+  </div>
+
+  <!-- Top coding models comparison -->
+  <div class="panel" id="comparison-panel" style="display:none">
+    <div class="panel-head">
+      <span>Monthly Cost — Top Coding Models</span>
+      <span class="count" id="comp-tokens">-</span>
+    </div>
+    <div id="comp-source" class="provider-attr" style="display:none"></div>
+    <div class="panel-body" id="comparison-body"></div>
   </div>
 
   <div class="grid-2">
@@ -350,6 +389,278 @@ function threshold(el, val, y, r) {
 }
 
 let prev = {};
+let providersData = null;
+let llmPricesData = null; // live pricing from llm-prices.com
+let promAvailable = null; // null=unknown, true/false=cached
+let monthlyTokensByPattern = null; // cached monthly projection from Prometheus
+
+// --- Prometheus query helpers ---
+async function promScalar(expr) {
+  try {
+    const r = await fetch(`/internal/prometheus/api/v1/query?query=${encodeURIComponent(expr)}`);
+    if (!r.ok) { promAvailable = false; return null; }
+    const data = await r.json();
+    if (data.status !== 'success' || !data.data.result.length) return null;
+    promAvailable = true;
+    return parseFloat(data.data.result[0].value[1]) || 0;
+  } catch (e) { promAvailable = false; return null; }
+}
+
+async function promVector(expr) {
+  try {
+    const r = await fetch(`/internal/prometheus/api/v1/query?query=${encodeURIComponent(expr)}`);
+    if (!r.ok) return null;
+    const data = await r.json();
+    if (data.status !== 'success') return null;
+    promAvailable = true;
+    return data.data.result.map(r => ({ labels: r.metric, value: parseFloat(r.value[1]) || 0 }));
+  } catch (e) { return null; }
+}
+
+// Fetch monthly token projection from Prometheus (7d avg × 30/7), grouped by model+type
+async function fetchMonthlyProjection() {
+  const vec = await promVector('sum by (model, type) (increase(gateii_tokens_total[7d])) / 7 * 30');
+  if (!vec) return null;
+  const byPattern = {};
+  const activeProvider = providersData?.providers?.find(p => p.id === (providersData?.active_provider || 'anthropic'));
+  const models = activeProvider?.models || [];
+  for (const entry of vec) {
+    const fullModel = entry.labels.model || '';
+    const type = entry.labels.type || '';
+    const lower = fullModel.toLowerCase();
+    let pattern = fullModel;
+    for (const pm of models) {
+      if (lower.includes(pm.pattern)) { pattern = pm.pattern; break; }
+    }
+    if (!byPattern[pattern]) byPattern[pattern] = { input: 0, output: 0, cache_creation: 0, cache_read: 0, fullModels: [] };
+    byPattern[pattern][type] = (byPattern[pattern][type] || 0) + entry.value;
+    if (!byPattern[pattern].fullModels.includes(fullModel)) byPattern[pattern].fullModels.push(fullModel);
+  }
+  return byPattern;
+}
+
+// Fetch providers config + live pricing
+async function loadProviders() {
+  try {
+    providersData = await fetch('/internal/admin/providers').then(r => r.json());
+  } catch (e) {
+    providersData = null;
+  }
+}
+
+async function loadLlmPrices() {
+  try {
+    const r = await fetch('/internal/admin/llm-prices');
+    if (!r.ok) return;
+    llmPricesData = await r.json();
+    // Update comparison model prices from live data
+    if (llmPricesData?.prices && providersData?.comparison_models) {
+      const priceMap = {};
+      for (const p of llmPricesData.prices) {
+        priceMap[p.id] = p;
+      }
+      for (const cm of providersData.comparison_models) {
+        const live = priceMap[cm.id];
+        if (live) {
+          cm.input = live.input;
+          cm.output = live.output;
+          if (live.input_cached !== null && live.input_cached !== undefined) cm.input_cached = live.input_cached;
+          cm._live = true;
+        }
+      }
+    }
+  } catch (e) {
+    // Fallback to static prices in providers.json
+  }
+}
+
+// Collect token usage per model-pattern from metrics
+function collectTokensByPattern(m) {
+  const byPattern = {}; // { "opus": { input: N, output: N, cache_creation: N, cache_read: N } }
+  const tokenEntries = m.gateii_tokens_total || [];
+  // Get all unique model names from metrics
+  const modelNames = new Set();
+  tokenEntries.forEach(e => modelNames.add(e.l.model));
+  // For each model, figure out which pattern it matches
+  for (const fullModel of modelNames) {
+    const lower = fullModel.toLowerCase();
+    // Find matching pattern from active provider
+    let matchedPattern = null;
+    if (providersData) {
+      const active = providersData.providers.find(p => p.id === providersData.active_provider) || providersData.providers[0];
+      for (const pm of (active.models || [])) {
+        if (lower.includes(pm.pattern)) { matchedPattern = pm.pattern; break; }
+      }
+    }
+    if (!matchedPattern) {
+      // Fallback: use model name itself
+      matchedPattern = fullModel;
+    }
+    if (!byPattern[matchedPattern]) byPattern[matchedPattern] = { input: 0, output: 0, cache_creation: 0, cache_read: 0, fullModels: [] };
+    if (!byPattern[matchedPattern].fullModels.includes(fullModel)) byPattern[matchedPattern].fullModels.push(fullModel);
+    for (const e of tokenEntries) {
+      if (e.l.model === fullModel) {
+        byPattern[matchedPattern][e.l.type] = (byPattern[matchedPattern][e.l.type] || 0) + e.v;
+      }
+    }
+  }
+  return byPattern;
+}
+
+// Calculate cost for a provider given token usage by pattern
+function calcProviderCost(provider, tokensByPattern) {
+  let total = 0;
+  const perModel = [];
+  for (const pm of (provider.models || [])) {
+    const usage = tokensByPattern[pm.pattern];
+    if (!usage) { perModel.push({ model: pm, cost: 0 }); continue; }
+    const cwm = provider.cache_write_multiplier || 1.25;
+    const crm = provider.cache_read_multiplier || 0.1;
+    let cost = 0;
+    cost += (usage.input || 0) * pm.input / 1e6;
+    cost += (usage.output || 0) * pm.output / 1e6;
+    cost += (usage.cache_creation || 0) * (pm.input * cwm) / 1e6;
+    cost += (usage.cache_read || 0) * (pm.input * crm) / 1e6;
+    total += cost;
+    perModel.push({ model: pm, cost, usage });
+  }
+  return { total, perModel };
+}
+
+let lastMetrics = null;
+
+// Calculate cost for a single model given aggregate token usage
+function calcModelCost(model, totalInput, totalOutput, totalCacheWrite, totalCacheRead) {
+  let cost = 0;
+  cost += totalInput * model.input / 1e6;
+  cost += totalOutput * model.output / 1e6;
+  // Cache: if model has cached pricing, use it; otherwise cache tokens = regular input price
+  const cacheWritePrice = model.input * (model.cache_write_multiplier || 1.25);
+  const cacheReadPrice = model.input_cached !== undefined ? model.input_cached : model.input * 0.1;
+  cost += totalCacheWrite * cacheWritePrice / 1e6;
+  cost += totalCacheRead * cacheReadPrice / 1e6;
+  return cost;
+}
+
+function renderPricing(m) {
+  if (!providersData || !providersData.providers) return;
+  const provider = providersData.providers.find(p => p.id === (providersData.active_provider || 'anthropic'));
+  if (!provider) return;
+
+  // Attribution
+  const attr = $('pricing-attr');
+  attr.innerHTML = `<a href="${provider.url}" target="_blank" style="color:var(--accent);text-decoration:none">${provider.name}</a> · ${providersData.updated || '?'}`;
+
+  const tokensByPattern = collectTokensByPattern(m);
+  const result = calcProviderCost(provider, tokensByPattern);
+  const cwm = provider.cache_write_multiplier || 1.25;
+  const crm = provider.cache_read_multiplier || 0.1;
+
+  const pBody = $('pricing-body');
+  let rows = '';
+
+  for (const { model: pm, cost, usage } of result.perModel) {
+    const hasUsage = usage && cost > 0;
+    const dimStyle = hasUsage ? '' : ' style="color:var(--dim)"';
+    const fullNames = usage ? usage.fullModels.join(', ') : '';
+    const nameDisplay = fullNames && fullNames !== pm.name ? `${pm.name} <span style="color:var(--dim);font-size:11px">${fullNames}</span>` : pm.name;
+    rows += `<tr${dimStyle}>
+      <td>${nameDisplay}</td>
+      <td class="text-right">$${pm.input.toFixed(2)}</td>
+      <td class="text-right">$${pm.output.toFixed(2)}</td>
+      <td class="text-right">$${(pm.input * cwm).toFixed(2)}</td>
+      <td class="text-right">$${(pm.input * crm).toFixed(2)}</td>
+      <td class="text-right">${hasUsage ? fmtUSD(cost) : '-'}</td>
+    </tr>`;
+  }
+  if (rows) {
+    rows += `<tr class="summary-row">
+      <td colspan="5">Total at ${provider.name}</td>
+      <td class="text-right">${fmtUSD(result.total)}</td>
+    </tr>`;
+    pBody.innerHTML = rows;
+  }
+
+  // --- Top Coding Models comparison (monthly projection) ---
+  const compPanel = $('comparison-panel');
+  const compBody = $('comparison-body');
+  const compSource = $('comp-source');
+  const compModels = providersData.comparison_models || [];
+
+  // Aggregate ALL monthly tokens (across all model patterns)
+  const monthlyTok = monthlyTokensByPattern || tokensByPattern;
+  const isMonthly = !!monthlyTokensByPattern;
+
+  let totalInput = 0, totalOutput = 0, totalCacheWrite = 0, totalCacheRead = 0;
+  for (const u of Object.values(monthlyTok)) {
+    totalInput += u.input || 0;
+    totalOutput += u.output || 0;
+    totalCacheWrite += u.cache_creation || 0;
+    totalCacheRead += u.cache_read || 0;
+  }
+  const totalTokens = totalInput + totalOutput + totalCacheWrite + totalCacheRead;
+
+  if (totalTokens === 0 || compModels.length === 0) {
+    compPanel.style.display = 'none';
+    return;
+  }
+  compPanel.style.display = '';
+  $('comp-tokens').textContent = isMonthly
+    ? `${fmt(totalTokens)} tokens/month (7d avg)`
+    : `${fmt(totalTokens)} session tokens`;
+
+  // Show live pricing source
+  const hasLive = compModels.some(cm => cm._live);
+  if (hasLive && llmPricesData?.updated_at) {
+    compSource.style.display = '';
+    compSource.innerHTML = `Prices: <a href="https://llm-prices.com" target="_blank">llm-prices.com</a> · ${llmPricesData.updated_at}`;
+  } else {
+    compSource.style.display = 'none';
+  }
+
+  // Calculate cost for each comparison model
+  const entries = compModels.map(cm => ({
+    ...cm,
+    total: calcModelCost(cm, totalInput, totalOutput, totalCacheWrite, totalCacheRead)
+  }));
+
+  // Add current provider as "Your current mix"
+  const currentTotal = result.total * (isMonthly ? 1 : 1); // session tokens same basis
+  // For monthly: recalculate provider cost with monthly tokens
+  let currentMonthlyCost = 0;
+  if (isMonthly) {
+    const monthlyResult = calcProviderCost(provider, monthlyTok);
+    currentMonthlyCost = monthlyResult.total;
+  } else {
+    currentMonthlyCost = result.total;
+  }
+  entries.push({
+    name: 'Your current mix',
+    vendor: provider.name,
+    total: currentMonthlyCost,
+    _current: true
+  });
+
+  entries.sort((a, b) => a.total - b.total);
+  const maxCost = Math.max(...entries.map(e => e.total), 0.001);
+  const minCost = Math.min(...entries.filter(e => e.total > 0).map(e => e.total), maxCost);
+
+  compBody.innerHTML = entries.map((e, i) => {
+    const pct = Math.max(3, Math.round(e.total / maxCost * 100));
+    const isCheapest = e.total === minCost && !e._current;
+    const barClass = e._current ? 'mid' : isCheapest ? 'cheapest' : e.total >= maxCost * 0.8 ? 'expensive' : 'mid';
+    const costClass = e._current ? '' : isCheapest ? 'comp-cheapest' : 'comp-expensive';
+    const vendorBadge = e._current
+      ? `<span class="comp-vendor comp-current">CURRENT</span>`
+      : `<span class="comp-vendor">${e.vendor}</span>`;
+    const liveIndicator = e._live ? ' *' : '';
+    return `<div class="comp-row">
+      <div class="comp-provider"><span>${e.name}${liveIndicator}</span>${vendorBadge}</div>
+      <div class="comp-bar-wrap"><div class="comp-bar ${barClass}" style="width:${pct}%"></div></div>
+      <div class="comp-cost ${costClass}">${fmtUSD(e.total)}${isMonthly ? '/mo' : ''}</div>
+    </div>`;
+  }).join('');
+}
 
 async function refresh() {
   try {
@@ -367,18 +678,43 @@ async function refresh() {
 
     const raw = await fetch('/metrics').then(r => r.text());
     const m = parseMetrics(raw);
+    lastMetrics = m;
 
-    // --- Stats ---
-    const reqTotal = (m.gateii_requests_total || []).reduce((s, e) => s + e.v, 0);
-    const tokTotal = (m.gateii_tokens_total || []).reduce((s, e) => s + e.v, 0);
-    const costTotal = (m.gateii_cost_dollars_total || []).reduce((s, e) => s + e.v, 0);
+    // --- Stats: try Prometheus for real 24h data, fallback to live counters ---
+    const [pReq, pTok, pCost, pLatSum, pInTok, pOutTok, pMonthlyCost] = await Promise.all([
+      promScalar('sum(increase(gateii_requests_total[24h]))'),
+      promScalar('sum(increase(gateii_tokens_total[24h]))'),
+      promScalar('sum(increase(gateii_cost_dollars_total[24h]))'),
+      promScalar('sum(increase(gateii_request_duration_ms_total[24h])) / clamp_min(sum(increase(gateii_requests_total[24h])), 1)'),
+      promScalar('sum(increase(gateii_tokens_total{type="input"}[24h]))'),
+      promScalar('sum(increase(gateii_tokens_total{type="output"}[24h]))'),
+      promScalar('sum(increase(gateii_cost_dollars_total[7d])) / 7 * 30'),
+    ]);
 
-    const inputTok = (m.gateii_tokens_total || []).filter(e => e.l.type === 'input').reduce((s, e) => s + e.v, 0);
-    const outputTok = (m.gateii_tokens_total || []).filter(e => e.l.type === 'output').reduce((s, e) => s + e.v, 0);
+    // Also fetch monthly token projection for provider comparison
+    monthlyTokensByPattern = await fetchMonthlyProjection();
 
-    // Avg latency
-    const latencyTotal = (m.gateii_request_duration_ms_total || []).reduce((s, e) => s + e.v, 0);
-    const avgLatency = reqTotal > 0 ? Math.round(latencyTotal / reqTotal) : 0;
+    const useProm = pReq !== null;
+    const liveFallback = () => ({
+      req: (m.gateii_requests_total || []).reduce((s, e) => s + e.v, 0),
+      tok: (m.gateii_tokens_total || []).reduce((s, e) => s + e.v, 0),
+      cost: (m.gateii_cost_dollars_total || []).reduce((s, e) => s + e.v, 0),
+      inTok: (m.gateii_tokens_total || []).filter(e => e.l.type === 'input').reduce((s, e) => s + e.v, 0),
+      outTok: (m.gateii_tokens_total || []).filter(e => e.l.type === 'output').reduce((s, e) => s + e.v, 0),
+      latMs: (() => { const t = (m.gateii_request_duration_ms_total || []).reduce((s, e) => s + e.v, 0);
+                      const r = (m.gateii_requests_total || []).reduce((s, e) => s + e.v, 0);
+                      return r > 0 ? t / r : 0; })(),
+    });
+    const fb = liveFallback();
+
+    const reqTotal = useProm ? pReq : fb.req;
+    const tokTotal = useProm ? pTok : fb.tok;
+    const costTotal = useProm ? pCost : fb.cost;
+    const inputTok = useProm ? pInTok : fb.inTok;
+    const outputTok = useProm ? pOutTok : fb.outTok;
+    const avgLatency = useProm ? Math.round(pLatSum) : Math.round(fb.latMs);
+
+    const src = useProm ? 'prometheus' : 'live';
 
     setVal('s-req', fmt(reqTotal), prev.req); prev.req = fmt(reqTotal);
     setVal('s-tok', fmt(tokTotal), prev.tok); prev.tok = fmt(tokTotal);
@@ -387,79 +723,25 @@ async function refresh() {
     setVal('s-latency', latStr, prev.lat); prev.lat = latStr;
 
     $('s-tok-detail').textContent = `${fmt(inputTok)} in / ${fmt(outputTok)} out`;
-    $('s-latency-detail').textContent = reqTotal > 0 ? `${reqTotal} requests total` : '';
+    $('s-latency-detail').textContent = reqTotal > 0 ? `${Math.round(reqTotal)} req · ${src}` : '';
+
+    // Monthly projection
+    if (pMonthlyCost !== null) {
+      const mStr = fmtUSD(pMonthlyCost);
+      setVal('s-monthly', mStr, prev.monthly); prev.monthly = mStr;
+      $('s-monthly-detail').textContent = '7d avg projected';
+      threshold($('s-monthly'), pMonthlyCost, 50, 200);
+    } else {
+      // Fallback: extrapolate from live session data
+      setVal('s-monthly', '-', prev.monthly); prev.monthly = '-';
+      $('s-monthly-detail').textContent = 'needs prometheus';
+    }
 
     threshold($('s-cost'), costTotal, 5, 20);
     threshold($('s-latency'), avgLatency, 5000, 15000);
 
-    // --- Pricing table: merge short pricing names with full cost model names ---
-    const pricing = m.gateii_model_pricing_per_mtok || [];
-    const pricingMap = {};  // short name → prices
-    pricing.forEach(p => {
-      const mod = p.l.model;
-      if (!pricingMap[mod]) pricingMap[mod] = {};
-      pricingMap[mod][p.l.type] = p.v;
-    });
-
-    // Cost per full model name
-    const costByModel = {};
-    (m.gateii_cost_dollars_total || []).forEach(e => {
-      const mod = e.l.model;
-      if (!costByModel[mod]) costByModel[mod] = { input: 0, output: 0, cache_write: 0, cache_read: 0, total: 0 };
-      if (costByModel[mod][e.l.type] !== undefined) costByModel[mod][e.l.type] = e.v;
-      costByModel[mod].total += e.v;
-    });
-
-    // Match full model name to short pricing key (e.g. "claude-opus-4-6" → "opus")
-    function findPricing(fullName) {
-      for (const [short, prices] of Object.entries(pricingMap)) {
-        if (fullName.toLowerCase().includes(short)) return prices;
-      }
-      return null;
-    }
-
-    const pBody = $('pricing-body');
-    // Use cost models as primary (they have the full names users recognize)
-    const costModels = Object.keys(costByModel).sort();
-    // Add pricing-only models that have no cost data yet
-    const pricingOnly = Object.keys(pricingMap).filter(short =>
-      !costModels.some(full => full.toLowerCase().includes(short))
-    ).sort();
-
-    let grandTotal = 0;
-    let rows = '';
-
-    for (const mod of costModels) {
-      const p = findPricing(mod) || {};
-      const c = costByModel[mod];
-      grandTotal += c.total;
-      rows += `<tr>
-        <td>${mod}</td>
-        <td class="text-right">${p.input ? '$'+p.input.toFixed(2) : '-'}</td>
-        <td class="text-right">${p.output ? '$'+p.output.toFixed(2) : '-'}</td>
-        <td class="text-right">${p.cache_write ? '$'+p.cache_write.toFixed(2) : '-'}</td>
-        <td class="text-right">${p.cache_read ? '$'+p.cache_read.toFixed(2) : '-'}</td>
-        <td class="text-right">${c.total > 0 ? fmtUSD(c.total) : '-'}</td>
-      </tr>`;
-    }
-    for (const mod of pricingOnly) {
-      const p = pricingMap[mod];
-      rows += `<tr style="color:var(--dim)">
-        <td>${mod}</td>
-        <td class="text-right">$${(p.input||0).toFixed(2)}</td>
-        <td class="text-right">$${(p.output||0).toFixed(2)}</td>
-        <td class="text-right">$${(p.cache_write||0).toFixed(2)}</td>
-        <td class="text-right">$${(p.cache_read||0).toFixed(2)}</td>
-        <td class="text-right">-</td>
-      </tr>`;
-    }
-    if (rows) {
-      rows += `<tr class="summary-row">
-        <td colspan="5">Total estimated cost (session)</td>
-        <td class="text-right">${fmtUSD(grandTotal)}</td>
-      </tr>`;
-      pBody.innerHTML = rows;
-    }
+    // --- Pricing table + provider comparison ---
+    renderPricing(m);
 
     // --- Keys ---
     const keys = await fetch('/internal/admin/keys').then(r => r.json());
@@ -668,7 +950,7 @@ async function addKey() {
   } catch (e) { toast('Failed: ' + e.message, true); }
 }
 
-refresh();
+loadProviders().then(() => loadLlmPrices()).then(() => refresh());
 setInterval(refresh, 15000);
 </script>
 </body>
