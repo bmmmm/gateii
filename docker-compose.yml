@@ -16,6 +16,7 @@ services:
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
       - PROXY_MODE=${PROXY_MODE:-passthrough}
       - PASSTHROUGH_USER=${PASSTHROUGH_USER:-}
+      - CONSOLE_ENABLED=${CONSOLE_ENABLED:-0}
     volumes:
       - ./config/openresty/nginx.conf:/usr/local/openresty/nginx/conf/nginx.conf:ro
       - ./config/openresty/lua:/etc/nginx/lua:ro
@@ -36,6 +37,10 @@ services:
       - no-new-privileges:true
     cap_drop:
       - ALL
+    cap_add:
+      - CHOWN
+      - SETUID
+      - SETGID
     healthcheck:
       test: ["CMD", "wget", "-qO/dev/null", "http://127.0.0.1:8080/health"]
       interval: 10s
@@ -96,29 +101,6 @@ services:
       timeout: 5s
       retries: 5
 
-  # --- Plugins (opt-in via docker compose --profile <name> up -d) ---
-
-  git-stats:
-    profiles: ["git-stats"]
-    image: alpine:3.19
-    container_name: gateii-git-stats
-    restart: unless-stopped
-    security_opt:
-      - no-new-privileges:true
-    cap_drop:
-      - ALL
-    volumes:
-      - ./scripts/git-stats.sh:/app/git-stats.sh:ro
-      - ./data:/data
-      # Repo mounts added by: admin.sh plugin enable git-stats <path> [path...]
-    environment:
-      - GIT_AUTHOR=${GIT_AUTHOR:-}
-      - GIT_STATS_INTERVAL=${GIT_STATS_INTERVAL:-300}
-    entrypoint:
-      - /bin/sh
-      - -c
-      - |
-        apk add --no-cache git >/dev/null 2>&1
-        exec /bin/sh /app/git-stats.sh --container
-    networks:
-      - gateii
+  # --- Plugins ---
+  # git-tracking: defined in docker-compose.override.yml (created by admin.sh plugin enable git-tracking)
+  # console: controlled via CONSOLE_ENABLED env var (no extra container)
