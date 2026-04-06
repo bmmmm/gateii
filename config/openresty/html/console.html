@@ -167,6 +167,7 @@ select.input{cursor:pointer;-webkit-appearance:none;padding-right:28px;
 .comp-bar.cheapest{background:var(--accent)}
 .comp-bar.mid{background:var(--blue)}
 .comp-bar.expensive{background:var(--warn)}
+.comp-rank{font-size:10px;color:var(--dim);opacity:.7;white-space:nowrap;min-width:28px;text-align:right}
 
 /* Two-column layout for bottom panels */
 .grid-2{display:grid;grid-template-columns:1fr 1fr;gap:16px}
@@ -233,19 +234,14 @@ select.input{cursor:pointer;-webkit-appearance:none;padding-right:28px;
   </div>
 
   <!-- Your pricing (actual provider) -->
-  <div class="panel">
-    <div class="panel-head">
-      <span>Your Pricing</span>
-      <span id="pricing-attr" class="count" style="font-weight:400;font-size:11px;text-transform:none;letter-spacing:normal">-</span>
-    </div>
-    <div class="panel-body" style="padding:0">
-      <table>
-        <thead>
-          <tr><th>Model</th><th class="text-right">Input $/MTok</th><th class="text-right">Output $/MTok</th><th class="text-right">Cache Write</th><th class="text-right">Cache Read</th><th class="text-right">Est. Cost</th></tr>
-        </thead>
-        <tbody id="pricing-body"><tr><td colspan="6" class="empty" style="padding:12px 16px">loading...</td></tr></tbody>
-      </table>
-    </div>
+  <div style="margin-bottom:16px">
+    <div style="font-size:11px;color:var(--dim);margin-bottom:6px;padding:0 2px" id="pricing-attr">-</div>
+    <table>
+      <thead>
+        <tr><th>Model</th><th class="text-right">Input $/MTok</th><th class="text-right">Output $/MTok</th><th class="text-right">Cache Write</th><th class="text-right">Cache Read</th><th class="text-right">Est. Cost</th></tr>
+      </thead>
+      <tbody id="pricing-body"><tr><td colspan="6" class="empty" style="padding:12px 16px">loading...</td></tr></tbody>
+    </table>
   </div>
 
   <!-- Top coding models comparison -->
@@ -659,8 +655,11 @@ function renderPricing(m) {
       ? `<span class="comp-vendor comp-current">CURRENT</span>`
       : `<span class="comp-vendor">${e.vendor}</span>`;
     const liveIndicator = e._live ? ' *' : '';
+    const rankBadge = (!e._current && e.or_rank != null)
+      ? `<span class="comp-rank" title="OpenRouter coding rank">#${e.or_rank}</span>`
+      : '';
     return `<div class="comp-row">
-      <div class="comp-provider"><span>${e.name}${liveIndicator}</span>${vendorBadge}</div>
+      <div class="comp-provider"><span>${e.name}${liveIndicator}</span>${vendorBadge}${rankBadge}</div>
       <div class="comp-bar-wrap"><div class="comp-bar ${barClass}" style="width:${pct}%"></div></div>
       <div class="comp-cost ${costClass}">${fmtUSD(e.total)}${isMonthly ? '/mo' : ''}</div>
     </div>`;
