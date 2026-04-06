@@ -145,6 +145,8 @@ Prometheus scrape endpoint: `http://localhost:8888/metrics`
 
 The console plugin queries Prometheus via a reverse proxy at `/internal/prometheus/` (restricted to localhost and Docker network). This avoids CORS issues when the browser fetches historical data directly.
 
+`/internal/admin/openrouter-models` proxies the OpenRouter model API (`?order=top-weekly&categories=programming`) with a 12 h cache — used by the console to populate the live comparison panel. Pricing data sourced from [simonw/llm-prices](https://github.com/simonw/llm-prices).
+
 ---
 
 ## Proxy routing
@@ -233,6 +235,7 @@ All configuration via `.env`:
 | `PASSTHROUGH_USER` | _(key suffix)_ | Display name in passthrough mode |
 | `ANTHROPIC_API_KEY` | -- | Required when `PROXY_MODE=apikey` |
 | `CONSOLE_ENABLED` | `0` | `1` = enable admin console at `/console` |
+| `HISTORY_RETENTION` | _(unlimited)_ | Prometheus retention: `30d`, `90d`, `180d`, `365d`, or empty for unlimited |
 | `GIT_AUTHOR` | -- | Filter git-tracking by author name (optional) |
 | `GIT_TRACKING_INTERVAL` | `300` | git-tracking refresh interval in seconds |
 
@@ -240,7 +243,7 @@ All configuration via `.env`:
 
 ## Pricing configuration
 
-Cost metrics and the console pricing table are driven by `config/openresty/lua/providers.json`.
+Cost metrics are driven by `config/openresty/lua/providers.json`:
 
 ```json
 {
@@ -253,19 +256,23 @@ Cost metrics and the console pricing table are driven by `config/openresty/lua/p
       "cache_write_multiplier": 1.25,
       "cache_read_multiplier": 0.1,
       "models": [
-        { "pattern": "opus",   "input": 5.0,  "output": 25.0 },
-        { "pattern": "sonnet", "input": 3.0,  "output": 15.0 },
-        { "pattern": "haiku",  "input": 1.0,  "output": 5.0  }
+        { "pattern": "opus",   "name": "Claude Opus 4",    "input": 5.0, "output": 25.0 },
+        { "pattern": "sonnet", "name": "Claude Sonnet 4",  "input": 3.0, "output": 15.0 },
+        { "pattern": "haiku",  "name": "Claude Haiku 4.5", "input": 1.0, "output": 5.0  }
       ]
     }
   ],
-  "comparison_models": [ ... ]
+  "comparison_models": [
+    { "openrouter_id": "anthropic/claude-sonnet-4-6", "name": "Claude Sonnet 4.6",
+      "vendor": "Anthropic", "or_rank": 6, "input": 3.0, "output": 15.0 },
+    ...
+  ]
 }
 ```
 
-- `active_provider` selects which entry drives `gateii_cost_dollars_total`. Change it to switch the cost calculation to a different provider without restarting.
+- `active_provider` selects which entry drives `gateii_cost_dollars_total`.
 - `cache_write_multiplier` / `cache_read_multiplier` apply to Anthropic prompt-caching tokens.
-- `comparison_models` feeds the "Monthly Cost" comparison bars in the console. The console fetches live prices from llm-prices.com and overlays them (1h cache, falls back to the values in this file).
+- `comparison_models` is the **static fallback** for the console comparison panel. At runtime the console fetches the current top-10 weekly programming models from OpenRouter (`/internal/admin/openrouter-models`, 12 h cache) and replaces this list dynamically. Each entry has an `openrouter_id` for live price lookup and an `or_rank` for the weekly position badge.
 
 After editing `providers.json`, reload nginx: `docker exec gateii-proxy openresty -s reload`
 
