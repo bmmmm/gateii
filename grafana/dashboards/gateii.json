@@ -22,7 +22,7 @@
       "gridPos": {
         "x": 0,
         "y": 0,
-        "w": 8,
+        "w": 6,
         "h": 4
       },
       "datasource": {
@@ -73,9 +73,9 @@
       "title": "Tokens (24h)",
       "type": "stat",
       "gridPos": {
-        "x": 8,
+        "x": 6,
         "y": 0,
-        "w": 8,
+        "w": 6,
         "h": 4
       },
       "datasource": {
@@ -132,12 +132,12 @@
     {
       "id": 11,
       "title": "Estimated Costs (24h)",
-      "description": "Based on Anthropic pricing (April 2026). Opus 4.6: $5/$25, Sonnet 4.6: $3/$15, Haiku 4.5: $1/$5 per 1M (input/output). Cache reads: 0.1x, cache writes: 1.25x.",
+      "description": "Based on active provider pricing in providers.json. Cache reads: 0.1x, cache writes: 1.25x.",
       "type": "stat",
       "gridPos": {
-        "x": 16,
+        "x": 12,
         "y": 0,
-        "w": 8,
+        "w": 6,
         "h": 4
       },
       "datasource": {
@@ -186,6 +186,64 @@
           ]
         },
         "colorMode": "value",
+        "graphMode": "none",
+        "orientation": "auto",
+        "textMode": "auto"
+      }
+    },
+    {
+      "id": 20,
+      "title": "Blocked Users",
+      "description": "Number of users currently blocked (rate limit or manual). Red = at least one blocked user.",
+      "type": "stat",
+      "gridPos": {
+        "x": 18,
+        "y": 0,
+        "w": 6,
+        "h": 4
+      },
+      "datasource": {
+        "type": "prometheus"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus"
+          },
+          "expr": "sum(gateii_user_blocked) or vector(0)",
+          "legendFormat": "Blocked",
+          "instant": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "decimals": 0,
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 1
+              }
+            ]
+          }
+        }
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ]
+        },
+        "colorMode": "background",
         "graphMode": "none",
         "orientation": "auto",
         "textMode": "auto"
