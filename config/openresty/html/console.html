@@ -247,7 +247,7 @@ select.input{cursor:pointer;-webkit-appearance:none;padding-right:28px;
   <!-- Top coding models comparison -->
   <div class="panel" id="comparison-panel" style="display:none">
     <div class="panel-head">
-      <span>Monthly Cost — Top Coding Models</span>
+      <span>Monthly Cost — Top 10 Weekly (OpenRouter)</span>
       <span class="count" id="comp-tokens">-</span>
     </div>
     <div id="comp-source" class="provider-attr" style="display:none"></div>
@@ -386,7 +386,8 @@ function threshold(el, val, y, r) {
 
 let prev = {};
 let providersData = null;
-let llmPricesData = null; // live pricing from llm-prices.com
+let llmPricesData = null;   // live pricing from llm-prices.com
+let orModelsData = null;    // live pricing from OpenRouter API
 let promAvailable = null; // null=unknown, true/false=cached
 let monthlyTokensByPattern = null; // cached monthly projection from Prometheus
 
@@ -444,18 +445,43 @@ async function loadProviders() {
   }
 }
 
+async function loadOpenRouterModels() {
+  try {
+    const r = await fetch('/internal/admin/openrouter-models');
+    if (!r.ok) return;
+    orModelsData = await r.json();
+    if (orModelsData?.models && providersData?.comparison_models) {
+      const orMap = {};
+      for (const m of orModelsData.models) orMap[m.id] = m;
+      for (const cm of providersData.comparison_models) {
+        if (!cm.openrouter_id) continue;
+        const live = orMap[cm.openrouter_id];
+        if (live) {
+          cm.input  = live.input;
+          cm.output = live.output;
+          cm._live    = true;
+          cm._or_live = true;
+        }
+      }
+    }
+  } catch (e) {
+    orModelsData = null;
+  }
+}
+
 async function loadLlmPrices() {
   try {
     const r = await fetch('/internal/admin/llm-prices');
     if (!r.ok) return;
     llmPricesData = await r.json();
-    // Update comparison model prices from live data
+    // Update comparison model prices from live data (only for models without OR data)
     if (llmPricesData?.prices && providersData?.comparison_models) {
       const priceMap = {};
       for (const p of llmPricesData.prices) {
         priceMap[p.id] = p;
       }
       for (const cm of providersData.comparison_models) {
+        if (cm._or_live) continue;  // OR data takes precedence
         const live = priceMap[cm.id];
         if (live) {
           cm.input = live.input;
@@ -609,13 +635,16 @@ function renderPricing(m) {
     ? `${fmt(totalTokens)} tokens/month (7d avg)`
     : `${fmt(totalTokens)} session tokens`;
 
-  // Show live pricing source
-  const hasLive = compModels.some(cm => cm._live);
-  if (hasLive && llmPricesData?.updated_at) {
+  // Show source attribution
+  {
+    const orLink = `<a href="https://openrouter.ai/models?fmt=cards&categories=programming" target="_blank" style="color:var(--blue);text-decoration:none;border-bottom:1px solid #5b9aff30">openrouter.ai</a>`;
+    const hasOrLive = compModels.some(cm => cm._or_live);
+    const hasLlmLive = compModels.some(cm => cm._live && !cm._or_live);
+    const parts = [`Rankings: ${orLink} · top weekly programming`];
+    if (hasOrLive) parts[0] += ' · prices live';
+    if (hasLlmLive && llmPricesData?.updated_at) parts.push(`<a href="https://llm-prices.com" target="_blank" style="color:var(--blue);text-decoration:none">llm-prices.com</a> · ${llmPricesData.updated_at}`);
     compSource.style.display = '';
-    compSource.innerHTML = `Prices: <a href="https://llm-prices.com" target="_blank">llm-prices.com</a> · ${llmPricesData.updated_at}`;
-  } else {
-    compSource.style.display = 'none';
+    compSource.innerHTML = parts.join(' &nbsp;·&nbsp; ');
   }
 
   // Calculate cost for each comparison model, using active provider's cache multipliers as fallback
@@ -954,7 +983,7 @@ async function addKey() {
   } catch (e) { toast('Failed: ' + e.message, true); }
 }
 
-loadProviders().then(() => loadLlmPrices()).then(() => refresh());
+loadProviders().then(() => Promise.all([loadOpenRouterModels(), loadLlmPrices()])).then(() => refresh());
 setInterval(refresh, 15000);
 </script>
 </body>
