@@ -1020,6 +1020,14 @@
           "expr": "gateii_git_lines_removed_24h",
           "legendFormat": "{{repo}} -lines",
           "instant": true
+        },
+        {
+          "datasource": {
+            "type": "prometheus"
+          },
+          "expr": "gateii_git_files_changed_24h",
+          "legendFormat": "{{repo}} files",
+          "instant": true
         }
       ],
       "fieldConfig": {
