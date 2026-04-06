@@ -873,7 +873,7 @@
     {
       "id": 12,
       "title": "Tokens per Commit",
-      "description": "How many tokens it takes to produce one git commit. Requires git-stats plugin (scripts/git-stats.sh).",
+      "description": "How many tokens it takes to produce one git commit. Requires git-tracking plugin (scripts/git-tracking.sh).",
       "type": "stat",
       "gridPos": {
         "x": 0,
@@ -933,7 +933,7 @@
     {
       "id": 13,
       "title": "Cost per Commit",
-      "description": "Dollar cost per git commit. Requires git-stats plugin.",
+      "description": "Dollar cost per git commit. Requires git-tracking plugin.",
       "type": "stat",
       "gridPos": {
         "x": 8,
@@ -993,7 +993,7 @@
     {
       "id": 14,
       "title": "Git Activity (24h)",
-      "description": "Lines added/removed and commits per repo. Requires git-stats plugin.",
+      "description": "Lines added/removed and commits per repo. Requires git-tracking plugin.",
       "type": "bargauge",
       "gridPos": {
         "x": 16,
