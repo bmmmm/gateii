@@ -5,6 +5,14 @@ set -euo pipefail
 
 PROJECT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 
+# Auto-detect Docker socket (handles Colima on macOS)
+if [ -z "${DOCKER_HOST:-}" ]; then
+    COLIMA_SOCK="$HOME/.colima/default/docker.sock"
+    if [ -S "$COLIMA_SOCK" ]; then
+        export DOCKER_HOST="unix://$COLIMA_SOCK"
+    fi
+fi
+
 # Source .env for port/host configuration
 if [ -f "$PROJECT_DIR/.env" ]; then
     set -a; source "$PROJECT_DIR/.env"; set +a
@@ -21,6 +29,10 @@ KEYS_FILE="${PROJECT_DIR}/data/keys.json"
 # Ensure keys.json exists
 if [ ! -f "$KEYS_FILE" ]; then
     mkdir -p "$(dirname "$KEYS_FILE")"
+    echo '{}' > "$KEYS_FILE"
+elif ! jq empty "$KEYS_FILE" 2>/dev/null; then
+    echo -e "\033[0;31mWarning: $KEYS_FILE is corrupt JSON — backing up and resetting\033[0m" >&2
+    cp "$KEYS_FILE" "${KEYS_FILE}.backup.$(date +%s)"
     echo '{}' > "$KEYS_FILE"
 fi
 
@@ -50,7 +62,13 @@ validate_key() {
 # Atomic write to keys.json via temp file
 write_keys() {
     local tmp="${KEYS_FILE}.tmp"
-    jq "$@" "$KEYS_FILE" > "$tmp" && mv "$tmp" "$KEYS_FILE"
+    if jq "$@" "$KEYS_FILE" > "$tmp"; then
+        mv "$tmp" "$KEYS_FILE"
+    else
+        rm -f "$tmp"
+        echo -e "${RED}Failed to update keys.json${NC}" >&2
+        return 1
+    fi
 }
 
 reload_proxy() {
@@ -211,16 +229,16 @@ case "$SUBCMD" in
           echo -e "  ${DIM}cd $PROJECT_DIR && docker compose up -d${NC}" >&2
           exit 1
         fi
-        local tmp="${CLAUDE_SETTINGS}.tmp"
+        TMP="${CLAUDE_SETTINGS}.tmp"
         jq --arg url "$PROXY" '.env //= {} | .env.ANTHROPIC_BASE_URL = $url' \
-          "$CLAUDE_SETTINGS" > "$tmp" && mv "$tmp" "$CLAUDE_SETTINGS"
+          "$CLAUDE_SETTINGS" > "$TMP" && mv "$TMP" "$CLAUDE_SETTINGS"
         echo -e "${GRN}Switched to local proxy${NC} ($PROXY)"
         echo -e "  ${DIM}Restart Claude Code to apply${NC}"
         ;;
       direct)
-        local tmp="${CLAUDE_SETTINGS}.tmp"
+        TMP="${CLAUDE_SETTINGS}.tmp"
         jq 'if .env then .env |= del(.ANTHROPIC_BASE_URL) else . end' \
-          "$CLAUDE_SETTINGS" > "$tmp" && mv "$tmp" "$CLAUDE_SETTINGS"
+          "$CLAUDE_SETTINGS" > "$TMP" && mv "$TMP" "$CLAUDE_SETTINGS"
         echo -e "${GRN}Switched to direct Anthropic connection${NC}"
         echo -e "  ${DIM}Restart Claude Code to apply. Safe to stop the proxy now.${NC}"
         ;;
@@ -235,14 +253,15 @@ case "$SUBCMD" in
     PLUGIN="${2:-}"
     shift 2 2>/dev/null || shift $# 2>/dev/null || true
     OVERRIDE="$PROJECT_DIR/docker-compose.override.yml"
-    COMPOSE="docker compose -f $PROJECT_DIR/docker-compose.yml"
+    COMPOSE="docker compose --project-directory $PROJECT_DIR -f $PROJECT_DIR/docker-compose.yml --env-file $PROJECT_DIR/.env"
     # Include override if it exists
     if [ -f "$OVERRIDE" ]; then
       COMPOSE="$COMPOSE -f $OVERRIDE"
     fi
 
-    # Available plugins (profile name → description)
-    PLUGINS="git-stats:Track git activity (commits, lines) alongside token usage"
+    # Available plugins (name → description)
+    PLUGINS="console:Admin web console at /console (key management, limits, stats)
+git-tracking:Track git activity (commits, lines) alongside token usage"
 
     case "$ACTION" in
       list|ls)
@@ -250,7 +269,13 @@ case "$SUBCMD" in
         echo -e "${BOLD}Available plugins${NC}"
         echo ""
         echo "$PLUGINS" | while IFS=: read -r name desc; do
-          active=$($COMPOSE ps --format '{{.Name}}' 2>/dev/null | grep -q "gateii-$name" && echo "${GRN}active${NC}" || echo "${DIM}inactive${NC}")
+          if [ "$name" = "console" ]; then
+            active=$(grep -q "^CONSOLE_ENABLED=1" "$PROJECT_DIR/.env" 2>/dev/null && echo "${GRN}active${NC}" || echo "${DIM}inactive${NC}")
+          elif [ "$name" = "git-tracking" ]; then
+            active=$(grep -q "^GIT_TRACKING_ENABLED=1" "$PROJECT_DIR/.env" 2>/dev/null && echo "${GRN}active${NC}" || echo "${DIM}inactive${NC}")
+          else
+            active="${DIM}inactive${NC}"
+          fi
           echo -e "  ${CYN}$name${NC}  $desc  [$active]"
         done
         echo ""
@@ -260,49 +285,124 @@ case "$SUBCMD" in
           echo -e "${RED}Usage: admin.sh plugin enable <name> [paths...]${NC}" >&2; exit 1
         fi
 
-        # git-stats: generate override with repo volume mounts
-        if [ "$PLUGIN" = "git-stats" ]; then
+        # console: toggle env var + restart proxy (respects override for git-tracking)
+        if [ "$PLUGIN" = "console" ]; then
+          ENV_FILE="$PROJECT_DIR/.env"
+          touch "$ENV_FILE"
+          if grep -q "^CONSOLE_ENABLED=" "$ENV_FILE" 2>/dev/null; then
+            sed -i.bak 's/^CONSOLE_ENABLED=.*/CONSOLE_ENABLED=1/' "$ENV_FILE" && rm -f "${ENV_FILE}.bak"
+          else
+            echo "CONSOLE_ENABLED=1" >> "$ENV_FILE"
+          fi
+          CONSOLE_ENABLED=1 $COMPOSE up -d --force-recreate openresty 2>&1
+          echo -e "${GRN}Console enabled${NC} — open http://localhost:8888/console"
+          exit 0
+        fi
+
+        # git-tracking: full service in override + GIT_TRACKING_ENABLED
+        if [ "$PLUGIN" = "git-tracking" ]; then
           REPO_PATHS=("$@")
           if [ ${#REPO_PATHS[@]} -eq 0 ]; then
-            echo -e "${RED}Usage: admin.sh plugin enable git-stats <repo-path> [repo-path...]${NC}" >&2
-            echo -e "${DIM}  Example: admin.sh plugin enable git-stats ~/offline_coding ~/servers${NC}" >&2
+            echo -e "${RED}Usage: admin.sh plugin enable git-tracking <repo-path> [repo-path...]${NC}" >&2
+            echo -e "${DIM}  Example: admin.sh plugin enable git-tracking ~/offline_coding ~/servers${NC}" >&2
             exit 1
           fi
 
-          # Generate override with volume mounts
-          {
-            echo "services:"
-            echo "  git-stats:"
-            echo "    volumes:"
-            for rpath in "${REPO_PATHS[@]}"; do
-              # Resolve to absolute path
-              abs="$(cd "$rpath" 2>/dev/null && pwd)" || {
-                echo -e "${RED}Path not found: $rpath${NC}" >&2; exit 1
-              }
-              name="$(basename "$abs")"
-              echo "      - ${abs}:/repos/${name}:ro"
-            done
-          } > "$OVERRIDE"
-          # Show mounted paths
+          # Resolve all paths first
+          VOLUMES=""
           for rpath in "${REPO_PATHS[@]}"; do
-            echo -e "  ${DIM}+ $(cd "$rpath" && pwd)${NC}"
+            abs="$(cd "$rpath" 2>/dev/null && pwd)" || {
+              echo -e "${RED}Path not found: $rpath${NC}" >&2; exit 1
+            }
+            rname="$(basename "$abs")"
+            VOLUMES="${VOLUMES}      - ${abs}:/repos/${rname}:ro
+"
+            echo -e "  ${DIM}+ ${abs}${NC}"
           done
+
+          # Write complete service definition to override
+          cat > "$OVERRIDE" <<YAML
+services:
+  git-tracking:
+    image: alpine:3.19
+    container_name: gateii-git-tracking
+    restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    volumes:
+      - ./scripts/git-tracking.sh:/app/git-tracking.sh:ro
+      - ./data:/data
+${VOLUMES}    environment:
+      - GIT_AUTHOR=\${GIT_AUTHOR:-}
+      - GIT_TRACKING_INTERVAL=\${GIT_TRACKING_INTERVAL:-300}
+    entrypoint:
+      - /bin/sh
+      - -c
+      - |
+        apk add --no-cache git >/dev/null 2>&1
+        exec /bin/sh /app/git-tracking.sh --container
+    networks:
+      - gateii
+YAML
+
+          # Set GIT_TRACKING_ENABLED in .env
+          ENV_FILE="$PROJECT_DIR/.env"
+          touch "$ENV_FILE"
+          if grep -q "^GIT_TRACKING_ENABLED=" "$ENV_FILE" 2>/dev/null; then
+            sed -i.bak 's/^GIT_TRACKING_ENABLED=.*/GIT_TRACKING_ENABLED=1/' "$ENV_FILE" && rm -f "${ENV_FILE}.bak"
+          else
+            echo "GIT_TRACKING_ENABLED=1" >> "$ENV_FILE"
+          fi
+
+          # Start with override
+          COMPOSE_WITH_OVERRIDE="$COMPOSE -f $OVERRIDE"
+          $COMPOSE_WITH_OVERRIDE up -d git-tracking 2>&1
+          echo -e "${GRN}Plugin git-tracking enabled${NC}"
+          exit 0
         fi
 
-        COMPOSE="docker compose -f $PROJECT_DIR/docker-compose.yml -f $OVERRIDE"
-        $COMPOSE --profile "$PLUGIN" up -d "$PLUGIN" 2>&1
-        echo -e "${GRN}Plugin $PLUGIN enabled${NC}"
+        echo -e "${RED}Unknown plugin: $PLUGIN${NC}" >&2; exit 1
         ;;
       disable)
         if [ -z "$PLUGIN" ]; then
           echo -e "${RED}Usage: admin.sh plugin disable <name>${NC}" >&2; exit 1
         fi
-        $COMPOSE --profile "$PLUGIN" stop "$PLUGIN" 2>/dev/null
-        $COMPOSE --profile "$PLUGIN" rm -f "$PLUGIN" 2>/dev/null
-        # Clean up override and metrics
-        rm -f "$OVERRIDE" 2>/dev/null || true
-        rm -f "$PROJECT_DIR/data/git-metrics.txt" 2>/dev/null || true
-        echo -e "${GRN}Plugin $PLUGIN disabled${NC}"
+        # console: toggle env var (respects override for git-tracking)
+        if [ "$PLUGIN" = "console" ]; then
+          ENV_FILE="$PROJECT_DIR/.env"
+          touch "$ENV_FILE"
+          if grep -q "^CONSOLE_ENABLED=" "$ENV_FILE" 2>/dev/null; then
+            sed -i.bak 's/^CONSOLE_ENABLED=.*/CONSOLE_ENABLED=0/' "$ENV_FILE" && rm -f "${ENV_FILE}.bak"
+          else
+            echo "CONSOLE_ENABLED=0" >> "$ENV_FILE"
+          fi
+          CONSOLE_ENABLED=0 $COMPOSE up -d --force-recreate openresty 2>&1
+          echo -e "${GRN}Console disabled${NC}"
+          exit 0
+        fi
+        # git-tracking: stop container, remove override, set GIT_TRACKING_ENABLED=0
+        if [ "$PLUGIN" = "git-tracking" ]; then
+          if [ -f "$OVERRIDE" ]; then
+            COMPOSE_WITH_OVERRIDE="$COMPOSE -f $OVERRIDE"
+            $COMPOSE_WITH_OVERRIDE stop git-tracking 2>/dev/null || true
+            $COMPOSE_WITH_OVERRIDE rm -f git-tracking 2>/dev/null || true
+          fi
+          rm -f "$OVERRIDE" 2>/dev/null || true
+          rm -f "$PROJECT_DIR/data/git-metrics.txt" 2>/dev/null || true
+          ENV_FILE="$PROJECT_DIR/.env"
+          touch "$ENV_FILE"
+          if grep -q "^GIT_TRACKING_ENABLED=" "$ENV_FILE" 2>/dev/null; then
+            sed -i.bak 's/^GIT_TRACKING_ENABLED=.*/GIT_TRACKING_ENABLED=0/' "$ENV_FILE" && rm -f "${ENV_FILE}.bak"
+          else
+            echo "GIT_TRACKING_ENABLED=0" >> "$ENV_FILE"
+          fi
+          echo -e "${GRN}Plugin git-tracking disabled${NC}"
+          exit 0
+        fi
+
+        echo -e "${RED}Unknown plugin: $PLUGIN${NC}" >&2; exit 1
         ;;
       status)
         echo ""
@@ -313,7 +413,7 @@ case "$SUBCMD" in
             uptime=$($COMPOSE --profile "$name" ps --format '{{.Status}}' 2>/dev/null | grep "$name" | head -1)
             echo -e "  ${CYN}$name${NC}  ${GRN}active${NC}  ($uptime)"
             # Show mounted repos
-            if [ "$name" = "git-stats" ] && [ -f "$OVERRIDE" ]; then
+            if [ "$name" = "git-tracking" ] && [ -f "$OVERRIDE" ]; then
               grep ':/repos/' "$OVERRIDE" 2>/dev/null | sed 's|.*- ||;s|:/repos/.*||' | while read -r rp; do
                 echo -e "    ${DIM}$rp${NC}"
               done
