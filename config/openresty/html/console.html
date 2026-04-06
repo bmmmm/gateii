@@ -529,14 +529,18 @@ function calcProviderCost(provider, tokensByPattern) {
 
 let lastMetrics = null;
 
-// Calculate cost for a single model given aggregate token usage
-function calcModelCost(model, totalInput, totalOutput, totalCacheWrite, totalCacheRead) {
+// Calculate cost for a single model given aggregate token usage.
+// activeCwm/activeCrm: cache multipliers from the active provider (used as fallback for
+// comparison models that don't define their own cache pricing).
+function calcModelCost(model, totalInput, totalOutput, totalCacheWrite, totalCacheRead, activeCwm, activeCrm) {
   let cost = 0;
   cost += totalInput * model.input / 1e6;
   cost += totalOutput * model.output / 1e6;
-  // Cache: if model has cached pricing, use it; otherwise cache tokens = regular input price
-  const cacheWritePrice = model.input * (model.cache_write_multiplier || 1.25);
-  const cacheReadPrice = model.input_cached !== undefined ? model.input_cached : model.input * 0.1;
+  // Use model's own cache multiplier if defined, else fall back to active provider's
+  const cwm = model.cache_write_multiplier ?? activeCwm ?? 1.25;
+  const crm = activeCrm ?? 0.1;
+  const cacheWritePrice = model.input * cwm;
+  const cacheReadPrice = model.input_cached !== undefined ? model.input_cached : model.input * crm;
   cost += totalCacheWrite * cacheWritePrice / 1e6;
   cost += totalCacheRead * cacheReadPrice / 1e6;
   return cost;
@@ -618,10 +622,11 @@ function renderPricing(m) {
     compSource.style.display = 'none';
   }
 
-  // Calculate cost for each comparison model
+  // Calculate cost for each comparison model, using active provider's cache multipliers as fallback
   const entries = compModels.map(cm => ({
     ...cm,
-    total: calcModelCost(cm, totalInput, totalOutput, totalCacheWrite, totalCacheRead)
+    total: calcModelCost(cm, totalInput, totalOutput, totalCacheWrite, totalCacheRead,
+      provider.cache_write_multiplier, provider.cache_read_multiplier)
   }));
 
   // Add current provider as "Your current mix"
