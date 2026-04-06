@@ -175,6 +175,30 @@ Prometheus scrape endpoint: `http://localhost:8888/metrics`
 
 ---
 
+## Plugins
+
+Plugins are opt-in features managed via `admin.sh plugin`:
+
+```bash
+./scripts/admin.sh plugin list              # show all plugins + status
+./scripts/admin.sh plugin enable <name>     # activate a plugin
+./scripts/admin.sh plugin disable <name>    # deactivate a plugin
+./scripts/admin.sh plugin status            # detailed status
+```
+
+| Plugin | What it does | Enable |
+|--------|-------------|--------|
+| `console` | Admin web console at `/console` -- key management, limits, usage bars, live stats | `admin.sh plugin enable console` |
+| `git-tracking` | Track git activity (commits, lines changed) alongside token usage | `admin.sh plugin enable git-tracking ~/projects ~/servers` |
+
+**console** sets `CONSOLE_ENABLED=1` in `.env` and restarts the proxy. No extra container needed.
+
+**git-tracking** runs as a separate container (Docker Compose profile). It scans mounted repo paths and writes Prometheus metrics to `/data/git-metrics.txt`.
+
+Both plugins can be toggled independently without affecting the proxy or each other.
+
+---
+
 ## Stack
 
 | Container | Image | Port | Role |
@@ -182,6 +206,7 @@ Prometheus scrape endpoint: `http://localhost:8888/metrics`
 | `gateii-proxy` | `openresty/openresty:alpine` | 8888 | nginx + LuaJIT proxy + metrics |
 | `gateii-prometheus` | `prom/prometheus` | 9090 | metrics storage |
 | `gateii-grafana` | `grafana/grafana` | 3001 | dashboard |
+| `gateii-git-tracking` | `alpine` _(plugin)_ | -- | git activity metrics (optional) |
 
 All runtime state lives in nginx shared memory. Prometheus stores the time series.
 
@@ -205,6 +230,9 @@ All configuration via `.env`:
 | `PROXY_MODE` | `passthrough` | `passthrough` or `apikey` |
 | `PASSTHROUGH_USER` | _(key suffix)_ | Display name in passthrough mode |
 | `ANTHROPIC_API_KEY` | -- | Required when `PROXY_MODE=apikey` |
+| `CONSOLE_ENABLED` | `0` | `1` = enable admin console at `/console` |
+| `GIT_AUTHOR` | -- | Filter git-tracking by author name (optional) |
+| `GIT_TRACKING_INTERVAL` | `300` | git-tracking refresh interval in seconds |
 
 ---
 

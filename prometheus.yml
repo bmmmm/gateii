@@ -9,8 +9,8 @@ scrape_configs:
           instance: 'local'
     metrics_path: /metrics
 
-  # Optional: git activity metrics (plugin — enable via scripts/git-stats.sh)
-  - job_name: 'git-stats'
+  # Optional: git activity metrics (plugin — enable via scripts/git-tracking.sh)
+  - job_name: 'git-tracking'
     scrape_interval: 5m
     static_configs:
       - targets: ['openresty:8080']
