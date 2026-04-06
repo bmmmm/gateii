@@ -389,5 +389,67 @@ if uri == "/internal/admin/llm-prices" and method == "GET" then
     return
 end
 
+-- GET /internal/admin/openrouter-models — proxy OpenRouter model list (12h cache)
+-- Returns slim pricing index: {models:[{id,name,input,output},...]}
+if uri == "/internal/admin/openrouter-models" and method == "GET" then
+    local cache_key = "openrouter_models"
+    local cached = counters:get(cache_key)
+    if cached then
+        ngx.header["X-Cache"] = "HIT"
+        ngx.say(cached)
+        return
+    end
+
+    ngx.header["X-Cache"] = "MISS"
+    local http = require "resty.http"
+    local httpc = http.new()
+    httpc:set_timeouts(5000, 5000, 15000)
+    local res, err = httpc:request_uri("https://openrouter.ai/api/v1/models", {
+        ssl_verify = false,
+        headers = { ["User-Agent"] = "gateii-proxy/1.0", ["Accept"] = "application/json" },
+    })
+    if not res then
+        ngx.status = 502
+        ngx.say(cjson.encode({ error = "openrouter fetch failed: " .. (err or "unknown") }))
+        return
+    end
+    if res.status ~= 200 then
+        ngx.status = res.status
+        ngx.say(cjson.encode({ error = "openrouter returned HTTP " .. res.status }))
+        return
+    end
+
+    local full = cjson.decode(res.body)
+    if not full or not full.data then
+        ngx.status = 502
+        ngx.say(cjson.encode({ error = "openrouter response malformed" }))
+        return
+    end
+
+    -- Extract only id + pricing to keep cache small
+    local models = {}
+    for _, m in ipairs(full.data) do
+        if m.id and m.pricing then
+            local inp = tonumber(m.pricing.prompt) or 0
+            local out = tonumber(m.pricing.completion) or 0
+            models[#models + 1] = {
+                id     = m.id,
+                name   = m.name or m.id,
+                input  = inp * 1e6,   -- convert per-token → $/MTok
+                output = out * 1e6,
+            }
+        end
+    end
+
+    local result = cjson.encode({ models = models })
+    local ok, cerr = counters:set(cache_key, result, 43200)  -- 12h
+    if not ok then
+        ngx.log(ngx.WARN, "openrouter cache write failed: ", cerr)
+    end
+
+    ngx.say(result)
+    return
+end
+
 ngx.status = 404
-ngx.say('{"error":"Unknown admin endpoint — available: /internal/admin/{block,unblock,limit,status,usage,keys,addkey,overview,providers}"}')
+ngx.say('{"error":"Unknown admin endpoint — available: /internal/admin/{block,unblock,limit,status,usage,keys,addkey,overview,providers,llm-prices,openrouter-models}"}')
