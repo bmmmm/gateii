@@ -40,7 +40,7 @@ echo ""
 
 # --- Proxy ---
 echo -e "${BOLD}Proxy :8888${NC}"
-HEALTH=$(curl -sf http://localhost:8888/health 2>/dev/null || echo "")
+HEALTH=$(curl -sf --max-time 5 http://localhost:8888/health 2>/dev/null || echo "")
 if [ "$HEALTH" = "ok" ]; then
   ok "/health → ok"
 else
@@ -49,7 +49,7 @@ fi
 
 # Test request (passthrough — uses whatever ANTHROPIC_API_KEY or OAuth is set)
 if [ -n "${ANTHROPIC_API_KEY:-}" ]; then
-  HTTP=$(curl -s -o /dev/null -w "%{http_code}" \
+  HTTP=$(curl -s --max-time 15 -o /dev/null -w "%{http_code}" \
     -X POST http://localhost:8888/v1/messages \
     -H "x-api-key: $ANTHROPIC_API_KEY" \
     -H "Content-Type: application/json" \
@@ -69,7 +69,7 @@ echo ""
 
 # --- Metrics (from proxy /metrics) ---
 echo -e "${BOLD}Metrics :8888/metrics${NC}"
-METRICS=$(curl -sf http://localhost:8888/metrics 2>/dev/null || echo "")
+METRICS=$(curl -sf --max-time 5 http://localhost:8888/metrics 2>/dev/null || echo "")
 if echo "$METRICS" | grep -q "# HELP gateii_requests_total"; then
   ok "/metrics — gateii_requests_total present"
 else
@@ -85,7 +85,7 @@ echo ""
 
 # --- Prometheus ---
 echo -e "${BOLD}Prometheus :9090${NC}"
-PROM=$(curl -sf "http://localhost:9090/api/v1/query?query=up" 2>/dev/null || echo "")
+PROM=$(curl -sf --max-time 5 "http://localhost:9090/api/v1/query?query=up" 2>/dev/null || echo "")
 if echo "$PROM" | grep -q '"status":"success"'; then
   ok "API responding"
 else
@@ -93,7 +93,7 @@ else
 fi
 
 # Check gateii scrape target is up
-TARGET=$(curl -sf "http://localhost:9090/api/v1/query?query=up%7Bjob%3D%22gateii%22%7D" 2>/dev/null || echo "")
+TARGET=$(curl -sf --max-time 5 "http://localhost:9090/api/v1/query?query=up%7Bjob%3D%22gateii%22%7D" 2>/dev/null || echo "")
 if echo "$TARGET" | grep -q '"value":\[.*,"1"\]'; then
   ok "gateii scrape target — up"
 else
@@ -105,25 +105,25 @@ echo ""
 
 # --- Grafana ---
 echo -e "${BOLD}Grafana :3001${NC}"
-GF_HEALTH=$(curl -sf http://localhost:3001/api/health 2>/dev/null || echo "")
-GF_DB=$(echo "$GF_HEALTH" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('database',''))" 2>/dev/null || echo "")
+GF_HEALTH=$(curl -sf --max-time 5 http://localhost:3001/api/health 2>/dev/null || echo "")
+GF_DB=$(echo "$GF_HEALTH" | jq -r '.database // ""' 2>/dev/null || echo "")
 if [ "$GF_DB" = "ok" ]; then
   ok "API healthy"
 else
   fail "API not responding"
 fi
 
-DASHBOARD=$(curl -sf http://localhost:3001/api/dashboards/uid/gateii-proxy 2>/dev/null || echo "")
-DASH_UID=$(echo "$DASHBOARD" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('dashboard',{}).get('uid',''))" 2>/dev/null || echo "")
+DASHBOARD=$(curl -sf --max-time 5 http://localhost:3001/api/dashboards/uid/gateii-proxy 2>/dev/null || echo "")
+DASH_UID=$(echo "$DASHBOARD" | jq -r '.dashboard.uid // ""' 2>/dev/null || echo "")
 if [ "$DASH_UID" = "gateii-proxy" ]; then
-  TITLE=$(echo "$DASHBOARD" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d['dashboard']['title'])" 2>/dev/null || echo "?")
+  TITLE=$(echo "$DASHBOARD" | jq -r '.dashboard.title // "?"' 2>/dev/null || echo "?")
   ok "dashboard loaded — \"$TITLE\""
 else
   fail "dashboard not found (uid: gateii-proxy)"
   info "Grafana may still be provisioning — retry in 10s"
 fi
 
-DS=$(curl -sf http://localhost:3001/api/datasources 2>/dev/null || echo "")
+DS=$(curl -sf --max-time 5 http://localhost:3001/api/datasources 2>/dev/null || echo "")
 if echo "$DS" | grep -q '"type":"prometheus"'; then
   ok "Prometheus datasource provisioned"
 else
