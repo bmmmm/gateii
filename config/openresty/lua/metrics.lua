@@ -3,7 +3,7 @@ local cjson = require "cjson.safe"
 local counters = ngx.shared.counters
 local blocking_dict = ngx.shared.blocking
 
--- Load pricing from config file (falls back to defaults if missing)
+-- Load pricing from providers.json (active provider) or legacy pricing.json
 local pricing = {
     { pattern = "opus",   input = 5.0,  output = 25.0 },
     { pattern = "sonnet", input = 3.0,  output = 15.0 },
@@ -12,16 +12,37 @@ local pricing = {
 local cache_write_mult = 1.25
 local cache_read_mult = 0.1
 
-local f = io.open("/etc/nginx/lua/pricing.json", "r")
-    or io.open("/usr/local/openresty/nginx/conf/pricing.json", "r")
-if f then
+local function try_providers_json()
+    local f = io.open("/etc/nginx/lua/providers.json", "r")
+    if not f then return false end
     local data = f:read("*a")
     f:close()
     local cfg = cjson.decode(data)
-    if cfg and cfg.models then
-        pricing = cfg.models
-        cache_write_mult = cfg.cache_write_multiplier or cache_write_mult
-        cache_read_mult = cfg.cache_read_multiplier or cache_read_mult
+    if not cfg or not cfg.providers then return false end
+    local active_id = cfg.active_provider or "anthropic"
+    for _, p in ipairs(cfg.providers) do
+        if p.id == active_id and p.models then
+            pricing = p.models
+            cache_write_mult = p.cache_write_multiplier or cache_write_mult
+            cache_read_mult = p.cache_read_multiplier or cache_read_mult
+            return true
+        end
+    end
+    return false
+end
+
+if not try_providers_json() then
+    local f = io.open("/etc/nginx/lua/pricing.json", "r")
+        or io.open("/usr/local/openresty/nginx/conf/pricing.json", "r")
+    if f then
+        local data = f:read("*a")
+        f:close()
+        local cfg = cjson.decode(data)
+        if cfg and cfg.models then
+            pricing = cfg.models
+            cache_write_mult = cfg.cache_write_multiplier or cache_write_mult
+            cache_read_mult = cfg.cache_read_multiplier or cache_read_mult
+        end
     end
 end
 
