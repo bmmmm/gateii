@@ -134,7 +134,7 @@ Grafana at `http://localhost:3001` -- no login, dashboard auto-provisioned.
 | Metric | Labels | What it tells you |
 |--------|--------|-------------------|
 | `gateii_tokens_total` | user, provider, model, type | Input/output tokens consumed |
-| `gateii_cost_dollars_total` | user, provider, model, type | Estimated cost (Anthropic pricing) |
+| `gateii_cost_dollars_total` | user, provider, model, type | Estimated cost (active provider pricing) |
 | `gateii_requests_total` | user, provider, model | Request count |
 | `gateii_request_duration_ms_total` | user, provider, model | Cumulative latency (/ requests = avg) |
 | `gateii_upstream_errors_total` | user, provider, model | Non-200 upstream responses |
@@ -142,6 +142,8 @@ Grafana at `http://localhost:3001` -- no login, dashboard auto-provisioned.
 | `gateii_user_blocked` | user | 1 if user is currently blocked |
 
 Prometheus scrape endpoint: `http://localhost:8888/metrics`
+
+The console plugin queries Prometheus via a reverse proxy at `/internal/prometheus/` (restricted to localhost and Docker network). This avoids CORS issues when the browser fetches historical data directly.
 
 ---
 
@@ -188,7 +190,7 @@ Plugins are opt-in features managed via `admin.sh plugin`:
 
 | Plugin | What it does | Enable |
 |--------|-------------|--------|
-| `console` | Admin web console at `/console` -- key management, limits, usage bars, live stats | `admin.sh plugin enable console` |
+| `console` | Admin web console at `/console` -- key management, limits, usage bars, live stats, live pricing comparison (llm-prices.com), monthly cost forecast | `admin.sh plugin enable console` |
 | `git-tracking` | Track git activity (commits, lines changed) alongside token usage | `admin.sh plugin enable git-tracking ~/projects ~/servers` |
 
 **console** sets `CONSOLE_ENABLED=1` in `.env` and restarts the proxy. No extra container needed.
@@ -233,6 +235,39 @@ All configuration via `.env`:
 | `CONSOLE_ENABLED` | `0` | `1` = enable admin console at `/console` |
 | `GIT_AUTHOR` | -- | Filter git-tracking by author name (optional) |
 | `GIT_TRACKING_INTERVAL` | `300` | git-tracking refresh interval in seconds |
+
+---
+
+## Pricing configuration
+
+Cost metrics and the console pricing table are driven by `config/openresty/lua/providers.json`.
+
+```json
+{
+  "active_provider": "anthropic",
+  "providers": [
+    {
+      "id": "anthropic",
+      "name": "Anthropic (Direct API)",
+      "url": "https://www.anthropic.com/pricing",
+      "cache_write_multiplier": 1.25,
+      "cache_read_multiplier": 0.1,
+      "models": [
+        { "pattern": "opus",   "input": 5.0,  "output": 25.0 },
+        { "pattern": "sonnet", "input": 3.0,  "output": 15.0 },
+        { "pattern": "haiku",  "input": 1.0,  "output": 5.0  }
+      ]
+    }
+  ],
+  "comparison_models": [ ... ]
+}
+```
+
+- `active_provider` selects which entry drives `gateii_cost_dollars_total`. Change it to switch the cost calculation to a different provider without restarting.
+- `cache_write_multiplier` / `cache_read_multiplier` apply to Anthropic prompt-caching tokens.
+- `comparison_models` feeds the "Monthly Cost" comparison bars in the console. The console fetches live prices from llm-prices.com and overlays them (1h cache, falls back to the values in this file).
+
+After editing `providers.json`, reload nginx: `docker exec gateii-proxy openresty -s reload`
 
 ---
 
