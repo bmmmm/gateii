@@ -41,7 +41,7 @@ bash scripts/smoke-test.sh
 | `config/openresty/lua/handler.lua` | Proxy to upstream, SSE token parsing, header forwarding |
 | `config/openresty/lua/tracking.lua` | Shared dict counters (tokens, latency, errors, stop_reason) |
 | `config/openresty/lua/metrics.lua` | Prometheus exposition format from shared dicts |
-| `config/openresty/lua/admin_api.lua` | HTTP admin API (block/unblock/limit, /providers, /llm-prices) |
+| `config/openresty/lua/admin_api.lua` | HTTP admin API (block/unblock/limit, /providers, /llm-prices, /openrouter-models) |
 | `config/openresty/lua/providers/anthropic.lua` | Anthropic header building, token extraction |
 | `config/openresty/lua/providers.json` | Multi-provider pricing config, active provider selector |
 | `config/openresty/nginx.conf` | Env whitelist, shared dicts, routes, /internal/prometheus proxy |
@@ -54,6 +54,9 @@ bash scripts/smoke-test.sh
 - **passthrough mode** — client's key forwarded as-is; `ngx.ctx.upstream_auth_type` preserves Bearer vs x-api-key format
 - **SSE parsing** — chunks accumulated in memory during streaming, then parsed for `message_start` + `message_delta` events
 - **Cost metric** — calculated in metrics.lua (model name → pricing table), not in PromQL
+- **Pricing source** — providers.json is source of truth; metrics.lua logs WARN if file missing
+- **OR comparison** — console fetches top-10 weekly programming models from OpenRouter (12h cache in counters dict); providers.json comparison_models is static fallback
+- **Prometheus retention** — unlimited by default (`HISTORY_RETENTION=` in .env); override with `30d`/`90d`/`180d`/`365d`
 - **Blocking** — `blocked|<user>` in shared dict with TTL; daily limits auto-block until midnight UTC
 
 ## Providers
