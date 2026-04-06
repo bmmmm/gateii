@@ -736,148 +736,13 @@
       }
     },
     {
-      "id": 11,
-      "title": "API Pricing (per 1M tokens)",
-      "description": "Current Anthropic pricing from pricing.json. Updates are tracked over time by Prometheus.",
-      "type": "table",
-      "gridPos": {
-        "x": 0,
-        "y": 24,
-        "w": 24,
-        "h": 6
-      },
-      "datasource": {
-        "type": "prometheus"
-      },
-      "targets": [
-        {
-          "datasource": {
-            "type": "prometheus"
-          },
-          "expr": "gateii_model_pricing_per_mtok",
-          "legendFormat": "{{model}} / {{type}}",
-          "instant": true,
-          "format": "table"
-        }
-      ],
-      "fieldConfig": {
-        "defaults": {
-          "unit": "currencyUSD",
-          "decimals": 2,
-          "custom": {
-            "align": "auto"
-          }
-        },
-        "overrides": [
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "model"
-            },
-            "properties": [
-              {
-                "id": "custom.width",
-                "value": 120
-              }
-            ]
-          },
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "type"
-            },
-            "properties": [
-              {
-                "id": "custom.width",
-                "value": 120
-              }
-            ]
-          },
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "Time"
-            },
-            "properties": [
-              {
-                "id": "custom.hidden",
-                "value": true
-              }
-            ]
-          },
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "__name__"
-            },
-            "properties": [
-              {
-                "id": "custom.hidden",
-                "value": true
-              }
-            ]
-          },
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "instance"
-            },
-            "properties": [
-              {
-                "id": "custom.hidden",
-                "value": true
-              }
-            ]
-          },
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "job"
-            },
-            "properties": [
-              {
-                "id": "custom.hidden",
-                "value": true
-              }
-            ]
-          }
-        ]
-      },
-      "options": {
-        "showHeader": true,
-        "sortBy": [
-          {
-            "displayName": "model"
-          }
-        ]
-      },
-      "transformations": [
-        {
-          "id": "organize",
-          "options": {
-            "excludeByName": {
-              "Time": true,
-              "__name__": true,
-              "instance": true,
-              "job": true
-            },
-            "renameByName": {
-              "Value": "$ / 1M tokens",
-              "model": "Model",
-              "type": "Type"
-            }
-          }
-        }
-      ]
-    },
-    {
       "id": 12,
       "title": "Tokens per Commit",
       "description": "How many tokens it takes to produce one git commit. Requires git-tracking plugin (scripts/git-tracking.sh).",
       "type": "stat",
       "gridPos": {
         "x": 0,
-        "y": 30,
+        "y": 24,
         "w": 8,
         "h": 4
       },
@@ -937,7 +802,7 @@
       "type": "stat",
       "gridPos": {
         "x": 8,
-        "y": 30,
+        "y": 24,
         "w": 8,
         "h": 4
       },
@@ -997,7 +862,7 @@
       "type": "bargauge",
       "gridPos": {
         "x": 16,
-        "y": 30,
+        "y": 24,
         "w": 8,
         "h": 4
       },
