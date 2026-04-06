@@ -5,154 +5,305 @@
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>gateii console</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
-<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;600&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&family=Space+Grotesk:wght@400;500;600;700&display=swap" rel="stylesheet">
 <style>
 *{margin:0;padding:0;box-sizing:border-box}
 :root{
-  --bg:#0a0a0a;--fg:#00ff41;--dim:#00802080;--warn:#ffb000;--err:#ff3333;
-  --border:#00ff4130;--glow:0 0 8px #00ff4140;--font:'IBM Plex Mono',monospace;
+  --bg:#0c0c0c;
+  --surface:#141414;
+  --surface2:#1a1a1a;
+  --fg:#e0ffe8;
+  --accent:#33ff66;
+  --accent-dim:#33ff6640;
+  --accent-subtle:#33ff6618;
+  --dim:#7a9f80;
+  --warn:#ffc857;
+  --err:#ff4d4d;
+  --blue:#5b9aff;
+  --border:#2a3a2e;
+  --border-bright:#33ff6630;
+  --radius:6px;
+  --font-mono:'JetBrains Mono',monospace;
+  --font-display:'Space Grotesk',sans-serif;
 }
-html{background:#000;height:100%}
+html{background:var(--bg);height:100%}
 body{
-  font-family:var(--font);font-size:13px;color:var(--fg);background:var(--bg);
-  min-height:100%;position:relative;overflow-x:hidden;line-height:1.5;
+  font-family:var(--font-mono);font-size:14px;color:var(--fg);
+  background:var(--bg);min-height:100%;line-height:1.6;
+  -webkit-font-smoothing:antialiased;
 }
-/* CRT scanlines */
-body::after{
-  content:'';position:fixed;inset:0;pointer-events:none;z-index:999;
-  background:repeating-linear-gradient(0deg,transparent,transparent 2px,rgba(0,0,0,.08) 2px,rgba(0,0,0,.08) 4px);
+.shell{max-width:1100px;margin:0 auto;padding:28px 24px 48px}
+
+/* Header */
+.header{display:flex;align-items:center;justify-content:space-between;margin-bottom:24px;padding-bottom:16px;border-bottom:1px solid var(--border)}
+.brand{display:flex;align-items:baseline;gap:12px}
+.brand-name{font-family:var(--font-display);font-size:1.8rem;font-weight:700;color:var(--accent);letter-spacing:.04em}
+.brand-tag{font-size:12px;color:var(--dim);letter-spacing:.08em;text-transform:uppercase}
+.status-pill{display:inline-flex;align-items:center;gap:6px;padding:5px 14px;border-radius:20px;font-size:12px;font-weight:500;letter-spacing:.04em}
+.status-pill.online{background:#33ff6612;color:var(--accent);border:1px solid var(--accent-dim)}
+.status-pill.offline{background:#ff4d4d12;color:var(--err);border:1px solid #ff4d4d40}
+.status-dot{width:7px;height:7px;border-radius:50%;background:currentColor}
+.status-pill.online .status-dot{animation:pulse 2s ease infinite}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.4}}
+
+/* Toolbar */
+.toolbar{display:flex;gap:8px;margin-bottom:20px;flex-wrap:wrap}
+.toolbar a,.toolbar button{
+  font-family:var(--font-mono);font-size:12px;font-weight:500;
+  padding:7px 16px;border-radius:var(--radius);text-decoration:none;letter-spacing:.03em;
+  transition:all .15s ease;cursor:pointer;display:inline-flex;align-items:center;gap:6px;
 }
-/* Vignette */
-body::before{
-  content:'';position:fixed;inset:0;pointer-events:none;z-index:998;
-  background:radial-gradient(ellipse at center,transparent 60%,rgba(0,0,0,.6) 100%);
-}
-.crt{max-width:960px;margin:0 auto;padding:24px 20px 40px}
-/* Title */
-.title{
-  text-align:center;letter-spacing:.5em;font-size:1.6rem;font-weight:600;
-  text-shadow:0 0 20px #00ff4180,0 0 40px #00ff4140;
-  margin-bottom:4px;padding-top:8px;
-}
-.subtitle{text-align:center;color:var(--dim);font-size:11px;margin-bottom:24px;letter-spacing:.15em}
-.status-line{
-  text-align:center;font-size:11px;margin-bottom:20px;
-  color:var(--dim);letter-spacing:.05em;
-}
-.status-line .online{color:var(--fg)}
-.status-line .offline{color:var(--err)}
+.toolbar a{color:var(--fg);background:var(--surface2);border:1px solid var(--border)}
+.toolbar a:hover{background:var(--accent-subtle);border-color:var(--accent-dim);color:var(--accent)}
+.toolbar .mode-tag{padding:7px 14px;border-radius:var(--radius);font-size:12px;background:var(--surface);border:1px solid var(--border);color:var(--dim);cursor:default}
+.toolbar .mode-tag b{color:var(--fg);font-weight:600}
+
+/* Stats row */
+.stats{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:20px}
+.stat-card{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:18px 16px;text-align:center;transition:border-color .2s}
+.stat-card:hover{border-color:var(--border-bright)}
+.stat-val{font-family:var(--font-display);font-size:2rem;font-weight:700;line-height:1.1;color:var(--accent);transition:color .3s}
+.stat-label{font-size:11px;color:var(--dim);letter-spacing:.1em;margin-top:6px;text-transform:uppercase;font-weight:500}
+.stat-sub{font-size:10px;color:var(--dim);margin-top:3px;font-style:italic}
+.c-green{color:var(--accent)}.c-yellow{color:var(--warn)}.c-red{color:var(--err)}.c-blue{color:var(--blue)}
+
 /* Panels */
-.panel{border:1px solid var(--border);margin-bottom:16px;position:relative}
-.panel-head{
-  padding:6px 12px;font-size:11px;letter-spacing:.12em;text-transform:uppercase;
-  border-bottom:1px solid var(--border);color:var(--dim);
-  display:flex;justify-content:space-between;align-items:center;
-}
-.panel-body{padding:12px}
-/* Stats grid */
-.stats{display:grid;grid-template-columns:repeat(4,1fr);gap:1px;background:var(--border)}
-.stat{background:var(--bg);padding:16px 12px;text-align:center}
-.stat-val{
-  font-size:2.4rem;font-weight:600;line-height:1;
-  text-shadow:var(--glow);transition:color .3s;
-}
-.stat-label{font-size:10px;color:var(--dim);letter-spacing:.1em;margin-top:6px;text-transform:uppercase}
-/* Threshold colors */
-.c-green{color:var(--fg)}.c-yellow{color:var(--warn)}.c-red{color:var(--err)}
+.panel{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);margin-bottom:16px;overflow:hidden}
+.panel-head{padding:10px 16px;font-size:12px;font-weight:600;letter-spacing:.08em;text-transform:uppercase;border-bottom:1px solid var(--border);color:var(--dim);display:flex;justify-content:space-between;align-items:center;background:var(--surface2)}
+.panel-head .count{background:var(--accent-subtle);color:var(--accent);padding:2px 10px;border-radius:10px;font-size:11px;font-weight:600}
+.panel-body{padding:14px 16px}
+
 /* Tables */
-table{width:100%;border-collapse:collapse;font-size:12px}
-th{text-align:left;color:var(--dim);font-weight:400;padding:4px 8px;letter-spacing:.08em;font-size:10px;text-transform:uppercase;border-bottom:1px solid var(--border)}
-td{padding:5px 8px;border-bottom:1px solid #00ff4110}
-tr:hover td{background:#00ff4108}
-/* Keys */
-.key-masked{color:var(--dim);font-size:11px}
-.key-user{color:var(--fg)}
-/* Blocked */
-.blocked-row{display:flex;justify-content:space-between;align-items:center;padding:6px 0;border-bottom:1px solid #00ff4110}
-.blocked-row:last-child{border:none}
-.btn{
-  background:transparent;color:var(--fg);border:1px solid var(--border);
-  padding:3px 10px;font-family:var(--font);font-size:11px;cursor:pointer;
-  letter-spacing:.05em;transition:all .15s;
+table{width:100%;border-collapse:collapse;font-size:13px}
+th{text-align:left;color:var(--dim);font-weight:500;padding:8px 12px;letter-spacing:.06em;font-size:11px;text-transform:uppercase;border-bottom:1px solid var(--border);background:var(--surface2)}
+td{padding:8px 12px;border-bottom:1px solid #ffffff08}
+tr:hover td{background:var(--accent-subtle)}
+.text-right{text-align:right}
+.key-masked{color:var(--dim);font-size:12px;letter-spacing:.02em}
+.key-user{color:var(--accent);font-weight:500}
+/* Summary row */
+.summary-row td{border-top:2px solid var(--border);font-weight:600;color:var(--accent);padding-top:10px}
+
+/* Action forms */
+.action-row{display:flex;gap:8px;align-items:center;padding:10px 0;flex-wrap:wrap}
+.action-row+.action-row{border-top:1px solid #ffffff08;margin-top:2px}
+.action-label{font-size:12px;color:var(--dim);min-width:70px;text-transform:uppercase;letter-spacing:.06em;font-weight:500}
+.input{
+  font-family:var(--font-mono);font-size:13px;padding:6px 12px;border-radius:var(--radius);
+  background:var(--bg);color:var(--fg);border:1px solid var(--border);outline:none;transition:border-color .15s;
 }
-.btn:hover{background:#00ff4118;border-color:var(--fg);text-shadow:var(--glow)}
-.btn-danger{color:var(--err);border-color:#ff333340}
-.btn-danger:hover{background:#ff333318;border-color:var(--err)}
-/* Plugin badge */
-.badge{display:inline-block;padding:2px 8px;font-size:10px;letter-spacing:.08em;border:1px solid var(--border)}
-.badge-on{color:var(--fg);border-color:var(--fg);text-shadow:var(--glow)}
-.badge-off{color:var(--dim);border-color:var(--dim)}
+.input:focus{border-color:var(--accent-dim)}
+.input::placeholder{color:#4a5a4e}
+.input-sm{width:100px}
+select.input{cursor:pointer;-webkit-appearance:none;padding-right:28px;
+  background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath d='M0 0l5 6 5-6z' fill='%237a9f80'/%3E%3C/svg%3E");
+  background-repeat:no-repeat;background-position:right 10px center;
+}
+.btn{font-family:var(--font-mono);font-size:12px;font-weight:600;padding:6px 16px;border-radius:var(--radius);cursor:pointer;letter-spacing:.04em;transition:all .15s;border:1px solid}
+.btn-primary{background:var(--accent-subtle);color:var(--accent);border-color:var(--accent-dim)}
+.btn-primary:hover{background:#33ff6625;border-color:var(--accent)}
+.btn-danger{background:#ff4d4d10;color:var(--err);border-color:#ff4d4d30}
+.btn-danger:hover{background:#ff4d4d20;border-color:var(--err)}
+.btn-blue{background:#5b9aff10;color:var(--blue);border-color:#5b9aff30}
+.btn-blue:hover{background:#5b9aff20;border-color:var(--blue)}
+
+/* Blocked/limits rows */
+.user-row{display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid #ffffff08;gap:12px}
+.user-row:last-child{border:none}
+.user-info{display:flex;flex-direction:column;gap:2px}
+.user-name{font-weight:600;color:var(--fg)}
+.user-meta{font-size:11px;color:var(--dim)}
+.user-actions{display:flex;gap:6px;flex-shrink:0}
+
+/* Badges */
+.badge{display:inline-block;padding:3px 10px;font-size:11px;font-weight:600;letter-spacing:.06em;border-radius:var(--radius);border:1px solid}
+.badge-on{color:var(--accent);border-color:var(--accent-dim);background:var(--accent-subtle)}
+.badge-off{color:var(--dim);border-color:var(--border);background:var(--surface2)}
+
+/* Toast */
+.toast{position:fixed;bottom:24px;right:24px;padding:10px 20px;border-radius:var(--radius);font-size:13px;font-weight:500;background:var(--surface2);border:1px solid var(--accent-dim);color:var(--accent);transform:translateY(80px);opacity:0;transition:all .3s ease;z-index:100}
+.toast.show{transform:translateY(0);opacity:1}
+.toast.error{border-color:#ff4d4d40;color:var(--err)}
+
 /* Footer */
-.footer{text-align:center;color:var(--dim);font-size:10px;padding:16px 0;letter-spacing:.08em}
-.blink{animation:blink 1s step-end infinite}
-@keyframes blink{50%{opacity:0}}
-/* Phosphor persistence on value changes */
-.flash{animation:phosphor .6s ease-out}
-@keyframes phosphor{0%{text-shadow:0 0 16px #00ff41,0 0 30px #00ff4180}100%{text-shadow:var(--glow)}}
-/* Empty state */
-.empty{color:var(--dim);font-style:italic;font-size:12px;padding:8px 0}
-/* Responsive */
-@media(max-width:640px){
+.footer{text-align:center;color:var(--dim);font-size:11px;padding:20px 0;letter-spacing:.06em}
+.footer a{color:var(--dim);text-decoration:none;border-bottom:1px solid var(--border)}
+.footer a:hover{color:var(--accent);border-color:var(--accent-dim)}
+
+/* Progress bars */
+.usage-card{padding:10px 0;border-bottom:1px solid #ffffff08}
+.usage-card:last-child{border:none}
+.usage-header{display:flex;justify-content:space-between;align-items:baseline;margin-bottom:6px}
+.usage-user{font-weight:600;font-size:13px}
+.usage-detail{font-size:11px;color:var(--dim)}
+.progress-wrap{display:flex;align-items:center;gap:10px;margin-top:4px}
+.progress-label{font-size:11px;color:var(--dim);min-width:55px}
+.progress-bar{flex:1;height:8px;background:var(--surface2);border-radius:4px;overflow:hidden}
+.progress-fill{height:100%;border-radius:4px;transition:width .5s ease,background .3s}
+.progress-fill.ok{background:var(--accent)}
+.progress-fill.warn{background:var(--warn)}
+.progress-fill.danger{background:var(--err)}
+.progress-pct{font-size:11px;color:var(--dim);min-width:40px;text-align:right}
+.empty{color:var(--dim);font-style:italic;font-size:13px;padding:8px 0}
+.flash{animation:glow-flash .5s ease-out}
+@keyframes glow-flash{0%{color:#fff}100%{}}
+
+/* Two-column layout for bottom panels */
+.grid-2{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+
+@media(max-width:700px){
   .stats{grid-template-columns:repeat(2,1fr)}
-  .stat-val{font-size:1.8rem}
-  .crt{padding:12px 10px 30px}
-  .title{font-size:1.2rem}
+  .stat-val{font-size:1.5rem}
+  .shell{padding:16px 12px 32px}
+  .header{flex-direction:column;gap:12px;align-items:flex-start}
+  .toolbar{flex-direction:column}
+  .action-row{flex-direction:column;align-items:stretch}
+  .action-label{min-width:auto}
+  .grid-2{grid-template-columns:1fr}
 }
 </style>
 </head>
 <body>
-<div class="crt">
-  <div class="title">GATEII</div>
-  <div class="subtitle">LLM PROXY CONSOLE</div>
-  <div class="status-line" id="status-line">CONNECTING<span class="blink">_</span></div>
+<div class="shell">
 
-  <!-- Stats -->
-  <div class="panel">
-    <div class="panel-head"><span>Live Metrics (24h)</span><span id="metric-age"></span></div>
-    <div class="stats">
-      <div class="stat"><div class="stat-val c-green" id="s-req">-</div><div class="stat-label">Requests</div></div>
-      <div class="stat"><div class="stat-val c-green" id="s-tok">-</div><div class="stat-label">Tokens</div></div>
-      <div class="stat"><div class="stat-val c-green" id="s-cost">-</div><div class="stat-label">Cost</div></div>
-      <div class="stat"><div class="stat-val c-green" id="s-cache">-</div><div class="stat-label">Cache Hit</div></div>
+  <div class="header">
+    <div class="brand">
+      <span class="brand-name">gateii</span>
+      <span class="brand-tag">LLM Proxy Console</span>
+    </div>
+    <div id="status-pill" class="status-pill offline">
+      <span class="status-dot"></span>
+      <span id="status-text">connecting...</span>
     </div>
   </div>
 
-  <!-- Pricing -->
+  <div class="toolbar">
+    <a href="http://localhost:3001" target="_blank">Grafana Dashboard</a>
+    <a href="http://localhost:9090" target="_blank">Prometheus</a>
+    <a href="/metrics" target="_blank">Raw Metrics</a>
+    <span class="mode-tag">Mode: <b id="mode-display">-</b></span>
+  </div>
+
+  <!-- Stats -->
+  <div class="stats">
+    <div class="stat-card">
+      <div class="stat-val c-green" id="s-req">-</div>
+      <div class="stat-label">Requests 24h</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-val c-green" id="s-tok">-</div>
+      <div class="stat-label">Tokens 24h</div>
+      <div class="stat-sub" id="s-tok-detail"></div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-val c-green" id="s-cost">-</div>
+      <div class="stat-label">Est. Cost 24h</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-val c-green" id="s-latency">-</div>
+      <div class="stat-label">Avg Latency</div>
+      <div class="stat-sub" id="s-latency-detail"></div>
+    </div>
+  </div>
+
+  <!-- Pricing with summary -->
   <div class="panel">
-    <div class="panel-head"><span>Model Pricing ($/MTok)</span></div>
-    <div class="panel-body">
+    <div class="panel-head"><span>Model Pricing &amp; Cost Breakdown</span></div>
+    <div class="panel-body" style="padding:0">
       <table>
-        <tr><th>Model</th><th>Input</th><th>Output</th><th>Cache Write</th><th>Cache Read</th></tr>
-        <tbody id="pricing-body"><tr><td colspan="5" class="empty">loading...</td></tr></tbody>
+        <thead>
+          <tr><th>Model</th><th class="text-right">Input</th><th class="text-right">Output</th><th class="text-right">Cache Write</th><th class="text-right">Cache Read</th><th class="text-right">Total Cost</th></tr>
+        </thead>
+        <tbody id="pricing-body"><tr><td colspan="6" class="empty" style="padding:12px 16px">loading...</td></tr></tbody>
       </table>
     </div>
   </div>
 
-  <!-- Keys -->
-  <div class="panel" id="keys-panel">
-    <div class="panel-head"><span>Proxy Keys</span><span id="key-count">-</span></div>
-    <div class="panel-body" id="keys-body"><div class="empty">loading...</div></div>
+  <div class="grid-2">
+    <!-- Keys -->
+    <div class="panel">
+      <div class="panel-head"><span>Proxy Keys</span><span class="count" id="key-count">-</span></div>
+      <div class="panel-body">
+        <div id="keys-body"><div class="empty">loading...</div></div>
+        <div class="action-row" id="add-key-row">
+          <span class="action-label">Add</span>
+          <input class="input" id="add-user" type="text" placeholder="username" style="width:120px" maxlength="64">
+          <button class="btn btn-primary" onclick="addKey()">Generate Key</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Plugins -->
+    <div class="panel">
+      <div class="panel-head"><span>Plugins</span></div>
+      <div class="panel-body" id="plugins-body"><div class="empty">loading...</div></div>
+    </div>
   </div>
 
-  <!-- Blocked -->
+  <!-- User Management: Block + Limits -->
   <div class="panel">
-    <div class="panel-head"><span>Blocked Users</span><span id="blocked-count">0</span></div>
-    <div class="panel-body" id="blocked-body"><div class="empty">none</div></div>
-  </div>
+    <div class="panel-head"><span>User Management</span><span class="count" id="managed-count">0</span></div>
+    <div class="panel-body">
+      <div id="managed-body"><div class="empty">no blocked users or custom limits</div></div>
 
-  <!-- Plugins -->
-  <div class="panel">
-    <div class="panel-head"><span>Plugins</span></div>
-    <div class="panel-body" id="plugins-body"><div class="empty">loading...</div></div>
+      <div class="action-row">
+        <span class="action-label">Block</span>
+        <input class="input" id="block-user" type="text" placeholder="username" style="width:130px" maxlength="64">
+        <select class="input" id="block-ttl">
+          <option value="3600">1 hour</option>
+          <option value="86400" selected>1 day</option>
+          <option value="604800">1 week</option>
+          <option value="2592000">30 days</option>
+        </select>
+        <button class="btn btn-danger" onclick="blockUser()">Block</button>
+      </div>
+
+      <div class="action-row">
+        <span class="action-label">Limit</span>
+        <input class="input" id="limit-user" type="text" placeholder="username" style="width:130px" maxlength="64">
+        <select class="input" id="limit-tokens-preset" onchange="toggleCustom('tok')">
+          <option value="">-- Tokens/day --</option>
+          <option value="500000">Light (500K ≈ $2)</option>
+          <option value="2000000">Normal (2M ≈ $8)</option>
+          <option value="5000000">Heavy (5M ≈ $20)</option>
+          <option value="0">Unlimited</option>
+          <option value="custom">Custom...</option>
+        </select>
+        <input class="input input-sm" id="limit-tokens-custom" type="number" placeholder="tokens" min="0" step="100000" style="display:none;width:120px">
+        <select class="input" id="limit-requests-preset" onchange="toggleCustom('req')">
+          <option value="">-- Req/day --</option>
+          <option value="100">Light (100)</option>
+          <option value="500">Normal (500)</option>
+          <option value="1000">Heavy (1000)</option>
+          <option value="0">Unlimited</option>
+          <option value="custom">Custom...</option>
+        </select>
+        <input class="input input-sm" id="limit-requests-custom" type="number" placeholder="requests" min="0" step="10" style="display:none;width:100px">
+        <button class="btn btn-blue" onclick="setLimit()">Set Limit</button>
+      </div>
+
+      <!-- Active usage per user (with progress bars) -->
+      <div id="usage-bars" style="margin-top:12px"></div>
+    </div>
   </div>
 
   <div class="footer">
-    LAST REFRESH <span id="last-refresh">-</span> &middot; AUTO-REFRESH 30s <span class="blink">&#9608;</span>
+    Last refresh <span id="last-refresh">-</span> &middot; auto-refresh 15s
   </div>
 </div>
 
+<div class="toast" id="toast"></div>
+
 <script>
 const $ = id => document.getElementById(id);
+
+function toast(msg, isError) {
+  const t = $('toast');
+  t.textContent = msg;
+  t.className = 'toast show' + (isError ? ' error' : '');
+  clearTimeout(t._tid);
+  t._tid = setTimeout(() => t.className = 'toast', 3000);
+}
 
 function parseMetrics(text) {
   const m = {};
@@ -179,14 +330,22 @@ function fmt(n) {
   return Math.round(n).toString();
 }
 
+function fmtUSD(n) {
+  if (n >= 1) return '$' + n.toFixed(2);
+  if (n >= 0.01) return '$' + n.toFixed(3);
+  return '$' + n.toFixed(4);
+}
+
 function setVal(id, val, prev) {
   const el = $(id);
+  if (!el) return;
   el.textContent = val;
   if (prev !== undefined && prev !== val) el.classList.add('flash');
   el.addEventListener('animationend', () => el.classList.remove('flash'), { once: true });
 }
 
 function threshold(el, val, y, r) {
+  if (!el) return;
   el.className = 'stat-val ' + (val >= r ? 'c-red' : val >= y ? 'c-yellow' : 'c-green');
 }
 
@@ -194,97 +353,323 @@ let prev = {};
 
 async function refresh() {
   try {
-    // Health
     const h = await fetch('/health').then(r => r.ok);
-    $('status-line').innerHTML = h
-      ? '<span class="online">ONLINE</span> &middot; <span id="mode-display">-</span>'
-      : '<span class="offline">OFFLINE</span>';
+    const pill = $('status-pill');
+    const stxt = $('status-text');
+    pill.className = h ? 'status-pill online' : 'status-pill offline';
+    stxt.textContent = h ? 'online' : 'offline';
 
-    // Overview
     const ov = await fetch('/internal/admin/overview').then(r => r.json());
-    const md = document.getElementById('mode-display');
-    if (md) md.textContent = ov.proxy_mode.toUpperCase() + (ov.passthrough_user ? ' (' + ov.passthrough_user + ')' : '');
+    $('mode-display').textContent = ov.proxy_mode.toUpperCase() +
+      (ov.passthrough_user ? ' (' + ov.passthrough_user + ')' : '');
+    const akr = $('add-key-row');
+    if (akr) akr.style.display = ov.proxy_mode === 'passthrough' ? 'none' : 'flex';
 
-    // Metrics
     const raw = await fetch('/metrics').then(r => r.text());
     const m = parseMetrics(raw);
 
+    // --- Stats ---
     const reqTotal = (m.gateii_requests_total || []).reduce((s, e) => s + e.v, 0);
     const tokTotal = (m.gateii_tokens_total || []).reduce((s, e) => s + e.v, 0);
     const costTotal = (m.gateii_cost_dollars_total || []).reduce((s, e) => s + e.v, 0);
-    const cacheRead = (m.gateii_tokens_total || []).filter(e => e.l.type === 'cache_read').reduce((s, e) => s + e.v, 0);
-    const cacheCreate = (m.gateii_tokens_total || []).filter(e => e.l.type === 'cache_creation').reduce((s, e) => s + e.v, 0);
+
     const inputTok = (m.gateii_tokens_total || []).filter(e => e.l.type === 'input').reduce((s, e) => s + e.v, 0);
-    const cacheRate = (inputTok + cacheRead + cacheCreate) > 0
-      ? Math.round(cacheRead / (inputTok + cacheRead + cacheCreate) * 100) : 0;
+    const outputTok = (m.gateii_tokens_total || []).filter(e => e.l.type === 'output').reduce((s, e) => s + e.v, 0);
+
+    // Avg latency
+    const latencyTotal = (m.gateii_request_duration_ms_total || []).reduce((s, e) => s + e.v, 0);
+    const avgLatency = reqTotal > 0 ? Math.round(latencyTotal / reqTotal) : 0;
 
     setVal('s-req', fmt(reqTotal), prev.req); prev.req = fmt(reqTotal);
     setVal('s-tok', fmt(tokTotal), prev.tok); prev.tok = fmt(tokTotal);
-    setVal('s-cost', '$' + costTotal.toFixed(2), prev.cost); prev.cost = '$' + costTotal.toFixed(2);
-    setVal('s-cache', cacheRate + '%', prev.cache); prev.cache = cacheRate + '%';
+    setVal('s-cost', fmtUSD(costTotal), prev.cost); prev.cost = fmtUSD(costTotal);
+    const latStr = avgLatency > 0 ? avgLatency + 'ms' : '-';
+    setVal('s-latency', latStr, prev.lat); prev.lat = latStr;
+
+    $('s-tok-detail').textContent = `${fmt(inputTok)} in / ${fmt(outputTok)} out`;
+    $('s-latency-detail').textContent = reqTotal > 0 ? `${reqTotal} requests total` : '';
 
     threshold($('s-cost'), costTotal, 5, 20);
-    threshold($('s-cache'), 100 - cacheRate, 60, 80); // invert: low cache = bad
+    threshold($('s-latency'), avgLatency, 5000, 15000);
 
-    // Pricing
+    // --- Pricing table: merge short pricing names with full cost model names ---
     const pricing = m.gateii_model_pricing_per_mtok || [];
-    const models = {};
+    const pricingMap = {};  // short name → prices
     pricing.forEach(p => {
       const mod = p.l.model;
-      if (!models[mod]) models[mod] = {};
-      models[mod][p.l.type] = p.v;
+      if (!pricingMap[mod]) pricingMap[mod] = {};
+      pricingMap[mod][p.l.type] = p.v;
     });
-    const pBody = $('pricing-body');
-    if (Object.keys(models).length) {
-      pBody.innerHTML = Object.entries(models).map(([mod, p]) =>
-        `<tr><td>${mod}</td><td>$${(p.input||0).toFixed(2)}</td><td>$${(p.output||0).toFixed(2)}</td><td>$${(p.cache_write||0).toFixed(2)}</td><td>$${(p.cache_read||0).toFixed(2)}</td></tr>`
-      ).join('');
+
+    // Cost per full model name
+    const costByModel = {};
+    (m.gateii_cost_dollars_total || []).forEach(e => {
+      const mod = e.l.model;
+      if (!costByModel[mod]) costByModel[mod] = { input: 0, output: 0, cache_write: 0, cache_read: 0, total: 0 };
+      if (costByModel[mod][e.l.type] !== undefined) costByModel[mod][e.l.type] = e.v;
+      costByModel[mod].total += e.v;
+    });
+
+    // Match full model name to short pricing key (e.g. "claude-opus-4-6" → "opus")
+    function findPricing(fullName) {
+      for (const [short, prices] of Object.entries(pricingMap)) {
+        if (fullName.toLowerCase().includes(short)) return prices;
+      }
+      return null;
     }
 
-    // Keys
+    const pBody = $('pricing-body');
+    // Use cost models as primary (they have the full names users recognize)
+    const costModels = Object.keys(costByModel).sort();
+    // Add pricing-only models that have no cost data yet
+    const pricingOnly = Object.keys(pricingMap).filter(short =>
+      !costModels.some(full => full.toLowerCase().includes(short))
+    ).sort();
+
+    let grandTotal = 0;
+    let rows = '';
+
+    for (const mod of costModels) {
+      const p = findPricing(mod) || {};
+      const c = costByModel[mod];
+      grandTotal += c.total;
+      rows += `<tr>
+        <td>${mod}</td>
+        <td class="text-right">${p.input ? '$'+p.input.toFixed(2) : '-'}</td>
+        <td class="text-right">${p.output ? '$'+p.output.toFixed(2) : '-'}</td>
+        <td class="text-right">${p.cache_write ? '$'+p.cache_write.toFixed(2) : '-'}</td>
+        <td class="text-right">${p.cache_read ? '$'+p.cache_read.toFixed(2) : '-'}</td>
+        <td class="text-right">${c.total > 0 ? fmtUSD(c.total) : '-'}</td>
+      </tr>`;
+    }
+    for (const mod of pricingOnly) {
+      const p = pricingMap[mod];
+      rows += `<tr style="color:var(--dim)">
+        <td>${mod}</td>
+        <td class="text-right">$${(p.input||0).toFixed(2)}</td>
+        <td class="text-right">$${(p.output||0).toFixed(2)}</td>
+        <td class="text-right">$${(p.cache_write||0).toFixed(2)}</td>
+        <td class="text-right">$${(p.cache_read||0).toFixed(2)}</td>
+        <td class="text-right">-</td>
+      </tr>`;
+    }
+    if (rows) {
+      rows += `<tr class="summary-row">
+        <td colspan="5">Total estimated cost (session)</td>
+        <td class="text-right">${fmtUSD(grandTotal)}</td>
+      </tr>`;
+      pBody.innerHTML = rows;
+    }
+
+    // --- Keys ---
     const keys = await fetch('/internal/admin/keys').then(r => r.json());
     $('key-count').textContent = keys.count;
     if (ov.proxy_mode === 'passthrough') {
-      $('keys-body').innerHTML = '<div class="empty">passthrough mode &mdash; no proxy keys needed</div>';
+      $('keys-body').innerHTML = '<div class="empty">passthrough mode — no proxy keys needed</div>';
     } else if (keys.count === 0) {
-      $('keys-body').innerHTML = '<div class="empty">no keys configured &mdash; run admin.sh add &lt;user&gt;</div>';
+      $('keys-body').innerHTML = '<div class="empty">no keys — use form below</div>';
     } else {
       $('keys-body').innerHTML = '<table><tr><th>Key</th><th>User</th></tr>' +
         keys.keys.map(k => `<tr><td class="key-masked">${k.key}</td><td class="key-user">${k.user}</td></tr>`).join('') +
         '</table>';
     }
 
-    // Blocked
+    // --- Blocked + Limits ---
     const status = await fetch('/internal/admin/status').then(r => r.json());
-    $('blocked-count').textContent = status.blocked.length;
-    if (status.blocked.length === 0) {
-      $('blocked-body').innerHTML = '<div class="empty">none</div>';
-    } else {
-      $('blocked-body').innerHTML = status.blocked.map(b => {
-        const ttl = b.ttl > 3600 ? Math.round(b.ttl / 3600) + 'h' : Math.round(b.ttl / 60) + 'm';
-        return `<div class="blocked-row"><span>${b.user} <span style="color:var(--dim)">(${ttl} remaining)</span></span>` +
-          `<button class="btn btn-danger" onclick="unblock('${b.user}')">UNBLOCK</button></div>`;
+    const blockedList = Array.isArray(status.blocked) ? status.blocked : [];
+    const limitsList = Array.isArray(status.limits) ? status.limits : [];
+
+    const managedCount = blockedList.length + limitsList.length;
+    $('managed-count').textContent = managedCount;
+
+    let managedHtml = '';
+    if (blockedList.length > 0) {
+      managedHtml += blockedList.map(b => {
+        const ttl = b.ttl > 86400 ? Math.round(b.ttl / 86400) + 'd'
+                  : b.ttl > 3600 ? Math.round(b.ttl / 3600) + 'h'
+                  : Math.round(b.ttl / 60) + 'm';
+        return `<div class="user-row">
+          <div class="user-info">
+            <span class="user-name">${b.user}</span>
+            <span class="user-meta" style="color:var(--err)">BLOCKED &mdash; ${ttl} remaining</span>
+          </div>
+          <div class="user-actions">
+            <button class="btn btn-primary" onclick="unblock('${b.user}')">Unblock</button>
+          </div>
+        </div>`;
       }).join('');
     }
+    if (limitsList.length > 0) {
+      managedHtml += limitsList.map(l => {
+        const parts = [];
+        if (l.tokens_per_day) parts.push(fmt(l.tokens_per_day) + ' tok/day');
+        if (l.requests_per_day) parts.push(l.requests_per_day + ' req/day');
+        return `<div class="user-row">
+          <div class="user-info">
+            <span class="user-name">${l.user}</span>
+            <span class="user-meta" style="color:var(--blue)">LIMIT: ${parts.join(', ')}</span>
+          </div>
+          <div class="user-actions">
+            <button class="btn btn-danger" onclick="removeLimit('${l.user}')">Remove</button>
+          </div>
+        </div>`;
+      }).join('');
+    }
+    $('managed-body').innerHTML = managedHtml || '<div class="empty">no blocked users or custom limits</div>';
 
-    // Plugins
-    const pluginHtml = [];
-    pluginHtml.push(`<span>git-stats</span> <span class="badge ${ov.plugins.git_stats ? 'badge-on' : 'badge-off'}">${ov.plugins.git_stats ? 'ACTIVE' : 'INACTIVE'}</span>`);
-    $('plugins-body').innerHTML = pluginHtml.join('');
+    // --- Plugins ---
+    const plugs = ov.plugins || {};
+    const pluginEntries = [
+      { name: 'console', desc: 'Admin web console', active: plugs.console },
+      { name: 'git-tracking', desc: 'Git activity tracking', active: plugs.git_tracking },
+    ];
+    $('plugins-body').innerHTML = pluginEntries.map(p =>
+      `<div style="display:flex;justify-content:space-between;align-items:center;padding:4px 0">
+        <span>${p.name} <span style="color:var(--dim);font-size:12px;margin-left:6px">${p.desc}</span></span>
+        <span class="badge ${p.active ? 'badge-on' : 'badge-off'}">${p.active ? 'ACTIVE' : 'INACTIVE'}</span>
+      </div>`
+    ).join('');
+
+    // --- Usage bars (daily consumption per user) ---
+    try {
+      const usageAll = await fetch('/internal/admin/usage-all').then(r => r.json());
+      const usageList = Array.isArray(usageAll) ? usageAll : [];
+      const barsEl = $('usage-bars');
+      if (barsEl && usageList.length > 0) {
+        barsEl.innerHTML = '<div style="font-size:12px;color:var(--dim);text-transform:uppercase;letter-spacing:.06em;font-weight:500;margin-bottom:8px">Daily Usage (today)</div>' +
+          usageList.map(u => {
+            const totalTok = (u.input || 0) + (u.output || 0);
+            const tokLimit = u.tokens_limit;
+            const reqLimit = u.requests_limit;
+            let bars = '';
+            if (tokLimit && tokLimit > 0) {
+              const pct = Math.min(100, Math.round(totalTok / tokLimit * 100));
+              const cls = pct >= 90 ? 'danger' : pct >= 70 ? 'warn' : 'ok';
+              bars += `<div class="progress-wrap">
+                <span class="progress-label">Tokens</span>
+                <div class="progress-bar"><div class="progress-fill ${cls}" style="width:${pct}%"></div></div>
+                <span class="progress-pct">${pct}%</span>
+              </div>`;
+            }
+            if (reqLimit && reqLimit > 0) {
+              const pct = Math.min(100, Math.round((u.requests || 0) / reqLimit * 100));
+              const cls = pct >= 90 ? 'danger' : pct >= 70 ? 'warn' : 'ok';
+              bars += `<div class="progress-wrap">
+                <span class="progress-label">Requests</span>
+                <div class="progress-bar"><div class="progress-fill ${cls}" style="width:${pct}%"></div></div>
+                <span class="progress-pct">${pct}%</span>
+              </div>`;
+            }
+            const detail = `${fmt(totalTok)} tokens, ${u.requests || 0} requests` +
+              (tokLimit ? ` / ${fmt(tokLimit)} limit` : '') +
+              (reqLimit ? ` / ${reqLimit} req limit` : '');
+            return `<div class="usage-card">
+              <div class="usage-header">
+                <span class="usage-user">${u.user}</span>
+                <span class="usage-detail">${detail}</span>
+              </div>
+              ${bars || '<div class="usage-detail">no limits set</div>'}
+            </div>`;
+          }).join('');
+      } else if (barsEl) {
+        barsEl.innerHTML = '';
+      }
+    } catch (e2) { /* usage-all not critical */ }
 
     $('last-refresh').textContent = new Date().toLocaleTimeString();
   } catch (e) {
-    $('status-line').innerHTML = '<span class="offline">ERROR: ' + e.message + '</span>';
+    $('status-pill').className = 'status-pill offline';
+    $('status-text').textContent = 'error: ' + e.message;
   }
 }
 
+// --- Admin actions ---
+
 async function unblock(user) {
-  await fetch('/internal/admin/unblock?user=' + encodeURIComponent(user), { method: 'POST' });
-  refresh();
+  try {
+    await fetch('/internal/admin/unblock?user=' + encodeURIComponent(user), { method: 'POST' });
+    toast('Unblocked ' + user); refresh();
+  } catch (e) { toast('Failed: ' + e.message, true); }
+}
+
+async function blockUser() {
+  const user = $('block-user').value.trim();
+  const ttl = $('block-ttl').value;
+  if (!user || !/^[a-zA-Z0-9_-]+$/.test(user)) { toast('Invalid username', true); return; }
+  try {
+    const r = await fetch(`/internal/admin/block?user=${encodeURIComponent(user)}&ttl=${ttl}`, { method: 'POST' });
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    toast('Blocked ' + user); $('block-user').value = ''; refresh();
+  } catch (e) { toast('Failed: ' + e.message, true); }
+}
+
+function toggleCustom(type) {
+  if (type === 'tok') {
+    const sel = $('limit-tokens-preset');
+    $('limit-tokens-custom').style.display = sel.value === 'custom' ? 'inline-block' : 'none';
+  } else {
+    const sel = $('limit-requests-preset');
+    $('limit-requests-custom').style.display = sel.value === 'custom' ? 'inline-block' : 'none';
+  }
+}
+
+function getPresetVal(presetId, customId) {
+  const sel = $(presetId).value;
+  if (sel === '') return null;
+  if (sel === 'custom') return parseInt($(customId).value) || 0;
+  return parseInt(sel);
+}
+
+async function setLimit() {
+  const user = $('limit-user').value.trim();
+  const tokPerDay = getPresetVal('limit-tokens-preset', 'limit-tokens-custom');
+  const reqPerDay = getPresetVal('limit-requests-preset', 'limit-requests-custom');
+  if (!user || !/^[a-zA-Z0-9_-]+$/.test(user)) { toast('Invalid username', true); return; }
+  if (tokPerDay === null && reqPerDay === null) { toast('Select at least one limit', true); return; }
+  const body = {};
+  if (tokPerDay !== null) body.tokens_per_day = tokPerDay;
+  if (reqPerDay !== null) body.requests_per_day = reqPerDay;
+  try {
+    const r = await fetch('/internal/admin/limit?user=' + encodeURIComponent(user), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body)
+    });
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    toast('Limit set for ' + user);
+    $('limit-user').value = '';
+    $('limit-tokens-preset').value = ''; $('limit-requests-preset').value = '';
+    $('limit-tokens-custom').style.display = 'none'; $('limit-requests-custom').style.display = 'none';
+    refresh();
+  } catch (e) { toast('Failed: ' + e.message, true); }
+}
+
+async function removeLimit(user) {
+  try {
+    const r = await fetch('/internal/admin/limit?user=' + encodeURIComponent(user), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ tokens_per_day: 0, requests_per_day: 0 })
+    });
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    toast('Limit removed for ' + user); refresh();
+  } catch (e) { toast('Failed: ' + e.message, true); }
+}
+
+async function addKey() {
+  const user = $('add-user').value.trim();
+  if (!user || !/^[a-zA-Z0-9_-]+$/.test(user)) { toast('Invalid username', true); return; }
+  const key = 'sk-proxy-' + Array.from(crypto.getRandomValues(new Uint8Array(16))).map(b => b.toString(16).padStart(2,'0')).join('');
+  try {
+    const r = await fetch('/internal/admin/addkey?user=' + encodeURIComponent(user) + '&key=' + encodeURIComponent(key), { method: 'POST' });
+    if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || 'HTTP ' + r.status);
+    toast('Key added for ' + user);
+    $('add-user').value = ''; refresh();
+  } catch (e) { toast('Failed: ' + e.message, true); }
 }
 
 refresh();
-setInterval(refresh, 30000);
+setInterval(refresh, 15000);
 </script>
 </body>
 </html>
