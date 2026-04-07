@@ -23,6 +23,14 @@ local function ttl_until_midnight()
     return (86400 - (now % 86400)) + 60
 end
 
+-- Reject request with a JSON error response
+local function reject(status, message)
+    ngx.status = status
+    ngx.header["Content-Type"] = "application/json"
+    ngx.say(cjson.encode({ error = message }))
+    return ngx.exit(status)
+end
+
 -- Load keys from JSON file (apikey mode)
 local function load_keys()
     local f = io.open("/etc/nginx/data/keys.json", "r")
@@ -42,10 +50,7 @@ if not api_key or api_key == "" then
     end
 end
 if not api_key or api_key == "" then
-    ngx.status = 401
-    ngx.header["Content-Type"] = "application/json"
-    ngx.say('{"error":"Missing API key — send x-api-key or Authorization: Bearer <key>"}')
-    return ngx.exit(401)
+    return reject(401, "Missing API key — send x-api-key or Authorization: Bearer <key>")
 end
 
 -- 2. Lookup user
@@ -54,8 +59,8 @@ local proxy_mode = os.getenv("PROXY_MODE") or "apikey"
 local user
 
 if proxy_mode == "passthrough" then
-    -- Use configured name, else derive stable ID from last 8 chars of key
-    user = os.getenv("PASSTHROUGH_USER") or ("user_" .. api_key:sub(-8))
+    -- Use configured name, else fall back to a generic identifier (never log key fragments)
+    user = os.getenv("PASSTHROUGH_USER") or "passthrough"
     ngx.ctx.upstream_key = api_key
     -- Remember original auth format — OAuth tokens must stay as Bearer, not x-api-key
     if ngx.var.http_x_api_key and ngx.var.http_x_api_key ~= "" then
@@ -68,10 +73,7 @@ else
     local cached = auth_cache:get(api_key)
     if cached == false then
         -- Negative cache hit — known invalid key
-        ngx.status = 401
-        ngx.header["Content-Type"] = "application/json"
-        ngx.say('{"error":"Invalid API key — check your key or run admin.sh add <user>"}')
-        return ngx.exit(401)
+        return reject(401, "Invalid API key — check your key or run admin.sh add <user>")
     end
     user = cached
     if not user then
@@ -79,10 +81,7 @@ else
         local val = keys[api_key]
         if not val or val == "" then
             auth_cache:set(api_key, false, 60)  -- negative cache: 60s
-            ngx.status = 401
-            ngx.header["Content-Type"] = "application/json"
-            ngx.say('{"error":"Invalid API key — check your key or run admin.sh add <user>"}')
-            return ngx.exit(401)
+            return reject(401, "Invalid API key — check your key or run admin.sh add <user>")
         end
         user = val
         auth_cache:set(api_key, user, 300)
@@ -104,11 +103,8 @@ do
     local blocked = blocking_dict:get("blocked|" .. user)
     if blocked then
         local ttl = blocking_dict:ttl("blocked|" .. user)
-        ngx.status = 429
-        ngx.header["Content-Type"] = "application/json"
         ngx.header["Retry-After"] = (ttl and ttl > 0) and tostring(math.ceil(ttl)) or "3600"
-        ngx.say('{"error":"Usage limit reached — contact admin to unblock"}')
-        return ngx.exit(429)
+        return reject(429, "Usage limit reached — contact admin to unblock")
     end
 
     -- 3b. Daily limit checks (atomic via incr return value to avoid TOCTOU races)
@@ -167,11 +163,8 @@ if proxy_mode ~= "passthrough" and lim then
     local delay, err = lim:incoming(user, true)
     if not delay then
         if err == "rejected" then
-            ngx.status = 429
-            ngx.header["Content-Type"] = "application/json"
             ngx.header["Retry-After"] = "60"
-            ngx.say('{"error":"Rate limit exceeded — max 60 requests/min per key"}')
-            return ngx.exit(429)
+            return reject(429, "Rate limit exceeded — max 60 requests/min per key")
         end
         ngx.log(ngx.WARN, "rate limiter error: ", err)
     elseif delay > 0 then
