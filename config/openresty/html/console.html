@@ -145,6 +145,16 @@ select.input{cursor:pointer;-webkit-appearance:none;padding-right:28px;
 .flash{animation:glow-flash .5s ease-out}
 @keyframes glow-flash{0%{color:#fff}100%{}}
 
+/* Component health bar */
+.health-bar{display:flex;gap:8px;margin-bottom:16px;flex-wrap:wrap}
+.health-chip{display:inline-flex;align-items:center;gap:5px;padding:5px 12px;border-radius:20px;font-size:11px;font-weight:600;letter-spacing:.04em;border:1px solid;transition:all .3s}
+.health-chip.ok{color:var(--accent);border-color:var(--accent-dim);background:var(--accent-subtle)}
+.health-chip.degraded{color:var(--warn);border-color:#ffc85740;background:#ffc85710}
+.health-chip.down{color:var(--err);border-color:#ff4d4d40;background:#ff4d4d10}
+.health-chip.unknown{color:var(--dim);border-color:var(--border);background:var(--surface2)}
+.health-dot{width:6px;height:6px;border-radius:50%;background:currentColor}
+.health-lat{opacity:.6;font-weight:400;margin-left:2px}
+
 /* Attribution bar */
 .provider-attr{padding:6px 16px;font-size:11px;color:var(--dim);border-bottom:1px solid var(--border);display:flex;gap:8px;align-items:center}
 .provider-attr a{color:var(--blue);text-decoration:none;border-bottom:1px solid #5b9aff30}
@@ -202,6 +212,9 @@ select.input{cursor:pointer;-webkit-appearance:none;padding-right:28px;
     <a href="/metrics" target="_blank">Raw Metrics</a>
     <span class="mode-tag">Mode: <b id="mode-display">-</b></span>
   </div>
+
+  <!-- Component health -->
+  <div class="health-bar" id="health-bar"></div>
 
   <!-- Stats -->
   <div class="stats">
@@ -423,6 +436,27 @@ async function fetchMonthlyProjection() {
     if (!byPattern[pattern].fullModels.includes(fullModel)) byPattern[pattern].fullModels.push(fullModel);
   }
   return byPattern;
+}
+
+async function loadHealth() {
+  const bar = $('health-bar');
+  if (!bar) return;
+  try {
+    const data = await fetch('/internal/admin/health').then(r => r.json());
+    const labels = { proxy: 'Proxy', prometheus: 'Prometheus', grafana: 'Grafana', upstream: 'Upstream' };
+    bar.innerHTML = Object.entries(labels).map(([key, label]) => {
+      const c = data.components?.[key];
+      if (!c) return '';
+      const state = !c.ok ? 'down' : 'ok';
+      const lat = c.latency_ms > 0 ? `<span class="health-lat">${c.latency_ms}ms</span>` : '';
+      const detail = key === 'upstream' && c.requests > 0
+        ? `<span class="health-lat">${c.errors}/${c.requests} err</span>` : lat;
+      const title = c.error ? ` title="${esc(c.error)}"` : '';
+      return `<span class="health-chip ${state}"${title}><span class="health-dot"></span>${label}${detail}</span>`;
+    }).join('');
+  } catch (e) {
+    bar.innerHTML = '<span class="health-chip unknown"><span class="health-dot"></span>health unavailable</span>';
+  }
 }
 
 // Fetch providers config + live pricing
@@ -664,7 +698,10 @@ async function refresh() {
     const akr = $('add-key-row');
     if (akr) akr.style.display = ov.proxy_mode === 'passthrough' ? 'none' : 'flex';
 
-    const raw = await fetch('/metrics').then(r => r.text());
+    const [raw] = await Promise.all([
+      fetch('/metrics').then(r => r.text()),
+      loadHealth(),
+    ]);
     const m = parseMetrics(raw);
 
     // --- Stats: try Prometheus for real 24h data, fallback to live counters ---
