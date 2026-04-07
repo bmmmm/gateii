@@ -56,6 +56,13 @@ local user = ngx.ctx.user
 -- Trim model name (whitespace in model names would break counter keys)
 local model = (body_obj.model or "unknown"):match("^%s*(.-)%s*$")
 
+-- Inject stream_options so OpenAI-format providers return usage in streaming responses
+if is_streaming and provider.stream_options_usage then
+    body_obj.stream_options = body_obj.stream_options or {}
+    body_obj.stream_options.include_usage = true
+    body_str = cjson.encode(body_obj)
+end
+
 -- Build upstream request
 -- In passthrough mode, ngx.ctx.upstream_key carries the client's own API key
 local upstream_headers = provider.build_headers(ngx.ctx.upstream_key, ngx.ctx.upstream_auth_type)
@@ -209,34 +216,12 @@ else
     httpc:set_keepalive()
 end
 
--- Parse SSE events for token tracking (Anthropic sends usage in message_start + message_delta)
--- Handle both \r\n (HTTP spec) and \n (common in practice) line endings
+-- Parse SSE events for token tracking — delegate to provider-specific parser
 local input_tokens, output_tokens, stop_reason = 0, 0, nil
 local cache_creation, cache_read = 0, 0
-if res.status == 200 then
-    local body = table.concat(chunks)
-    local data = body:match("event: message_start\r?\ndata: ([^\r\n]+)")
-    if data then
-        local obj, err = cjson.decode(data)
-        if obj and obj.message and obj.message.usage then
-            local u = obj.message.usage
-            input_tokens = u.input_tokens or 0
-            cache_creation = u.cache_creation_input_tokens or 0
-            cache_read = u.cache_read_input_tokens or 0
-        elseif not obj then
-            ngx.log(ngx.WARN, "failed to decode message_start SSE: ", err)
-        end
-    end
-    data = body:match("event: message_delta\r?\ndata: ([^\r\n]+)")
-    if data then
-        local obj, err = cjson.decode(data)
-        if not obj then
-            ngx.log(ngx.WARN, "failed to decode message_delta SSE: ", err)
-        else
-            if obj.usage then output_tokens = obj.usage.output_tokens or 0 end
-            if obj.delta then stop_reason = obj.delta.stop_reason end
-        end
-    end
+if res.status == 200 and provider.extract_tokens_streaming then
+    input_tokens, output_tokens, stop_reason, cache_creation, cache_read =
+        provider.extract_tokens_streaming(table.concat(chunks))
 end
 
 pcall(tracking.record, user, provider_name, model, input_tokens, output_tokens,
