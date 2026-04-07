@@ -17,6 +17,40 @@ local function parse_rfc3339_offset(s)
     return epoch - ngx.time()
 end
 
+local function track_rl_window(res)
+    local rl_remaining = tonumber(res.headers and res.headers["anthropic-ratelimit-tokens-remaining"])
+    local rl_reset     = res.headers and res.headers["anthropic-ratelimit-tokens-reset"]
+    if rl_remaining == nil then return end
+    local prev_reset = tracking.get_rate_limit_reset()
+    if prev_reset and rl_reset and prev_reset ~= rl_reset then
+        local old_remaining = tonumber(ngx.shared.counters:get("ratelimit_remaining")) or 0
+        tracking.set_rate_limit_tokens_expired(old_remaining)
+        ngx.log(ngx.INFO, "rate limit window reset: ", old_remaining, " tokens expired")
+    end
+    if rl_reset then tracking.set_rate_limit_reset(rl_reset) end
+    tracking.set_rate_limit_remaining(rl_remaining)
+end
+
+local function track_rl_429(res, u, m, pname)
+    local reset_header = res.headers and res.headers["anthropic-ratelimit-tokens-reset"]
+    local limit_type = "unknown"
+    if reset_header then
+        local offset = parse_rfc3339_offset(reset_header)
+        if offset then limit_type = (offset <= 21600) and "5h" or "weekly" end
+    end
+    local retry_after = tonumber(res.headers and res.headers["retry-after"]) or 0
+    local hit_tokens = 0
+    local cd = ngx.shared.counters
+    if cd and u and m then
+        for _, t in ipairs({"input", "output"}) do
+            local v = cd:get(u .. "|" .. pname .. "|" .. m .. "|" .. t)
+            if v then hit_tokens = hit_tokens + v end
+        end
+    end
+    tracking.set_rate_limit_wait(u or "unknown", m or "unknown", limit_type, retry_after)
+    tracking.set_rate_limit_tokens_at_hit(u or "unknown", m or "unknown", limit_type, hit_tokens)
+end
+
 -- Read body — with temp-file fallback for concurrent load (body buffered to disk)
 local body_str = ngx.req.get_body_data()
 if not body_str then
@@ -133,46 +167,9 @@ if not is_streaming then
     local input_tokens, output_tokens, stop_reason, cache_creation, cache_read = 0, 0, nil, 0, 0
     if res.status == 200 then
         input_tokens, output_tokens, stop_reason, cache_creation, cache_read = provider.extract_tokens(response_body)
-
-        -- Track rate limit window consumption from Anthropic headers
-        local rl_remaining = tonumber(res.headers and res.headers["anthropic-ratelimit-tokens-remaining"])
-        local rl_reset     = res.headers and res.headers["anthropic-ratelimit-tokens-reset"]
-
-        if rl_remaining ~= nil then
-            -- Detect window reset: if reset timestamp changed, old remaining = expired tokens
-            local prev_reset = tracking.get_rate_limit_reset()
-            if prev_reset and rl_reset and prev_reset ~= rl_reset then
-                -- New window started — record how many tokens expired in the old window
-                local old_remaining = tonumber(ngx.shared.counters:get("ratelimit_remaining")) or 0
-                tracking.set_rate_limit_tokens_expired(old_remaining)
-                ngx.log(ngx.INFO, "rate limit window reset: ", old_remaining, " tokens expired")
-            end
-            if rl_reset then tracking.set_rate_limit_reset(rl_reset) end
-            tracking.set_rate_limit_remaining(rl_remaining)
-        end
+        track_rl_window(res)
     end
-
-    if res.status == 429 then
-        local reset_header = res.headers and res.headers["anthropic-ratelimit-tokens-reset"]
-        local limit_type = "unknown"
-        if reset_header then
-            local offset = parse_rfc3339_offset(reset_header)
-            if offset then
-                limit_type = (offset <= 21600) and "5h" or "weekly"
-            end
-        end
-        local retry_after = tonumber(res.headers and res.headers["retry-after"]) or 0
-        local hit_tokens = 0
-        local counters_dict = ngx.shared.counters
-        if counters_dict and user and model then
-            for _, t in ipairs({"input", "output"}) do
-                local v = counters_dict:get(user .. "|" .. provider_name .. "|" .. model .. "|" .. t)
-                if v then hit_tokens = hit_tokens + v end
-            end
-        end
-        pcall(tracking.set_rate_limit_wait, user or "unknown", model or "unknown", limit_type, retry_after)
-        pcall(tracking.set_rate_limit_tokens_at_hit, user or "unknown", model or "unknown", limit_type, hit_tokens)
-    end
+    if res.status == 429 then track_rl_429(res, user, model, provider_name) end
 
     ngx.print(response_body)
     ngx.flush(true)  -- send to client before tracking write
@@ -276,46 +273,8 @@ if res.status == 200 and provider.extract_tokens_streaming then
         provider.extract_tokens_streaming(table.concat(chunks))
 end
 
-if res.status == 200 then
-    -- Track rate limit window consumption from Anthropic headers
-    local rl_remaining = tonumber(res.headers and res.headers["anthropic-ratelimit-tokens-remaining"])
-    local rl_reset     = res.headers and res.headers["anthropic-ratelimit-tokens-reset"]
-
-    if rl_remaining ~= nil then
-        -- Detect window reset: if reset timestamp changed, old remaining = expired tokens
-        local prev_reset = tracking.get_rate_limit_reset()
-        if prev_reset and rl_reset and prev_reset ~= rl_reset then
-            -- New window started — record how many tokens expired in the old window
-            local old_remaining = tonumber(ngx.shared.counters:get("ratelimit_remaining")) or 0
-            tracking.set_rate_limit_tokens_expired(old_remaining)
-            ngx.log(ngx.INFO, "rate limit window reset: ", old_remaining, " tokens expired")
-        end
-        if rl_reset then tracking.set_rate_limit_reset(rl_reset) end
-        tracking.set_rate_limit_remaining(rl_remaining)
-    end
-end
-
-if res.status == 429 then
-    local reset_header = res.headers and res.headers["anthropic-ratelimit-tokens-reset"]
-    local limit_type = "unknown"
-    if reset_header then
-        local offset = parse_rfc3339_offset(reset_header)
-        if offset then
-            limit_type = (offset <= 21600) and "5h" or "weekly"
-        end
-    end
-    local retry_after = tonumber(res.headers and res.headers["retry-after"]) or 0
-    local hit_tokens = 0
-    local counters_dict = ngx.shared.counters
-    if counters_dict and user and model then
-        for _, t in ipairs({"input", "output"}) do
-            local v = counters_dict:get("tokens|" .. user .. "|" .. provider_name .. "|" .. model .. "|" .. t)
-            if v then hit_tokens = hit_tokens + v end
-        end
-    end
-    pcall(tracking.set_rate_limit_wait, user or "unknown", model or "unknown", limit_type, retry_after)
-    pcall(tracking.set_rate_limit_tokens_at_hit, user or "unknown", model or "unknown", limit_type, hit_tokens)
-end
+if res.status == 200 then track_rl_window(res) end
+if res.status == 429 then track_rl_429(res, user, model, provider_name) end
 
 pcall(tracking.record, user, provider_name, model, input_tokens, output_tokens,
       { latency_ms = (ngx.now() - t0_stream) * 1000, status = res.status, stop_reason = stop_reason,

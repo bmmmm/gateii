@@ -218,7 +218,7 @@ end
 local rl_wait_lines = {}
 local rl_tokens_lines = {}
 for _, key in ipairs(keys) do
-    if key:sub(1, 14) == "ratelimit_wait" then
+    if key:sub(1, 15) == "ratelimit_wait|" then
         -- key format: ratelimit_wait|user|model|limit_type
         local rl_user, rl_model, rl_ltype = key:match("^ratelimit_wait|([^|]+)|([^|]+)|(.+)$")
         if rl_user then
