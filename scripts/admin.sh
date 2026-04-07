@@ -259,10 +259,10 @@ case "$SUBCMD" in
     PLUGIN="${2:-}"
     shift 2 2>/dev/null || shift $# 2>/dev/null || true
     OVERRIDE="$PROJECT_DIR/docker-compose.override.yml"
-    COMPOSE="docker compose --project-directory $PROJECT_DIR -f $PROJECT_DIR/docker-compose.yml --env-file $PROJECT_DIR/.env"
+    COMPOSE="docker compose --project-directory \"$PROJECT_DIR\" -f \"$PROJECT_DIR/docker-compose.yml\" --env-file \"$PROJECT_DIR/.env\""
     # Include override if it exists
     if [ -f "$OVERRIDE" ]; then
-      COMPOSE="$COMPOSE -f $OVERRIDE"
+      COMPOSE="$COMPOSE -f \"$OVERRIDE\""
     fi
 
     # Available plugins (name → description)

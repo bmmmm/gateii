@@ -12,7 +12,7 @@
 # After running: restart Claude Code, then test the fix, then:
 #   ./scripts/admin.sh switch local
 
-set -uo pipefail
+set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
