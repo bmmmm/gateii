@@ -13,6 +13,9 @@
     "from": "now-30d",
     "to": "now"
   },
+  "timepicker": {
+    "time_options": ["5m","15m","1h","6h","12h","24h","2d","7d","30d","90d","6M","1y","2y","5y"]
+  },
   "panels": [
     {
       "id": 1,
