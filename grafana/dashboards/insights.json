@@ -261,7 +261,7 @@
       "id": 6,
       "title": "Daily Costs vs Subscriptions",
       "description": "Dashed lines = daily equivalent of subscription prices. If your usage is below, API is cheaper.",
-      "type": "timeseries",
+      "type": "barchart",
       "gridPos": {
         "x": 0,
         "y": 4,
@@ -310,10 +310,13 @@
           "unit": "currencyUSD",
           "decimals": 2,
           "custom": {
-            "lineWidth": 2,
-            "fillOpacity": 0,
-            "spanNulls": true,
-            "lineInterpolation": "smooth"
+            "fillOpacity": 80,
+            "gradientMode": "none",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            }
           },
           "color": {
             "mode": "palette-classic"
@@ -323,17 +326,9 @@
           {
             "matcher": {
               "id": "byName",
-              "options": "API-Kosten / Tag"
+              "options": "API Cost / Day"
             },
             "properties": [
-              {
-                "id": "custom.fillOpacity",
-                "value": 15
-              },
-              {
-                "id": "custom.lineWidth",
-                "value": 2
-              },
               {
                 "id": "color",
                 "value": {
@@ -350,20 +345,6 @@
             },
             "properties": [
               {
-                "id": "custom.lineStyle",
-                "value": {
-                  "fill": "dash",
-                  "dash": [
-                    10,
-                    10
-                  ]
-                }
-              },
-              {
-                "id": "custom.lineWidth",
-                "value": 1
-              },
-              {
                 "id": "color",
                 "value": {
                   "fixedColor": "yellow",
@@ -378,20 +359,6 @@
               "options": "Max 5x ($100/mo)"
             },
             "properties": [
-              {
-                "id": "custom.lineStyle",
-                "value": {
-                  "fill": "dash",
-                  "dash": [
-                    10,
-                    10
-                  ]
-                }
-              },
-              {
-                "id": "custom.lineWidth",
-                "value": 1
-              },
               {
                 "id": "color",
                 "value": {
@@ -408,20 +375,6 @@
             },
             "properties": [
               {
-                "id": "custom.lineStyle",
-                "value": {
-                  "fill": "dash",
-                  "dash": [
-                    10,
-                    10
-                  ]
-                }
-              },
-              {
-                "id": "custom.lineWidth",
-                "value": 1
-              },
-              {
                 "id": "color",
                 "value": {
                   "fixedColor": "red",
@@ -433,6 +386,12 @@
         ]
       },
       "options": {
+        "barWidth": 0.97,
+        "groupWidth": 0.7,
+        "xTickLabelRotation": 0,
+        "xTickLabelSpacing": 0,
+        "fillOpacity": 80,
+        "gradientMode": "none",
         "tooltip": {
           "mode": "multi",
           "sort": "desc"
