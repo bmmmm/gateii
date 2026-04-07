@@ -26,6 +26,7 @@ end
 
 local body_obj, parse_err = cjson.decode(body_str)
 if not body_obj then
+    ngx.log(ngx.WARN, "request JSON parse error: ", parse_err)
     ngx.status = 400
     ngx.header["Content-Type"] = "application/json"
     ngx.say('{"error":"Invalid JSON — check your request body"}')
@@ -73,7 +74,7 @@ for name, value in pairs(req_headers) do
         end
     end
 end
-local upstream_url = provider.upstream_url .. ngx.var.uri
+local upstream_url = provider.upstream_url .. ngx.var.request_uri
 
 -- Non-streaming: direct proxy
 if not is_streaming then
