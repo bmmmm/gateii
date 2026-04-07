@@ -133,6 +133,23 @@ if not is_streaming then
     local input_tokens, output_tokens, stop_reason, cache_creation, cache_read = 0, 0, nil, 0, 0
     if res.status == 200 then
         input_tokens, output_tokens, stop_reason, cache_creation, cache_read = provider.extract_tokens(response_body)
+
+        -- Track rate limit window consumption from Anthropic headers
+        local rl_remaining = tonumber(res.headers and res.headers["anthropic-ratelimit-tokens-remaining"])
+        local rl_reset     = res.headers and res.headers["anthropic-ratelimit-tokens-reset"]
+
+        if rl_remaining ~= nil then
+            -- Detect window reset: if reset timestamp changed, old remaining = expired tokens
+            local prev_reset = tracking.get_rate_limit_reset()
+            if prev_reset and rl_reset and prev_reset ~= rl_reset then
+                -- New window started — record how many tokens expired in the old window
+                local old_remaining = tonumber(ngx.shared.counters:get("ratelimit_remaining")) or 0
+                tracking.set_rate_limit_tokens_expired(old_remaining)
+                ngx.log(ngx.INFO, "rate limit window reset: ", old_remaining, " tokens expired")
+            end
+            if rl_reset then tracking.set_rate_limit_reset(rl_reset) end
+            tracking.set_rate_limit_remaining(rl_remaining)
+        end
     end
 
     if res.status == 429 then
@@ -257,6 +274,25 @@ local cache_creation, cache_read = 0, 0
 if res.status == 200 and provider.extract_tokens_streaming then
     input_tokens, output_tokens, stop_reason, cache_creation, cache_read =
         provider.extract_tokens_streaming(table.concat(chunks))
+end
+
+if res.status == 200 then
+    -- Track rate limit window consumption from Anthropic headers
+    local rl_remaining = tonumber(res.headers and res.headers["anthropic-ratelimit-tokens-remaining"])
+    local rl_reset     = res.headers and res.headers["anthropic-ratelimit-tokens-reset"]
+
+    if rl_remaining ~= nil then
+        -- Detect window reset: if reset timestamp changed, old remaining = expired tokens
+        local prev_reset = tracking.get_rate_limit_reset()
+        if prev_reset and rl_reset and prev_reset ~= rl_reset then
+            -- New window started — record how many tokens expired in the old window
+            local old_remaining = tonumber(ngx.shared.counters:get("ratelimit_remaining")) or 0
+            tracking.set_rate_limit_tokens_expired(old_remaining)
+            ngx.log(ngx.INFO, "rate limit window reset: ", old_remaining, " tokens expired")
+        end
+        if rl_reset then tracking.set_rate_limit_reset(rl_reset) end
+        tracking.set_rate_limit_remaining(rl_remaining)
+    end
 end
 
 if res.status == 429 then
