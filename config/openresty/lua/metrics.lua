@@ -112,59 +112,51 @@ local function labels_upm(user, provider, model)
     return escape_label(user), escape_label(provider), escape_label(model)
 end
 
--- Tokens (input, output, cache_creation, cache_read)
-add("# HELP gateii_tokens_total Token usage by user/provider/model/type")
-add("# TYPE gateii_tokens_total counter")
+-- Tokens, Requests, Latency, Errors — single pass, collect into per-metric buffers
+local tok_lines, req_lines, lat_lines, err_lines = {}, {}, {}, {}
 for upm, data in pairs(usage) do
     local user, provider, model = upm:match("^([^|]+)|([^|]+)|(.+)$")
     local eu, ep, em = labels_upm(user, provider, model)
     for _, typ in ipairs({"input", "output", "cache_creation", "cache_read"}) do
         local val = data[typ] or 0
         if val > 0 then
-            add(string.format('gateii_tokens_total{user="%s",provider="%s",model="%s",type="%s"} %d',
-                eu, ep, em, typ, val))
+            tok_lines[#tok_lines+1] = string.format(
+                'gateii_tokens_total{user="%s",provider="%s",model="%s",type="%s"} %d',
+                eu, ep, em, typ, val)
         end
     end
+    local req = data.requests or 0
+    if req > 0 then
+        req_lines[#req_lines+1] = string.format(
+            'gateii_requests_total{user="%s",provider="%s",model="%s"} %d', eu, ep, em, req)
+    end
+    local lat = data.latency_ms_sum or 0
+    if lat > 0 then
+        lat_lines[#lat_lines+1] = string.format(
+            'gateii_request_duration_ms_total{user="%s",provider="%s",model="%s"} %.2f', eu, ep, em, lat)
+    end
+    local errs = data.errors or 0
+    if errs > 0 then
+        err_lines[#err_lines+1] = string.format(
+            'gateii_upstream_errors_total{user="%s",provider="%s",model="%s"} %d', eu, ep, em, errs)
+    end
 end
 
--- Requests
+add("# HELP gateii_tokens_total Token usage by user/provider/model/type")
+add("# TYPE gateii_tokens_total counter")
+for _, l in ipairs(tok_lines) do add(l) end
+
 add("# HELP gateii_requests_total Total proxied requests by user/provider/model")
 add("# TYPE gateii_requests_total counter")
-for upm, data in pairs(usage) do
-    local user, provider, model = upm:match("^([^|]+)|([^|]+)|(.+)$")
-    local eu, ep, em = labels_upm(user, provider, model)
-    local val = data.requests or 0
-    if val > 0 then
-        add(string.format('gateii_requests_total{user="%s",provider="%s",model="%s"} %d',
-            eu, ep, em, val))
-    end
-end
+for _, l in ipairs(req_lines) do add(l) end
 
--- Latency
 add("# HELP gateii_request_duration_ms_total Cumulative upstream latency in ms")
 add("# TYPE gateii_request_duration_ms_total counter")
-for upm, data in pairs(usage) do
-    local user, provider, model = upm:match("^([^|]+)|([^|]+)|(.+)$")
-    local eu, ep, em = labels_upm(user, provider, model)
-    local val = data.latency_ms_sum or 0
-    if val > 0 then
-        add(string.format('gateii_request_duration_ms_total{user="%s",provider="%s",model="%s"} %.2f',
-            eu, ep, em, val))
-    end
-end
+for _, l in ipairs(lat_lines) do add(l) end
 
--- Errors
 add("# HELP gateii_upstream_errors_total Upstream non-200 responses")
 add("# TYPE gateii_upstream_errors_total counter")
-for upm, data in pairs(usage) do
-    local user, provider, model = upm:match("^([^|]+)|([^|]+)|(.+)$")
-    local eu, ep, em = labels_upm(user, provider, model)
-    local val = data.errors or 0
-    if val > 0 then
-        add(string.format('gateii_upstream_errors_total{user="%s",provider="%s",model="%s"} %d',
-            eu, ep, em, val))
-    end
-end
+for _, l in ipairs(err_lines) do add(l) end
 
 -- Cost (cache-aware: cache_write = 1.25x input, cache_read = 0.1x input)
 add("# HELP gateii_cost_dollars_total Estimated API cost in USD (Anthropic pricing)")
