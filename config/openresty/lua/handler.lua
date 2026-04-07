@@ -149,7 +149,7 @@ if not is_streaming then
         local counters_dict = ngx.shared.counters
         if counters_dict and user and model then
             for _, t in ipairs({"input", "output"}) do
-                local v = counters_dict:get("tokens|" .. user .. "|" .. provider_name .. "|" .. model .. "|" .. t)
+                local v = counters_dict:get(user .. "|" .. provider_name .. "|" .. model .. "|" .. t)
                 if v then hit_tokens = hit_tokens + v end
             end
         end
