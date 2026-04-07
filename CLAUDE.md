@@ -24,6 +24,30 @@ bash scripts/smoke-test.sh
 ./scripts/admin.sh switch direct   # direct to Anthropic
 ```
 
+## Safe dev workflow for proxy changes
+
+When editing Lua or nginx config, switch to direct first so a broken proxy doesn't cut off Claude Code:
+
+```bash
+./scripts/admin.sh switch direct   # 1. go direct — Claude Code stays connected
+# ... edit Lua/nginx, test changes ...
+docker exec gateii-proxy openresty -s reload   # 2. reload to test
+./scripts/admin.sh switch local    # 3. back to proxy when satisfied
+```
+
+## Emergency recovery (proxy broken, Claude Code cut off)
+
+```bash
+gateii-rescue          # alias: switch direct + restart proxy container
+# then restart Claude Code to reconnect
+```
+
+Or from this repo directly:
+```bash
+./scripts/rescue.sh              # switch direct + restart proxy
+./scripts/rescue.sh --no-restart # only switch direct (if Docker is also down)
+```
+
 ## Gotchas
 
 - `DOCKER_CONTEXT=colima` required — no Docker Desktop, Colima provides the daemon
@@ -32,6 +56,7 @@ bash scripts/smoke-test.sh
 - Rate limiter only active in `apikey` mode — passthrough has no rate limit
 - `.env` is gitignored — never `git add .env`, use `.env.example` for defaults
 - Proxy routing order: start stack → switch local; switch direct → stop stack (never reverse)
+- Before editing Lua/nginx: `admin.sh switch direct` first — broken proxy cuts off Claude Code
 
 ## Key files
 
