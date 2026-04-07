@@ -18,8 +18,15 @@ local function try_providers_json()
     if not f then return false end
     local data = f:read("*a")
     f:close()
-    local cfg = cjson.decode(data)
-    if not cfg or not cfg.providers then return false end
+    local cfg, decode_err = cjson.decode(data)
+    if not cfg then
+        ngx.log(ngx.WARN, "metrics: failed to parse providers.json: ", decode_err)
+        return false
+    end
+    if not cfg.providers then
+        ngx.log(ngx.WARN, "metrics: providers.json missing 'providers' key")
+        return false
+    end
     local active_id = cfg.active_provider or "anthropic"
     for _, p in ipairs(cfg.providers) do
         if p.id == active_id and p.models then
@@ -267,16 +274,21 @@ if rl_reset_ts ~= nil then
     -- Parse RFC3339 timestamp (e.g. "2024-01-15T10:30:00Z" or "...+00:00")
     local y, mo, d, h, mi, s = rl_reset_ts:match("^(%d+)-(%d+)-(%d+)T(%d+):(%d+):(%d+)")
     if y then
-        local reset_unix = os.time({
-            year  = tonumber(y),
-            month = tonumber(mo),
-            day   = tonumber(d),
-            hour  = tonumber(h),
-            min   = tonumber(mi),
-            sec   = tonumber(s),
-        })
-        local seconds_remaining = math.max(0, reset_unix - ngx.time())
-        add(string.format("gateii_rate_limit_seconds_until_reset %d", seconds_remaining))
+        mo, d, h, mi, s = tonumber(mo), tonumber(d), tonumber(h), tonumber(mi), tonumber(s)
+        if mo >= 1 and mo <= 12 and d >= 1 and d <= 31 and h <= 23 and mi <= 59 and s <= 60 then
+            local reset_unix = os.time({
+                year  = tonumber(y),
+                month = mo,
+                day   = d,
+                hour  = h,
+                min   = mi,
+                sec   = s,
+            })
+            local seconds_remaining = math.max(0, reset_unix - ngx.time())
+            add(string.format("gateii_rate_limit_seconds_until_reset %d", seconds_remaining))
+        else
+            ngx.log(ngx.WARN, "metrics: invalid RFC3339 timestamp, skipping: ", rl_reset_ts)
+        end
     end
 end
 
