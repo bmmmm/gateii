@@ -581,7 +581,7 @@ function calcModelCost(model, totalInput, totalOutput, totalCacheWrite, totalCac
   cost += totalOutput * model.output / 1e6;
   // Use model's own cache multiplier if defined, else fall back to active provider's
   const cwm = model.cache_write_multiplier ?? activeCwm ?? 1.25;
-  const crm = activeCrm ?? 0.1;
+  const crm = model.cache_read_multiplier ?? activeCrm ?? 0.1;
   const cacheWritePrice = model.input * cwm;
   const cacheReadPrice = model.input_cached !== undefined ? model.input_cached : model.input * crm;
   cost += totalCacheWrite * cacheWritePrice / 1e6;
