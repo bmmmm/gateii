@@ -286,16 +286,49 @@
         },
         "overrides": [
           {
-            "matcher": {"id": "byRegexp", "options": "/sonnet/i"},
-            "properties": [{"id": "color", "value": {"fixedColor": "#33ff66", "mode": "fixed"}}]
+            "matcher": {
+              "id": "byRegexp",
+              "options": "/sonnet/i"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "#33ff66",
+                  "mode": "fixed"
+                }
+              }
+            ]
           },
           {
-            "matcher": {"id": "byRegexp", "options": "/opus/i"},
-            "properties": [{"id": "color", "value": {"fixedColor": "#a78bfa", "mode": "fixed"}}]
+            "matcher": {
+              "id": "byRegexp",
+              "options": "/opus/i"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "#a78bfa",
+                  "mode": "fixed"
+                }
+              }
+            ]
           },
           {
-            "matcher": {"id": "byRegexp", "options": "/haiku/i"},
-            "properties": [{"id": "color", "value": {"fixedColor": "#5b9aff", "mode": "fixed"}}]
+            "matcher": {
+              "id": "byRegexp",
+              "options": "/haiku/i"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "#5b9aff",
+                  "mode": "fixed"
+                }
+              }
+            ]
           }
         ]
       },
@@ -342,16 +375,49 @@
         },
         "overrides": [
           {
-            "matcher": {"id": "byRegexp", "options": "/sonnet/i"},
-            "properties": [{"id": "color", "value": {"fixedColor": "#33ff66", "mode": "fixed"}}]
+            "matcher": {
+              "id": "byRegexp",
+              "options": "/sonnet/i"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "#33ff66",
+                  "mode": "fixed"
+                }
+              }
+            ]
           },
           {
-            "matcher": {"id": "byRegexp", "options": "/opus/i"},
-            "properties": [{"id": "color", "value": {"fixedColor": "#a78bfa", "mode": "fixed"}}]
+            "matcher": {
+              "id": "byRegexp",
+              "options": "/opus/i"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "#a78bfa",
+                  "mode": "fixed"
+                }
+              }
+            ]
           },
           {
-            "matcher": {"id": "byRegexp", "options": "/haiku/i"},
-            "properties": [{"id": "color", "value": {"fixedColor": "#5b9aff", "mode": "fixed"}}]
+            "matcher": {
+              "id": "byRegexp",
+              "options": "/haiku/i"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "#5b9aff",
+                  "mode": "fixed"
+                }
+              }
+            ]
           }
         ]
       },
@@ -404,16 +470,49 @@
         },
         "overrides": [
           {
-            "matcher": {"id": "byRegexp", "options": "/sonnet/i"},
-            "properties": [{"id": "color", "value": {"fixedColor": "#33ff66", "mode": "fixed"}}]
+            "matcher": {
+              "id": "byRegexp",
+              "options": "/sonnet/i"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "#33ff66",
+                  "mode": "fixed"
+                }
+              }
+            ]
           },
           {
-            "matcher": {"id": "byRegexp", "options": "/opus/i"},
-            "properties": [{"id": "color", "value": {"fixedColor": "#a78bfa", "mode": "fixed"}}]
+            "matcher": {
+              "id": "byRegexp",
+              "options": "/opus/i"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "#a78bfa",
+                  "mode": "fixed"
+                }
+              }
+            ]
           },
           {
-            "matcher": {"id": "byRegexp", "options": "/haiku/i"},
-            "properties": [{"id": "color", "value": {"fixedColor": "#5b9aff", "mode": "fixed"}}]
+            "matcher": {
+              "id": "byRegexp",
+              "options": "/haiku/i"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "#5b9aff",
+                  "mode": "fixed"
+                }
+              }
+            ]
           }
         ]
       },
@@ -467,16 +566,49 @@
         },
         "overrides": [
           {
-            "matcher": {"id": "byRegexp", "options": "/sonnet/i"},
-            "properties": [{"id": "color", "value": {"fixedColor": "#33ff66", "mode": "fixed"}}]
+            "matcher": {
+              "id": "byRegexp",
+              "options": "/sonnet/i"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "#33ff66",
+                  "mode": "fixed"
+                }
+              }
+            ]
           },
           {
-            "matcher": {"id": "byRegexp", "options": "/opus/i"},
-            "properties": [{"id": "color", "value": {"fixedColor": "#a78bfa", "mode": "fixed"}}]
+            "matcher": {
+              "id": "byRegexp",
+              "options": "/opus/i"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "#a78bfa",
+                  "mode": "fixed"
+                }
+              }
+            ]
           },
           {
-            "matcher": {"id": "byRegexp", "options": "/haiku/i"},
-            "properties": [{"id": "color", "value": {"fixedColor": "#5b9aff", "mode": "fixed"}}]
+            "matcher": {
+              "id": "byRegexp",
+              "options": "/haiku/i"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "#5b9aff",
+                  "mode": "fixed"
+                }
+              }
+            ]
           }
         ]
       },
@@ -529,16 +661,49 @@
         },
         "overrides": [
           {
-            "matcher": {"id": "byRegexp", "options": "/sonnet/i"},
-            "properties": [{"id": "color", "value": {"fixedColor": "#33ff66", "mode": "fixed"}}]
+            "matcher": {
+              "id": "byRegexp",
+              "options": "/sonnet/i"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "#33ff66",
+                  "mode": "fixed"
+                }
+              }
+            ]
           },
           {
-            "matcher": {"id": "byRegexp", "options": "/opus/i"},
-            "properties": [{"id": "color", "value": {"fixedColor": "#a78bfa", "mode": "fixed"}}]
+            "matcher": {
+              "id": "byRegexp",
+              "options": "/opus/i"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "#a78bfa",
+                  "mode": "fixed"
+                }
+              }
+            ]
           },
           {
-            "matcher": {"id": "byRegexp", "options": "/haiku/i"},
-            "properties": [{"id": "color", "value": {"fixedColor": "#5b9aff", "mode": "fixed"}}]
+            "matcher": {
+              "id": "byRegexp",
+              "options": "/haiku/i"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "#5b9aff",
+                  "mode": "fixed"
+                }
+              }
+            ]
           }
         ]
       },
@@ -592,16 +757,49 @@
         },
         "overrides": [
           {
-            "matcher": {"id": "byRegexp", "options": "/sonnet/i"},
-            "properties": [{"id": "color", "value": {"fixedColor": "#33ff66", "mode": "fixed"}}]
+            "matcher": {
+              "id": "byRegexp",
+              "options": "/sonnet/i"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "#33ff66",
+                  "mode": "fixed"
+                }
+              }
+            ]
           },
           {
-            "matcher": {"id": "byRegexp", "options": "/opus/i"},
-            "properties": [{"id": "color", "value": {"fixedColor": "#a78bfa", "mode": "fixed"}}]
+            "matcher": {
+              "id": "byRegexp",
+              "options": "/opus/i"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "#a78bfa",
+                  "mode": "fixed"
+                }
+              }
+            ]
           },
           {
-            "matcher": {"id": "byRegexp", "options": "/haiku/i"},
-            "properties": [{"id": "color", "value": {"fixedColor": "#5b9aff", "mode": "fixed"}}]
+            "matcher": {
+              "id": "byRegexp",
+              "options": "/haiku/i"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "#5b9aff",
+                  "mode": "fixed"
+                }
+              }
+            ]
           }
         ]
       },
@@ -751,16 +949,49 @@
         },
         "overrides": [
           {
-            "matcher": {"id": "byRegexp", "options": "/sonnet/i"},
-            "properties": [{"id": "color", "value": {"fixedColor": "#33ff66", "mode": "fixed"}}]
+            "matcher": {
+              "id": "byRegexp",
+              "options": "/sonnet/i"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "#33ff66",
+                  "mode": "fixed"
+                }
+              }
+            ]
           },
           {
-            "matcher": {"id": "byRegexp", "options": "/opus/i"},
-            "properties": [{"id": "color", "value": {"fixedColor": "#a78bfa", "mode": "fixed"}}]
+            "matcher": {
+              "id": "byRegexp",
+              "options": "/opus/i"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "#a78bfa",
+                  "mode": "fixed"
+                }
+              }
+            ]
           },
           {
-            "matcher": {"id": "byRegexp", "options": "/haiku/i"},
-            "properties": [{"id": "color", "value": {"fixedColor": "#5b9aff", "mode": "fixed"}}]
+            "matcher": {
+              "id": "byRegexp",
+              "options": "/haiku/i"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "#5b9aff",
+                  "mode": "fixed"
+                }
+              }
+            ]
           }
         ]
       },
@@ -807,16 +1038,49 @@
         },
         "overrides": [
           {
-            "matcher": {"id": "byRegexp", "options": "/sonnet/i"},
-            "properties": [{"id": "color", "value": {"fixedColor": "#33ff66", "mode": "fixed"}}]
+            "matcher": {
+              "id": "byRegexp",
+              "options": "/sonnet/i"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "#33ff66",
+                  "mode": "fixed"
+                }
+              }
+            ]
           },
           {
-            "matcher": {"id": "byRegexp", "options": "/opus/i"},
-            "properties": [{"id": "color", "value": {"fixedColor": "#a78bfa", "mode": "fixed"}}]
+            "matcher": {
+              "id": "byRegexp",
+              "options": "/opus/i"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "#a78bfa",
+                  "mode": "fixed"
+                }
+              }
+            ]
           },
           {
-            "matcher": {"id": "byRegexp", "options": "/haiku/i"},
-            "properties": [{"id": "color", "value": {"fixedColor": "#5b9aff", "mode": "fixed"}}]
+            "matcher": {
+              "id": "byRegexp",
+              "options": "/haiku/i"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "#5b9aff",
+                  "mode": "fixed"
+                }
+              }
+            ]
           }
         ]
       },
@@ -910,106 +1174,6 @@
         },
         "displayMode": "gradient"
       }
-    },
-    {
-      "id": 16,
-      "title": "Rate Limit Wait Time",
-      "type": "timeseries",
-      "gridPos": {"x": 0, "y": 52, "w": 24, "h": 8},
-      "datasource": {"type": "prometheus"},
-      "fieldConfig": {
-        "defaults": {"unit": "s", "color": {"mode": "palette-classic"}},
-        "overrides": []
-      },
-      "options": {
-        "tooltip": {"mode": "multi"},
-        "legend": {"displayMode": "table", "placement": "bottom"}
-      },
-      "targets": [
-        {
-          "datasource": {"type": "prometheus"},
-          "expr": "gateii_rate_limit_wait_seconds{limit_type=\"5h\"}",
-          "legendFormat": "5h — {{model}}",
-          "refId": "A"
-        },
-        {
-          "datasource": {"type": "prometheus"},
-          "expr": "gateii_rate_limit_wait_seconds{limit_type=\"weekly\"}",
-          "legendFormat": "weekly — {{model}}",
-          "refId": "B"
-        }
-      ]
-    },
-    {
-      "id": 17,
-      "title": "Tokens at Rate Limit Hit",
-      "type": "bargauge",
-      "gridPos": {"x": 0, "y": 60, "w": 24, "h": 8},
-      "datasource": {"type": "prometheus"},
-      "fieldConfig": {
-        "defaults": {"color": {"mode": "palette-classic"}},
-        "overrides": [
-          {"matcher": {"id": "byRegexp", "options": "/sonnet/i"}, "properties": [{"id": "color", "value": {"fixedColor": "#33ff66", "mode": "fixed"}}]},
-          {"matcher": {"id": "byRegexp", "options": "/opus/i"}, "properties": [{"id": "color", "value": {"fixedColor": "#a78bfa", "mode": "fixed"}}]},
-          {"matcher": {"id": "byRegexp", "options": "/haiku/i"}, "properties": [{"id": "color", "value": {"fixedColor": "#5b9aff", "mode": "fixed"}}]}
-        ]
-      },
-      "options": {
-        "orientation": "horizontal",
-        "reduceOptions": {"calcs": ["lastNotNull"]}
-      },
-      "targets": [
-        {
-          "datasource": {"type": "prometheus"},
-          "expr": "gateii_rate_limit_tokens_at_hit",
-          "legendFormat": "{{model}} ({{limit_type}})",
-          "refId": "A"
-        }
-      ]
-    },
-    {
-      "id": 18,
-      "title": "Rate Limit Window",
-      "type": "timeseries",
-      "gridPos": {"x": 0, "y": 68, "w": 24, "h": 8},
-      "datasource": {"type": "prometheus"},
-      "fieldConfig": {
-        "defaults": {"color": {"mode": "palette-classic"}},
-        "overrides": [
-          {
-            "matcher": {"id": "byName", "options": "Tokens remaining"},
-            "properties": [
-              {"id": "color", "value": {"fixedColor": "#73bf69", "mode": "fixed"}},
-              {"id": "custom.fillOpacity", "value": 15}
-            ]
-          },
-          {
-            "matcher": {"id": "byName", "options": "Tokens expired (wasted)"},
-            "properties": [
-              {"id": "color", "value": {"fixedColor": "#ff9830", "mode": "fixed"}},
-              {"id": "custom.lineWidth", "value": 2}
-            ]
-          }
-        ]
-      },
-      "options": {
-        "tooltip": {"mode": "multi"},
-        "legend": {"displayMode": "table", "placement": "bottom"}
-      },
-      "targets": [
-        {
-          "datasource": {"type": "prometheus"},
-          "expr": "gateii_rate_limit_tokens_remaining",
-          "legendFormat": "Tokens remaining",
-          "refId": "A"
-        },
-        {
-          "datasource": {"type": "prometheus"},
-          "expr": "gateii_rate_limit_tokens_expired",
-          "legendFormat": "Tokens expired (wasted)",
-          "refId": "B"
-        }
-      ]
     }
   ]
 }
