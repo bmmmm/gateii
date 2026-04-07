@@ -214,6 +214,39 @@ for _, key in ipairs(block_keys) do
     end
 end
 
+-- Rate limit wait time and tokens at hit
+local rl_wait_lines = {}
+local rl_tokens_lines = {}
+for _, key in ipairs(keys) do
+    if key:sub(1, 14) == "ratelimit_wait" then
+        -- key format: ratelimit_wait|user|model|limit_type
+        local rl_user, rl_model, rl_ltype = key:match("^ratelimit_wait|([^|]+)|([^|]+)|(.+)$")
+        if rl_user then
+            local val = counters:get(key) or 0
+            rl_wait_lines[#rl_wait_lines+1] = string.format(
+                'gateii_rate_limit_wait_seconds{user="%s",model="%s",limit_type="%s"} %d',
+                escape_label(rl_user), escape_label(rl_model), escape_label(rl_ltype), val)
+        end
+    elseif key:sub(1, 17) == "ratelimit_tokens|" then
+        -- key format: ratelimit_tokens|user|model|limit_type
+        local rl_user, rl_model, rl_ltype = key:match("^ratelimit_tokens|([^|]+)|([^|]+)|(.+)$")
+        if rl_user then
+            local val = counters:get(key) or 0
+            rl_tokens_lines[#rl_tokens_lines+1] = string.format(
+                'gateii_rate_limit_tokens_at_hit{user="%s",model="%s",limit_type="%s"} %d',
+                escape_label(rl_user), escape_label(rl_model), escape_label(rl_ltype), val)
+        end
+    end
+end
+
+add("# HELP gateii_rate_limit_wait_seconds Seconds to wait after hitting Anthropic rate limit")
+add("# TYPE gateii_rate_limit_wait_seconds gauge")
+for _, l in ipairs(rl_wait_lines) do add(l) end
+
+add("# HELP gateii_rate_limit_tokens_at_hit Tokens consumed when rate limit was triggered")
+add("# TYPE gateii_rate_limit_tokens_at_hit gauge")
+for _, l in ipairs(rl_tokens_lines) do add(l) end
+
 -- Model pricing (gauge — tracks price changes over time via Prometheus)
 add("# HELP gateii_model_pricing_per_mtok Current Anthropic pricing per 1M tokens (USD)")
 add("# TYPE gateii_model_pricing_per_mtok gauge")
