@@ -4,6 +4,19 @@ local http     = require "resty.http"
 local providers = require "providers.init"
 local tracking  = require "tracking"
 
+local function parse_rfc3339_offset(s)
+    -- Returns seconds until the given RFC3339 timestamp, relative to now.
+    -- Handles "2026-04-07T15:30:00Z" format (UTC only, ignores timezone offset).
+    if not s then return nil end
+    local y, mo, d, h, mi, se = s:match("(%d+)-(%d+)-(%d+)T(%d+):(%d+):(%d+)")
+    if not y then return nil end
+    local months = {0,31,59,90,120,151,181,212,243,273,304,334}
+    local days = (tonumber(y) - 1970) * 365 + math.floor((tonumber(y) - 1969) / 4)
+              + (months[tonumber(mo)] or 0) + tonumber(d) - 1
+    local epoch = days * 86400 + tonumber(h) * 3600 + tonumber(mi) * 60 + tonumber(se)
+    return epoch - ngx.time()
+end
+
 -- Read body — with temp-file fallback for concurrent load (body buffered to disk)
 local body_str = ngx.req.get_body_data()
 if not body_str then
@@ -122,6 +135,28 @@ if not is_streaming then
         input_tokens, output_tokens, stop_reason, cache_creation, cache_read = provider.extract_tokens(response_body)
     end
 
+    if res.status == 429 then
+        local reset_header = res.headers and res.headers["anthropic-ratelimit-tokens-reset"]
+        local limit_type = "unknown"
+        if reset_header then
+            local offset = parse_rfc3339_offset(reset_header)
+            if offset then
+                limit_type = (offset <= 21600) and "5h" or "weekly"
+            end
+        end
+        local retry_after = tonumber(res.headers and res.headers["retry-after"]) or 0
+        local hit_tokens = 0
+        local counters_dict = ngx.shared.counters
+        if counters_dict and user and model then
+            for _, t in ipairs({"input", "output"}) do
+                local v = counters_dict:get("tokens|" .. user .. "|" .. provider_name .. "|" .. model .. "|" .. t)
+                if v then hit_tokens = hit_tokens + v end
+            end
+        end
+        pcall(tracking.set_rate_limit_wait, user or "unknown", model or "unknown", limit_type, retry_after)
+        pcall(tracking.set_rate_limit_tokens_at_hit, user or "unknown", model or "unknown", limit_type, hit_tokens)
+    end
+
     ngx.print(response_body)
     ngx.flush(true)  -- send to client before tracking write
     pcall(tracking.record, user, provider_name, model, input_tokens, output_tokens,
@@ -222,6 +257,28 @@ local cache_creation, cache_read = 0, 0
 if res.status == 200 and provider.extract_tokens_streaming then
     input_tokens, output_tokens, stop_reason, cache_creation, cache_read =
         provider.extract_tokens_streaming(table.concat(chunks))
+end
+
+if res.status == 429 then
+    local reset_header = res.headers and res.headers["anthropic-ratelimit-tokens-reset"]
+    local limit_type = "unknown"
+    if reset_header then
+        local offset = parse_rfc3339_offset(reset_header)
+        if offset then
+            limit_type = (offset <= 21600) and "5h" or "weekly"
+        end
+    end
+    local retry_after = tonumber(res.headers and res.headers["retry-after"]) or 0
+    local hit_tokens = 0
+    local counters_dict = ngx.shared.counters
+    if counters_dict and user and model then
+        for _, t in ipairs({"input", "output"}) do
+            local v = counters_dict:get("tokens|" .. user .. "|" .. provider_name .. "|" .. model .. "|" .. t)
+            if v then hit_tokens = hit_tokens + v end
+        end
+    end
+    pcall(tracking.set_rate_limit_wait, user or "unknown", model or "unknown", limit_type, retry_after)
+    pcall(tracking.set_rate_limit_tokens_at_hit, user or "unknown", model or "unknown", limit_type, hit_tokens)
 end
 
 pcall(tracking.record, user, provider_name, model, input_tokens, output_tokens,
