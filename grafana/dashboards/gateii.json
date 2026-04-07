@@ -206,7 +206,7 @@
           }
         }
       },
-      "options": {"reduceOptions": {"calcs": ["lastNotNull"]}, "colorMode": "value", "graphMode": "none", "orientation": "auto", "textMode": "auto"}
+      "options": {"reduceOptions": {"calcs": ["lastNotNull"]}, "colorMode": "value", "graphMode": "area", "orientation": "auto", "textMode": "auto"}
     },
     {
       "id": 17,
@@ -286,7 +286,7 @@
       "type": "timeseries",
       "gridPos": {"x": 0, "y": 38, "w": 12, "h": 8},
       "datasource": {"type": "prometheus"},
-      "targets": [{"datasource": {"type": "prometheus"}, "expr": "sum by (model) (rate(gateii_request_duration_ms_total[5m])) / sum by (model) (rate(gateii_requests_total[5m]))", "legendFormat": "{{model}}", "refId": "A"}],
+      "targets": [{"datasource": {"type": "prometheus"}, "expr": "sum by (model) (rate(gateii_request_duration_ms_total[5m])) / clamp_min(sum by (model) (rate(gateii_requests_total[5m])), 1)", "legendFormat": "{{model}}", "refId": "A"}],
       "fieldConfig": {
         "defaults": {"unit": "ms", "custom": {"lineWidth": 2, "fillOpacity": 5}},
         "overrides": [
