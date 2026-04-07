@@ -242,9 +242,10 @@ add("# HELP gateii_rate_limit_tokens_at_hit Tokens consumed when rate limit was 
 add("# TYPE gateii_rate_limit_tokens_at_hit gauge")
 for _, l in ipairs(rl_tokens_lines) do add(l) end
 
--- Rate limit window: remaining tokens and expired tokens
+-- Rate limit window: remaining tokens, expired tokens, and reset timestamp
 local rl_win_remaining = counters:get("ratelimit_remaining")
 local rl_win_expired   = counters:get("ratelimit_tokens_expired")
+local rl_reset_ts      = counters:get("ratelimit_reset_ts")
 
 add("# HELP gateii_rate_limit_tokens_remaining Tokens remaining in current Anthropic rate limit window")
 add("# TYPE gateii_rate_limit_tokens_remaining gauge")
@@ -256,6 +257,25 @@ add("# HELP gateii_rate_limit_tokens_expired Tokens unused when last rate limit 
 add("# TYPE gateii_rate_limit_tokens_expired gauge")
 if rl_win_expired ~= nil then
     add(string.format("gateii_rate_limit_tokens_expired %d", rl_win_expired))
+end
+
+add("# HELP gateii_rate_limit_seconds_until_reset Seconds until current Anthropic rate limit window resets")
+add("# TYPE gateii_rate_limit_seconds_until_reset gauge")
+if rl_reset_ts ~= nil then
+    -- Parse RFC3339 timestamp (e.g. "2024-01-15T10:30:00Z" or "...+00:00")
+    local y, mo, d, h, mi, s = rl_reset_ts:match("^(%d+)-(%d+)-(%d+)T(%d+):(%d+):(%d+)")
+    if y then
+        local reset_unix = os.time({
+            year  = tonumber(y),
+            month = tonumber(mo),
+            day   = tonumber(d),
+            hour  = tonumber(h),
+            min   = tonumber(mi),
+            sec   = tonumber(s),
+        })
+        local seconds_remaining = math.max(0, reset_unix - ngx.time())
+        add(string.format("gateii_rate_limit_seconds_until_reset %d", seconds_remaining))
+    end
 end
 
 -- Model pricing (gauge — tracks price changes over time via Prometheus)
