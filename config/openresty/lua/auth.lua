@@ -122,8 +122,8 @@ do
             local day_prefix = "day|" .. user .. "|" .. today
 
             if limits.tokens_per_day then
-                local used_in  = counters:incr(day_prefix .. "|input", 0, 0, 90000) or 0
-                local used_out = counters:incr(day_prefix .. "|output", 0, 0, 90000) or 0
+                local used_in  = counters:get(day_prefix .. "|input") or 0
+                local used_out = counters:get(day_prefix .. "|output") or 0
                 local used_total = used_in + used_out
                 if used_total >= limits.tokens_per_day then
                     local ttl = ttl_until_midnight()
@@ -142,7 +142,7 @@ do
             end
 
             if limits.requests_per_day then
-                local used_reqs = counters:incr(day_prefix .. "|requests", 0, 0, 90000) or 0
+                local used_reqs = counters:get(day_prefix .. "|requests") or 0
                 if used_reqs >= limits.requests_per_day then
                     local ttl = ttl_until_midnight()
                     blocking_dict:set("blocked|" .. user, "auto:requests_per_day", ttl)
