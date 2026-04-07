@@ -207,7 +207,7 @@ select.input{cursor:pointer;-webkit-appearance:none;padding-right:28px;
   </div>
 
   <div class="toolbar">
-    <a href="http://localhost:3001" target="_blank">Grafana Dashboard</a>
+    <a href="http://localhost:3001/d/gateii-proxy" target="_blank">Grafana Dashboard</a>
     <a href="http://localhost:9090" target="_blank">Prometheus</a>
     <a href="/metrics" target="_blank">Raw Metrics</a>
     <span class="mode-tag">Mode: <b id="mode-display">-</b></span>
@@ -967,7 +967,11 @@ async function addKey() {
   if (!user || !/^[a-zA-Z0-9_-]+$/.test(user)) { toast('Invalid username', true); return; }
   const key = 'sk-proxy-' + Array.from(crypto.getRandomValues(new Uint8Array(16))).map(b => b.toString(16).padStart(2,'0')).join('');
   try {
-    const r = await fetch('/internal/admin/addkey?user=' + encodeURIComponent(user) + '&key=' + encodeURIComponent(key), { method: 'POST' });
+    const r = await fetch('/internal/admin/addkey?user=' + encodeURIComponent(user), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ key })
+    });
     if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || 'HTTP ' + r.status);
     toast('Key added for ' + user);
     $('add-user').value = ''; refresh();
