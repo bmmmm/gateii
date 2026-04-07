@@ -15,6 +15,25 @@ local function sanitize(s)
     return (tostring(s or ""):gsub("[:|%s]", "_"):sub(1, 64))
 end
 
+-- Read keys.json, return table (may be empty)
+local function read_keys_file()
+    local f = io.open("/etc/nginx/data/keys.json", "r")
+    if not f then return {} end
+    local raw = f:read("*a"); f:close()
+    return cjson.decode(raw) or {}
+end
+
+-- Validate user param from request args; send 400 and return nil on missing
+local function require_user(args)
+    local u = sanitize(args.user or "")
+    if u == "" then
+        ngx.status = 400
+        ngx.say('{"error":"Missing user parameter"}')
+        return nil
+    end
+    return u
+end
+
 -- Persist limits to disk (survives container restarts)
 local function save_limits()
     local all = {}
@@ -39,30 +58,10 @@ local function save_limits()
     os.rename(tmp, LIMITS_FILE)
 end
 
--- Load limits from disk into shared dict (called on startup via init_worker)
-local function load_limits()
-    local f = io.open(LIMITS_FILE, "r")
-    if not f then return end
-    local raw = f:read("*a"); f:close()
-    local all = cjson.decode(raw)
-    if not all then return end
-    local n = 0
-    for user, limits in pairs(all) do
-        blocking_dict:set("limits|" .. user, cjson.encode(limits))
-        n = n + 1
-    end
-    ngx.log(ngx.NOTICE, "loaded ", n, " user limits from ", LIMITS_FILE)
-end
-
 -- POST /internal/admin/block?user=X&ttl=86400
 if uri == "/internal/admin/block" and method == "POST" then
     local args = ngx.req.get_uri_args()
-    local user = sanitize(args.user or "")
-    if user == "" then
-        ngx.status = 400
-        ngx.say('{"error":"Missing user parameter"}')
-        return
-    end
+    local user = require_user(args); if not user then return end
     local ttl = tonumber(args.ttl) or 86400
     blocking_dict:set("blocked|" .. user, "manual", ttl)
     ngx.say(cjson.encode({ok = true, user = user, ttl = ttl}))
@@ -72,12 +71,7 @@ end
 -- POST /internal/admin/unblock?user=X
 if uri == "/internal/admin/unblock" and method == "POST" then
     local args = ngx.req.get_uri_args()
-    local user = sanitize(args.user or "")
-    if user == "" then
-        ngx.status = 400
-        ngx.say('{"error":"Missing user parameter"}')
-        return
-    end
+    local user = require_user(args); if not user then return end
     blocking_dict:delete("blocked|" .. user)
     ngx.say(cjson.encode({ok = true, user = user}))
     return
@@ -87,12 +81,7 @@ end
 if uri == "/internal/admin/limit" and method == "POST" then
     ngx.req.read_body()
     local args = ngx.req.get_uri_args()
-    local user = sanitize(args.user or "")
-    if user == "" then
-        ngx.status = 400
-        ngx.say('{"error":"Missing user parameter"}')
-        return
-    end
+    local user = require_user(args); if not user then return end
     local body = ngx.req.get_body_data()
     if not body then
         ngx.status = 400
@@ -148,12 +137,7 @@ end
 -- GET /internal/admin/usage?user=X
 if uri == "/internal/admin/usage" and method == "GET" then
     local args = ngx.req.get_uri_args()
-    local user = sanitize(args.user or "")
-    if user == "" then
-        ngx.status = 400
-        ngx.say('{"error":"Missing user parameter"}')
-        return
-    end
+    local user = require_user(args); if not user then return end
     local today = os.date("!%Y-%m-%d")
     local day_prefix = "day|" .. user .. "|" .. today
     local result = {
@@ -170,22 +154,12 @@ end
 
 -- GET /internal/admin/keys — list all proxy keys (masked)
 if uri == "/internal/admin/keys" and method == "GET" then
+    local parsed = read_keys_file()
     local keys_data = {}
-    local count = 0
-    local f = io.open("/etc/nginx/data/keys.json", "r")
-    if f then
-        local raw = f:read("*a")
-        f:close()
-        local parsed = cjson.decode(raw)
-        if parsed then
-            for key, user in pairs(parsed) do
-                count = count + 1
-                local masked = key:sub(1, 12) .. "..." .. key:sub(-6)
-                keys_data[#keys_data + 1] = { key = masked, user = user }
-            end
-        end
+    for key, user in pairs(parsed) do
+        keys_data[#keys_data + 1] = { key = key:sub(1, 12) .. "..." .. key:sub(-6), user = user }
     end
-    ngx.say(cjson.encode({ keys = keys_data, count = count }))
+    ngx.say(cjson.encode({ keys = keys_data, count = #keys_data }))
     return
 end
 
@@ -197,15 +171,7 @@ if uri == "/internal/admin/overview" and method == "GET" then
 
     -- Key count
     local key_count = 0
-    local f = io.open("/etc/nginx/data/keys.json", "r")
-    if f then
-        local raw = f:read("*a")
-        f:close()
-        local parsed = cjson.decode(raw)
-        if parsed then
-            for _ in pairs(parsed) do key_count = key_count + 1 end
-        end
-    end
+    for _ in pairs(read_keys_file()) do key_count = key_count + 1 end
 
     -- Blocked count
     local blocked_count = 0
@@ -304,13 +270,7 @@ if uri == "/internal/admin/addkey" and method == "POST" then
         return
     end
     -- Read current keys, add, write back
-    local f = io.open("/etc/nginx/data/keys.json", "r")
-    local keys_data = {}
-    if f then
-        local raw = f:read("*a")
-        f:close()
-        keys_data = cjson.decode(raw) or {}
-    end
+    local keys_data = read_keys_file()
     keys_data[key] = user
     local encoded = cjson.encode(keys_data)
     if not encoded then
@@ -349,7 +309,6 @@ end
 -- GET /internal/admin/llm-prices — proxy llm-prices.com with 1hr cache
 if uri == "/internal/admin/llm-prices" and method == "GET" then
     local cache_key = "llm_prices_cache"
-    local cache_ttl_key = "llm_prices_ttl"
     local cached = counters:get(cache_key)
 
     -- Return cached data if fresh (< 1hr)

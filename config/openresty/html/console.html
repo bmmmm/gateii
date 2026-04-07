@@ -78,11 +78,8 @@ table{width:100%;border-collapse:collapse;font-size:13px}
 th{text-align:left;color:var(--dim);font-weight:500;padding:8px 12px;letter-spacing:.06em;font-size:11px;text-transform:uppercase;border-bottom:1px solid var(--border);background:var(--surface2)}
 td{padding:8px 12px;border-bottom:1px solid #ffffff08}
 tr:hover td{background:var(--accent-subtle)}
-.text-right{text-align:right}
 .key-masked{color:var(--dim);font-size:12px;letter-spacing:.02em}
 .key-user{color:var(--accent);font-weight:500}
-/* Summary row */
-.summary-row td{border-top:2px solid var(--border);font-weight:600;color:var(--accent);padding-top:10px}
 
 /* Action forms */
 .action-row{display:flex;gap:8px;align-items:center;padding:10px 0;flex-wrap:wrap}
@@ -320,6 +317,7 @@ select.input{cursor:pointer;-webkit-appearance:none;padding-right:28px;
 
 <script>
 const $ = id => document.getElementById(id);
+const esc = s => String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
 
 function toast(msg, isError) {
   const t = $('toast');
@@ -370,7 +368,9 @@ function setVal(id, val, prev) {
 
 function threshold(el, val, y, r) {
   if (!el) return;
+  const hasFlash = el.classList.contains('flash');
   el.className = 'stat-val ' + (val >= r ? 'c-red' : val >= y ? 'c-yellow' : 'c-green');
+  if (hasFlash) el.classList.add('flash');
 }
 
 let prev = {};
@@ -395,12 +395,12 @@ async function promScalar(expr) {
 async function promVector(expr) {
   try {
     const r = await fetch(`/internal/prometheus/api/v1/query?query=${encodeURIComponent(expr)}`);
-    if (!r.ok) return null;
+    if (!r.ok) { promAvailable = false; return null; }
     const data = await r.json();
-    if (data.status !== 'success') return null;
+    if (data.status !== 'success') { promAvailable = false; return null; }
     promAvailable = true;
     return data.data.result.map(r => ({ labels: r.metric, value: parseFloat(r.value[1]) || 0 }));
-  } catch (e) { return null; }
+  } catch (e) { promAvailable = false; return null; }
 }
 
 // Fetch monthly token projection from Prometheus (7d avg × 30/7), grouped by model+type
@@ -538,8 +538,6 @@ function calcProviderCost(provider, tokensByPattern) {
   return { total, perModel };
 }
 
-let lastMetrics = null;
-
 // Calculate cost for a single model given aggregate token usage.
 // activeCwm/activeCrm: cache multipliers from the active provider (used as fallback for
 // comparison models that don't define their own cache pricing).
@@ -613,7 +611,6 @@ function renderPricing(m) {
   }));
 
   // Add current provider as "Your current mix"
-  const currentTotal = result.total * (isMonthly ? 1 : 1); // session tokens same basis
   // For monthly: recalculate provider cost with monthly tokens
   let currentMonthlyCost = 0;
   if (isMonthly) {
@@ -640,13 +637,13 @@ function renderPricing(m) {
     const costClass = e._current ? '' : isCheapest ? 'comp-cheapest' : 'comp-expensive';
     const vendorBadge = e._current
       ? `<span class="comp-vendor comp-current">CURRENT</span>`
-      : `<span class="comp-vendor">${e.vendor}</span>`;
+      : `<span class="comp-vendor">${esc(e.vendor)}</span>`;
     const liveIndicator = e._live ? ' *' : '';
     const rankBadge = (!e._current && e.or_rank != null)
       ? `<span class="comp-rank" title="OpenRouter coding rank">#${e.or_rank}</span>`
       : '';
     return `<div class="comp-row">
-      <div class="comp-provider"><span>${e.name}${liveIndicator}</span>${vendorBadge}${rankBadge}</div>
+      <div class="comp-provider"><span>${esc(e.name)}${liveIndicator}</span>${vendorBadge}${rankBadge}</div>
       <div class="comp-bar-wrap"><div class="comp-bar ${barClass}" style="width:${pct}%"></div></div>
       <div class="comp-cost ${costClass}">${fmtUSD(e.total)}${isMonthly ? '/mo' : ''}</div>
     </div>`;
@@ -669,7 +666,6 @@ async function refresh() {
 
     const raw = await fetch('/metrics').then(r => r.text());
     const m = parseMetrics(raw);
-    lastMetrics = m;
 
     // --- Stats: try Prometheus for real 24h data, fallback to live counters ---
     const [pReq, pTok, pCost, pLatSum, pInTok, pOutTok, pMonthlyCost] = await Promise.all([
@@ -743,7 +739,7 @@ async function refresh() {
       $('keys-body').innerHTML = '<div class="empty">no keys — use form below</div>';
     } else {
       $('keys-body').innerHTML = '<table><tr><th>Key</th><th>User</th></tr>' +
-        keys.keys.map(k => `<tr><td class="key-masked">${k.key}</td><td class="key-user">${k.user}</td></tr>`).join('') +
+        keys.keys.map(k => `<tr><td class="key-masked">${esc(k.key)}</td><td class="key-user">${esc(k.user)}</td></tr>`).join('') +
         '</table>';
     }
 
@@ -763,11 +759,11 @@ async function refresh() {
                   : Math.round(b.ttl / 60) + 'm';
         return `<div class="user-row">
           <div class="user-info">
-            <span class="user-name">${b.user}</span>
+            <span class="user-name">${esc(b.user)}</span>
             <span class="user-meta" style="color:var(--err)">BLOCKED &mdash; ${ttl} remaining</span>
           </div>
           <div class="user-actions">
-            <button class="btn btn-primary" onclick="unblock('${b.user}')">Unblock</button>
+            <button class="btn btn-primary" data-user="${esc(b.user)}" onclick="unblock(this.dataset.user)">Unblock</button>
           </div>
         </div>`;
       }).join('');
@@ -779,11 +775,11 @@ async function refresh() {
         if (l.requests_per_day) parts.push(l.requests_per_day + ' req/day');
         return `<div class="user-row">
           <div class="user-info">
-            <span class="user-name">${l.user}</span>
+            <span class="user-name">${esc(l.user)}</span>
             <span class="user-meta" style="color:var(--blue)">LIMIT: ${parts.join(', ')}</span>
           </div>
           <div class="user-actions">
-            <button class="btn btn-danger" onclick="removeLimit('${l.user}')">Remove</button>
+            <button class="btn btn-danger" data-user="${esc(l.user)}" onclick="removeLimit(this.dataset.user)">Remove</button>
           </div>
         </div>`;
       }).join('');
@@ -838,7 +834,7 @@ async function refresh() {
               (reqLimit ? ` / ${reqLimit} req limit` : '');
             return `<div class="usage-card">
               <div class="usage-header">
-                <span class="usage-user">${u.user}</span>
+                <span class="usage-user">${esc(u.user)}</span>
                 <span class="usage-detail">${detail}</span>
               </div>
               ${bars || '<div class="usage-detail">no limits set</div>'}
