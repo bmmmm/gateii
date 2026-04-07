@@ -191,14 +191,14 @@
     {
       "id": 16,
       "title": "Rate Limit Window",
-      "description": "Tokens remaining in current Anthropic rate limit window. Drops toward 0, resets on window boundary.",
+      "description": "Tokens remaining in current Anthropic rate limit window. Empty until first API request since proxy restart.",
       "type": "stat",
       "gridPos": {"x": 0, "y": 27, "w": 8, "h": 3},
       "datasource": {"type": "prometheus"},
       "targets": [{"datasource": {"type": "prometheus"}, "expr": "gateii_rate_limit_tokens_remaining", "legendFormat": "Remaining", "instant": true, "refId": "A"}],
       "fieldConfig": {
         "defaults": {
-          "unit": "short", "decimals": 0,
+          "unit": "short", "decimals": 0, "noValue": "—",
           "color": {"mode": "thresholds"},
           "thresholds": {
             "mode": "absolute",
