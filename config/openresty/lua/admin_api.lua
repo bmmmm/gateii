@@ -410,5 +410,54 @@ if uri == "/internal/admin/openrouter-models" and method == "GET" then
     return
 end
 
+-- GET /internal/admin/health — component reachability (parallel via ngx.thread)
+if uri == "/internal/admin/health" and method == "GET" then
+    local http = require "resty.http"
+
+    local function check(url)
+        local t0 = ngx.now()
+        local httpc = http.new()
+        httpc:set_timeouts(1500, 1500, 3000)
+        local res, err = httpc:request_uri(url)
+        local ms = math.floor((ngx.now() - t0) * 1000)
+        if res and res.status < 500 then
+            return { ok = true, latency_ms = ms }
+        end
+        return { ok = false, latency_ms = ms, error = err or ("HTTP " .. (res and res.status or "?")) }
+    end
+
+    -- Run Prometheus + Grafana checks in parallel
+    local t_prom = ngx.thread.spawn(check, "http://gateii-prometheus:9090/-/healthy")
+    local t_graf = ngx.thread.spawn(check, "http://gateii-grafana:3000/api/health")
+    local _, prom = ngx.thread.wait(t_prom)
+    local _, graf = ngx.thread.wait(t_graf)
+
+    -- Upstream error rate from counters (no network call needed)
+    local all_req, all_err = 0, 0
+    for _, key in ipairs(counters:get_keys(0)) do
+        local parts = {}
+        for p in key:gmatch("[^|]+") do parts[#parts+1] = p end
+        if #parts == 4 and parts[1] ~= "day" then
+            if parts[4] == "requests" then all_req = all_req + (counters:get(key) or 0)
+            elseif parts[4] == "errors"   then all_err = all_err + (counters:get(key) or 0) end
+        end
+    end
+    local err_rate = all_req > 0 and all_err / all_req or 0
+    local upstream = {
+        ok         = err_rate < 0.1,
+        requests   = all_req,
+        errors     = all_err,
+        error_rate = math.floor(err_rate * 1000) / 10,  -- percent, 1 decimal
+    }
+
+    local components = { proxy = { ok = true, latency_ms = 0 }, prometheus = prom, grafana = graf, upstream = upstream }
+    local down = 0
+    for _, v in pairs(components) do if not v.ok then down = down + 1 end end
+    local status = down == 0 and "ok" or (down >= 2 and "down" or "degraded")
+
+    ngx.say(cjson.encode({ status = status, components = components }))
+    return
+end
+
 ngx.status = 404
-ngx.say('{"error":"Unknown admin endpoint — available: /internal/admin/{block,unblock,limit,status,usage,keys,addkey,overview,providers,llm-prices,openrouter-models}"}')
+ngx.say('{"error":"Unknown admin endpoint — available: /internal/admin/{block,unblock,limit,status,usage,keys,addkey,overview,providers,llm-prices,openrouter-models,health}"}')
