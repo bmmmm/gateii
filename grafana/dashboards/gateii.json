@@ -11,12 +11,12 @@
   "schemaVersion": 38,
   "refresh": "30s",
   "time": {
-    "from": "now-3h",
-    "to": "now"
+    "from": "now/M",
+    "to": "now/M"
   },
   "panels": [
     {
-      "id": 9,
+      "id": 1,
       "title": "Requests (24h)",
       "type": "stat",
       "gridPos": {
@@ -35,7 +35,8 @@
           },
           "expr": "sum(increase(gateii_requests_total[24h]))",
           "legendFormat": "Requests",
-          "instant": true
+          "instant": true,
+          "refId": "A"
         }
       ],
       "fieldConfig": {
@@ -69,7 +70,7 @@
       }
     },
     {
-      "id": 10,
+      "id": 2,
       "title": "Tokens (24h)",
       "type": "stat",
       "gridPos": {
@@ -88,7 +89,8 @@
           },
           "expr": "sum(increase(gateii_tokens_total[24h]))",
           "legendFormat": "Tokens",
-          "instant": true
+          "instant": true,
+          "refId": "A"
         }
       ],
       "fieldConfig": {
@@ -130,7 +132,7 @@
       }
     },
     {
-      "id": 11,
+      "id": 3,
       "title": "Estimated Costs (24h)",
       "description": "Based on active provider pricing in providers.json. Cache reads: 0.1x, cache writes: 1.25x.",
       "type": "stat",
@@ -150,7 +152,8 @@
           },
           "expr": "sum(increase(gateii_cost_dollars_total[24h]))",
           "legendFormat": "Cost",
-          "instant": true
+          "instant": true,
+          "refId": "A"
         }
       ],
       "fieldConfig": {
@@ -192,7 +195,7 @@
       }
     },
     {
-      "id": 20,
+      "id": 4,
       "title": "Blocked Users",
       "description": "Number of users currently blocked (rate limit or manual). Red = at least one blocked user.",
       "type": "stat",
@@ -212,7 +215,8 @@
           },
           "expr": "sum(gateii_user_blocked) or vector(0)",
           "legendFormat": "Blocked",
-          "instant": true
+          "instant": true,
+          "refId": "A"
         }
       ],
       "fieldConfig": {
@@ -250,14 +254,13 @@
       }
     },
     {
-      "id": 1,
-      "title": "Token-Rate (input + output)",
-      "description": "Tokens per second, split by user, model, and type",
+      "id": 5,
+      "title": "Token Rate by Model",
       "type": "timeseries",
       "gridPos": {
         "x": 0,
         "y": 4,
-        "w": 24,
+        "w": 12,
         "h": 8
       },
       "datasource": {
@@ -268,8 +271,9 @@
           "datasource": {
             "type": "prometheus"
           },
-          "expr": "sum by (user, model, type) (rate(gateii_tokens_total[5m]))",
-          "legendFormat": "{{user}} / {{model}} / {{type}}"
+          "expr": "sum by (model) (rate(gateii_tokens_total[5m]))",
+          "legendFormat": "{{model}}",
+          "refId": "A"
         }
       ],
       "fieldConfig": {
@@ -279,23 +283,40 @@
             "lineWidth": 2,
             "fillOpacity": 10
           }
-        }
+        },
+        "overrides": [
+          {
+            "matcher": {"id": "byRegexp", "options": "/sonnet/i"},
+            "properties": [{"id": "color", "value": {"fixedColor": "#33ff66", "mode": "fixed"}}]
+          },
+          {
+            "matcher": {"id": "byRegexp", "options": "/opus/i"},
+            "properties": [{"id": "color", "value": {"fixedColor": "#a78bfa", "mode": "fixed"}}]
+          },
+          {
+            "matcher": {"id": "byRegexp", "options": "/haiku/i"},
+            "properties": [{"id": "color", "value": {"fixedColor": "#5b9aff", "mode": "fixed"}}]
+          }
+        ]
       },
       "options": {
         "tooltip": {
           "mode": "multi"
+        },
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom"
         }
       }
     },
     {
-      "id": 4,
-      "title": "Tokens last 24h (per user + model)",
-      "description": "Total consumption over the last 24 hours",
-      "type": "bargauge",
+      "id": 6,
+      "title": "Request Rate by Model",
+      "type": "timeseries",
       "gridPos": {
-        "x": 0,
-        "y": 12,
-        "w": 24,
+        "x": 12,
+        "y": 4,
+        "w": 12,
         "h": 8
       },
       "datasource": {
@@ -306,9 +327,66 @@
           "datasource": {
             "type": "prometheus"
           },
-          "expr": "sum by (user, model) (increase(gateii_tokens_total[24h]))",
-          "legendFormat": "{{user}} / {{model}}",
-          "instant": true
+          "expr": "sum by (model) (rate(gateii_requests_total[5m]))",
+          "legendFormat": "{{model}}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps",
+          "custom": {
+            "lineWidth": 2,
+            "fillOpacity": 10
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {"id": "byRegexp", "options": "/sonnet/i"},
+            "properties": [{"id": "color", "value": {"fixedColor": "#33ff66", "mode": "fixed"}}]
+          },
+          {
+            "matcher": {"id": "byRegexp", "options": "/opus/i"},
+            "properties": [{"id": "color", "value": {"fixedColor": "#a78bfa", "mode": "fixed"}}]
+          },
+          {
+            "matcher": {"id": "byRegexp", "options": "/haiku/i"},
+            "properties": [{"id": "color", "value": {"fixedColor": "#5b9aff", "mode": "fixed"}}]
+          }
+        ]
+      },
+      "options": {
+        "tooltip": {
+          "mode": "multi"
+        },
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom"
+        }
+      }
+    },
+    {
+      "id": 7,
+      "title": "Tokens (24h) by Model",
+      "type": "bargauge",
+      "gridPos": {
+        "x": 0,
+        "y": 12,
+        "w": 12,
+        "h": 8
+      },
+      "datasource": {
+        "type": "prometheus"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus"
+          },
+          "expr": "sum by (model) (increase(gateii_tokens_total[24h]))",
+          "legendFormat": "{{model}}",
+          "instant": true,
+          "refId": "A"
         }
       ],
       "fieldConfig": {
@@ -320,14 +398,259 @@
               {
                 "color": "blue",
                 "value": null
-              },
+              }
+            ]
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {"id": "byRegexp", "options": "/sonnet/i"},
+            "properties": [{"id": "color", "value": {"fixedColor": "#33ff66", "mode": "fixed"}}]
+          },
+          {
+            "matcher": {"id": "byRegexp", "options": "/opus/i"},
+            "properties": [{"id": "color", "value": {"fixedColor": "#a78bfa", "mode": "fixed"}}]
+          },
+          {
+            "matcher": {"id": "byRegexp", "options": "/haiku/i"},
+            "properties": [{"id": "color", "value": {"fixedColor": "#5b9aff", "mode": "fixed"}}]
+          }
+        ]
+      },
+      "options": {
+        "orientation": "horizontal",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ]
+        },
+        "displayMode": "gradient"
+      }
+    },
+    {
+      "id": 8,
+      "title": "Cost (24h) by Model",
+      "type": "bargauge",
+      "gridPos": {
+        "x": 12,
+        "y": 12,
+        "w": 12,
+        "h": 8
+      },
+      "datasource": {
+        "type": "prometheus"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus"
+          },
+          "expr": "sum by (model) (increase(gateii_cost_dollars_total[24h]))",
+          "legendFormat": "{{model}}",
+          "instant": true,
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "currencyUSD",
+          "decimals": 3,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
               {
-                "color": "yellow",
-                "value": 100000
-              },
+                "color": "green",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {"id": "byRegexp", "options": "/sonnet/i"},
+            "properties": [{"id": "color", "value": {"fixedColor": "#33ff66", "mode": "fixed"}}]
+          },
+          {
+            "matcher": {"id": "byRegexp", "options": "/opus/i"},
+            "properties": [{"id": "color", "value": {"fixedColor": "#a78bfa", "mode": "fixed"}}]
+          },
+          {
+            "matcher": {"id": "byRegexp", "options": "/haiku/i"},
+            "properties": [{"id": "color", "value": {"fixedColor": "#5b9aff", "mode": "fixed"}}]
+          }
+        ]
+      },
+      "options": {
+        "orientation": "horizontal",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ]
+        },
+        "displayMode": "gradient"
+      }
+    },
+    {
+      "id": 9,
+      "title": "Tokens This Month by Model",
+      "type": "bargauge",
+      "gridPos": {
+        "x": 0,
+        "y": 20,
+        "w": 12,
+        "h": 8
+      },
+      "datasource": {
+        "type": "prometheus"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus"
+          },
+          "expr": "sum by (model) (increase(gateii_tokens_total[$__range]))",
+          "legendFormat": "{{model}}",
+          "instant": true,
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
               {
-                "color": "red",
-                "value": 500000
+                "color": "blue",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {"id": "byRegexp", "options": "/sonnet/i"},
+            "properties": [{"id": "color", "value": {"fixedColor": "#33ff66", "mode": "fixed"}}]
+          },
+          {
+            "matcher": {"id": "byRegexp", "options": "/opus/i"},
+            "properties": [{"id": "color", "value": {"fixedColor": "#a78bfa", "mode": "fixed"}}]
+          },
+          {
+            "matcher": {"id": "byRegexp", "options": "/haiku/i"},
+            "properties": [{"id": "color", "value": {"fixedColor": "#5b9aff", "mode": "fixed"}}]
+          }
+        ]
+      },
+      "options": {
+        "orientation": "horizontal",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ]
+        },
+        "displayMode": "gradient"
+      }
+    },
+    {
+      "id": 10,
+      "title": "Cost This Month by Model",
+      "type": "bargauge",
+      "gridPos": {
+        "x": 12,
+        "y": 20,
+        "w": 12,
+        "h": 8
+      },
+      "datasource": {
+        "type": "prometheus"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus"
+          },
+          "expr": "sum by (model) (increase(gateii_cost_dollars_total[$__range]))",
+          "legendFormat": "{{model}}",
+          "instant": true,
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "currencyUSD",
+          "decimals": 3,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {"id": "byRegexp", "options": "/sonnet/i"},
+            "properties": [{"id": "color", "value": {"fixedColor": "#33ff66", "mode": "fixed"}}]
+          },
+          {
+            "matcher": {"id": "byRegexp", "options": "/opus/i"},
+            "properties": [{"id": "color", "value": {"fixedColor": "#a78bfa", "mode": "fixed"}}]
+          },
+          {
+            "matcher": {"id": "byRegexp", "options": "/haiku/i"},
+            "properties": [{"id": "color", "value": {"fixedColor": "#5b9aff", "mode": "fixed"}}]
+          }
+        ]
+      },
+      "options": {
+        "orientation": "horizontal",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ]
+        },
+        "displayMode": "gradient"
+      }
+    },
+    {
+      "id": 11,
+      "title": "Tokens (24h) by User",
+      "type": "bargauge",
+      "gridPos": {
+        "x": 0,
+        "y": 28,
+        "w": 12,
+        "h": 8
+      },
+      "datasource": {
+        "type": "prometheus"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus"
+          },
+          "expr": "sum by (user) (increase(gateii_tokens_total[24h]))",
+          "legendFormat": "{{user}}",
+          "instant": true,
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "color": {
+            "mode": "palette-classic"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "blue",
+                "value": null
               }
             ]
           }
@@ -345,12 +668,11 @@
     },
     {
       "id": 12,
-      "title": "Costs per user + model (24h)",
-      "description": "Estimated API costs over the last 24h based on Anthropic pricing",
+      "title": "Cost (24h) by User",
       "type": "bargauge",
       "gridPos": {
-        "x": 0,
-        "y": 20,
+        "x": 12,
+        "y": 28,
         "w": 12,
         "h": 8
       },
@@ -362,29 +684,25 @@
           "datasource": {
             "type": "prometheus"
           },
-          "expr": "sum by (user, model) (increase(gateii_cost_dollars_total[24h]))",
-          "legendFormat": "{{user}} / {{model}}",
-          "instant": true
+          "expr": "sum by (user) (increase(gateii_cost_dollars_total[24h]))",
+          "legendFormat": "{{user}}",
+          "instant": true,
+          "refId": "A"
         }
       ],
       "fieldConfig": {
         "defaults": {
           "unit": "currencyUSD",
           "decimals": 3,
+          "color": {
+            "mode": "palette-classic"
+          },
           "thresholds": {
             "mode": "absolute",
             "steps": [
               {
                 "color": "green",
                 "value": null
-              },
-              {
-                "color": "yellow",
-                "value": 0.5
-              },
-              {
-                "color": "red",
-                "value": 2
               }
             ]
           }
@@ -401,13 +719,12 @@
       }
     },
     {
-      "id": 5,
-      "title": "Average Latency (upstream)",
-      "description": "Mean response time of the Anthropic API in ms",
+      "id": 13,
+      "title": "Avg Latency by Model",
       "type": "timeseries",
       "gridPos": {
-        "x": 12,
-        "y": 20,
+        "x": 0,
+        "y": 36,
         "w": 12,
         "h": 8
       },
@@ -419,8 +736,9 @@
           "datasource": {
             "type": "prometheus"
           },
-          "expr": "sum by (user, model) (rate(gateii_request_duration_ms_total[5m])) / sum by (user, model) (rate(gateii_requests_total[5m]))",
-          "legendFormat": "{{user}} / {{model}}"
+          "expr": "sum by (model) (rate(gateii_request_duration_ms_total[5m])) / sum by (model) (rate(gateii_requests_total[5m]))",
+          "legendFormat": "{{model}}",
+          "refId": "A"
         }
       ],
       "fieldConfig": {
@@ -429,40 +747,40 @@
           "custom": {
             "lineWidth": 2,
             "fillOpacity": 5
-          },
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "green",
-                "value": null
-              },
-              {
-                "color": "yellow",
-                "value": 3000
-              },
-              {
-                "color": "red",
-                "value": 8000
-              }
-            ]
           }
-        }
+        },
+        "overrides": [
+          {
+            "matcher": {"id": "byRegexp", "options": "/sonnet/i"},
+            "properties": [{"id": "color", "value": {"fixedColor": "#33ff66", "mode": "fixed"}}]
+          },
+          {
+            "matcher": {"id": "byRegexp", "options": "/opus/i"},
+            "properties": [{"id": "color", "value": {"fixedColor": "#a78bfa", "mode": "fixed"}}]
+          },
+          {
+            "matcher": {"id": "byRegexp", "options": "/haiku/i"},
+            "properties": [{"id": "color", "value": {"fixedColor": "#5b9aff", "mode": "fixed"}}]
+          }
+        ]
       },
       "options": {
         "tooltip": {
           "mode": "multi"
+        },
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom"
         }
       }
     },
     {
-      "id": 6,
-      "title": "Error Rate (upstream non-200)",
-      "description": "Proportion of failed upstream requests",
+      "id": 14,
+      "title": "Error Rate by Model",
       "type": "timeseries",
       "gridPos": {
-        "x": 0,
-        "y": 28,
+        "x": 12,
+        "y": 36,
         "w": 12,
         "h": 8
       },
@@ -474,46 +792,53 @@
           "datasource": {
             "type": "prometheus"
           },
-          "expr": "sum by (user, model) (rate(gateii_upstream_errors_total[5m])) / clamp_min(sum by (user, model) (rate(gateii_requests_total[5m])), 0.001) * 100",
-          "legendFormat": "{{user}} / {{model}}"
+          "expr": "sum by (model) (rate(gateii_upstream_errors_total[5m]))",
+          "legendFormat": "{{model}}",
+          "refId": "A"
         }
       ],
       "fieldConfig": {
         "defaults": {
-          "unit": "percent",
+          "unit": "reqps",
           "custom": {
             "lineWidth": 2,
             "fillOpacity": 10
-          },
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "green",
-                "value": null
-              },
-              {
-                "color": "yellow",
-                "value": 5
-              },
-              {
-                "color": "red",
-                "value": 20
-              }
-            ]
           }
+        },
+        "overrides": [
+          {
+            "matcher": {"id": "byRegexp", "options": "/sonnet/i"},
+            "properties": [{"id": "color", "value": {"fixedColor": "#33ff66", "mode": "fixed"}}]
+          },
+          {
+            "matcher": {"id": "byRegexp", "options": "/opus/i"},
+            "properties": [{"id": "color", "value": {"fixedColor": "#a78bfa", "mode": "fixed"}}]
+          },
+          {
+            "matcher": {"id": "byRegexp", "options": "/haiku/i"},
+            "properties": [{"id": "color", "value": {"fixedColor": "#5b9aff", "mode": "fixed"}}]
+          }
+        ]
+      },
+      "options": {
+        "tooltip": {
+          "mode": "multi"
+        },
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom"
         }
       }
     },
     {
-      "id": 7,
+      "id": 15,
       "title": "Stop Reason Distribution",
       "description": "end_turn = completed normally | max_tokens = response truncated (max_tokens set too low)",
       "type": "bargauge",
       "gridPos": {
-        "x": 12,
-        "y": 28,
-        "w": 12,
+        "x": 0,
+        "y": 44,
+        "w": 24,
         "h": 8
       },
       "datasource": {
@@ -526,7 +851,8 @@
           },
           "expr": "sum by (reason, model) (increase(gateii_stop_reason_total[24h]))",
           "legendFormat": "{{reason}} / {{model}}",
-          "instant": true
+          "instant": true,
+          "refId": "A"
         }
       ],
       "fieldConfig": {
@@ -583,44 +909,6 @@
           ]
         },
         "displayMode": "gradient"
-      }
-    },
-    {
-      "id": 8,
-      "title": "Request Rate (per user + model)",
-      "description": "Requests per second, split by user and model",
-      "type": "timeseries",
-      "gridPos": {
-        "x": 0,
-        "y": 36,
-        "w": 24,
-        "h": 8
-      },
-      "datasource": {
-        "type": "prometheus"
-      },
-      "targets": [
-        {
-          "datasource": {
-            "type": "prometheus"
-          },
-          "expr": "sum by (user, model) (rate(gateii_requests_total[5m]))",
-          "legendFormat": "{{user}} / {{model}}"
-        }
-      ],
-      "fieldConfig": {
-        "defaults": {
-          "unit": "reqps",
-          "custom": {
-            "lineWidth": 2,
-            "fillOpacity": 10
-          }
-        }
-      },
-      "options": {
-        "tooltip": {
-          "mode": "multi"
-        }
       }
     }
   ]
