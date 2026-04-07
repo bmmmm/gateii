@@ -147,6 +147,8 @@ The console plugin queries Prometheus via a reverse proxy at `/internal/promethe
 
 `/internal/admin/openrouter-models` proxies the OpenRouter model API (`?order=top-weekly&categories=programming`) with a 12 h cache — used by the console to populate the live comparison panel. Pricing data sourced from [simonw/llm-prices](https://github.com/simonw/llm-prices).
 
+`/internal/admin/health` returns component reachability — proxy, Prometheus, Grafana (parallel checks), and upstream error rate from counters. Used by the console health bar.
+
 ---
 
 ## Proxy routing
@@ -157,6 +159,20 @@ The console plugin queries Prometheus via a reverse proxy at `/internal/promethe
 ```
 
 **Important**: Always `switch direct` before stopping the proxy, or Claude Code loses its connection.
+
+**Safe dev workflow** — when editing Lua or nginx config, switch to direct first:
+```bash
+./scripts/admin.sh switch direct   # 1. go direct — Claude Code stays connected
+# edit, reload: docker exec gateii-proxy openresty -s reload
+./scripts/admin.sh switch local    # 2. back to proxy when done
+```
+
+**Emergency recovery** — if the proxy breaks and Claude Code is cut off:
+```bash
+gateii-rescue   # global alias: switch direct + restart proxy container
+# then restart Claude Code
+```
+Or directly: `./scripts/rescue.sh` (no dependencies beyond python3 and Docker).
 
 ## Key management
 
