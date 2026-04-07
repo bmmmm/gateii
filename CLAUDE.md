@@ -8,13 +8,13 @@ No Redis, no external dependencies, no application framework.
 
 ```bash
 # Start stack
-DOCKER_CONTEXT=colima docker compose up -d
+bash scripts/docker-colima.sh compose up -d
 
 # Reload nginx after Lua changes (no restart needed)
-docker exec gateii-proxy openresty -s reload
+bash scripts/docker-colima.sh exec gateii-proxy openresty -s reload
 
 # Tail proxy logs
-docker logs -f gateii-proxy
+bash scripts/docker-colima.sh logs -f gateii-proxy
 
 # Smoke test
 bash scripts/smoke-test.sh
@@ -50,7 +50,7 @@ Or from this repo directly:
 
 ## Gotchas
 
-- `DOCKER_CONTEXT=colima` required — no Docker Desktop, Colima provides the daemon
+- **Docker commands:** always use `bash scripts/docker-colima.sh <args>` — auto-sets DOCKER_HOST for Colima, sandbox-safe after Claude Code restart. Never inline `DOCKER_HOST=unix://...` or `DOCKER_CONTEXT=colima docker ...` — those require dangerouslyDisableSandbox
 - `ngx.print()` not `ngx.say()` for forwarded response bodies — `ngx.say` adds `\n`, breaks Content-Length
 - Shared dict key separator is `|` not `:` — colons break key parsing (sanitize replaces `:|` with `_`)
 - Rate limiter only active in `apikey` mode — passthrough has no rate limit
