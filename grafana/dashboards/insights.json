@@ -261,7 +261,7 @@
       "id": 6,
       "title": "Daily Costs vs Subscriptions",
       "description": "Dashed lines = daily equivalent of subscription prices. If your usage is below, API is cheaper.",
-      "type": "barchart",
+      "type": "timeseries",
       "gridPos": {
         "x": 0,
         "y": 4,
@@ -276,9 +276,10 @@
           "datasource": {
             "type": "prometheus"
           },
-          "expr": "sum(increase(gateii_cost_dollars_total[24h]))",
+          "expr": "sum(increase(gateii_cost_dollars_total[1d]))",
           "legendFormat": "API Cost / Day",
-          "refId": "A"
+          "refId": "A",
+          "step": "1d"
         },
         {
           "datasource": {
@@ -310,13 +311,12 @@
           "unit": "currencyUSD",
           "decimals": 2,
           "custom": {
+            "drawStyle": "bars",
             "fillOpacity": 80,
-            "gradientMode": "none",
-            "hideFrom": {
-              "legend": false,
-              "tooltip": false,
-              "viz": false
-            }
+            "barMaxWidth": 24,
+            "spanNulls": false,
+            "lineWidth": 0,
+            "gradientMode": "none"
           },
           "color": {
             "mode": "palette-classic"
@@ -332,8 +332,35 @@
               {
                 "id": "color",
                 "value": {
-                  "fixedColor": "blue",
+                  "fixedColor": "#5b9aff",
                   "mode": "fixed"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byRegexp",
+              "options": "/\\$/i"
+            },
+            "properties": [
+              {
+                "id": "custom.drawStyle",
+                "value": "line"
+              },
+              {
+                "id": "custom.fillOpacity",
+                "value": 0
+              },
+              {
+                "id": "custom.lineWidth",
+                "value": 1
+              },
+              {
+                "id": "custom.lineStyle",
+                "value": {
+                  "fill": "dash",
+                  "dash": [8, 8]
                 }
               }
             ]
@@ -386,12 +413,6 @@
         ]
       },
       "options": {
-        "barWidth": 0.97,
-        "groupWidth": 0.7,
-        "xTickLabelRotation": 0,
-        "xTickLabelSpacing": 0,
-        "fillOpacity": 80,
-        "gradientMode": "none",
         "tooltip": {
           "mode": "multi",
           "sort": "desc"
