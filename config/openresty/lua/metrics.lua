@@ -63,15 +63,40 @@ end
 
 ngx.header["Content-Type"] = "text/plain; version=0.0.4; charset=utf-8"
 
+-- Escape label values per Prometheus spec: \ → \\, " → \", newline → \n
+local function escape_label(s)
+    return s:gsub("\\", "\\\\"):gsub('"', '\\"'):gsub("\n", "\\n")
+end
+
 -- Collect all counter keys and group by user|provider|model
 local keys = counters:get_keys(0) or {}
 local usage = {}   -- { "user|provider|model" = { input=N, output=N, ... } }
 local stops = {}   -- { "user|provider|model|reason" = N }
+local rl_wait_lines = {}
+local rl_tokens_lines = {}
 
 for _, key in ipairs(keys) do
     -- Skip daily counters
     if key:sub(1, 4) == "day|" then
         -- skip
+    elseif key:sub(1, 15) == "ratelimit_wait|" then
+        -- key format: ratelimit_wait|user|model|limit_type
+        local rl_user, rl_model, rl_ltype = key:match("^ratelimit_wait|([^|]+)|([^|]+)|(.+)$")
+        if rl_user then
+            local val = counters:get(key) or 0
+            rl_wait_lines[#rl_wait_lines+1] = string.format(
+                'gateii_rate_limit_wait_seconds{user="%s",model="%s",limit_type="%s"} %d',
+                escape_label(rl_user), escape_label(rl_model), escape_label(rl_ltype), val)
+        end
+    elseif key:sub(1, 17) == "ratelimit_tokens|" then
+        -- key format: ratelimit_tokens|user|model|limit_type
+        local rl_user, rl_model, rl_ltype = key:match("^ratelimit_tokens|([^|]+)|([^|]+)|(.+)$")
+        if rl_user then
+            local val = counters:get(key) or 0
+            rl_tokens_lines[#rl_tokens_lines+1] = string.format(
+                'gateii_rate_limit_tokens_at_hit{user="%s",model="%s",limit_type="%s"} %d',
+                escape_label(rl_user), escape_label(rl_model), escape_label(rl_ltype), val)
+        end
     else
         -- Parse: user|provider|model|field or user|provider|model|stop|reason
         local parts = {}
@@ -94,11 +119,6 @@ for _, key in ipairs(keys) do
             end
         end
     end
-end
-
--- Escape label values per Prometheus spec: \ → \\, " → \", newline → \n
-local function escape_label(s)
-    return s:gsub("\\", "\\\\"):gsub('"', '\\"'):gsub("\n", "\\n")
 end
 
 -- Build output
@@ -211,31 +231,6 @@ for _, key in ipairs(block_keys) do
     if key:sub(1, 8) == "blocked|" then
         local buser = key:sub(9)
         add(string.format('gateii_user_blocked{user="%s"} 1', escape_label(buser)))
-    end
-end
-
--- Rate limit wait time and tokens at hit
-local rl_wait_lines = {}
-local rl_tokens_lines = {}
-for _, key in ipairs(keys) do
-    if key:sub(1, 15) == "ratelimit_wait|" then
-        -- key format: ratelimit_wait|user|model|limit_type
-        local rl_user, rl_model, rl_ltype = key:match("^ratelimit_wait|([^|]+)|([^|]+)|(.+)$")
-        if rl_user then
-            local val = counters:get(key) or 0
-            rl_wait_lines[#rl_wait_lines+1] = string.format(
-                'gateii_rate_limit_wait_seconds{user="%s",model="%s",limit_type="%s"} %d',
-                escape_label(rl_user), escape_label(rl_model), escape_label(rl_ltype), val)
-        end
-    elseif key:sub(1, 17) == "ratelimit_tokens|" then
-        -- key format: ratelimit_tokens|user|model|limit_type
-        local rl_user, rl_model, rl_ltype = key:match("^ratelimit_tokens|([^|]+)|([^|]+)|(.+)$")
-        if rl_user then
-            local val = counters:get(key) or 0
-            rl_tokens_lines[#rl_tokens_lines+1] = string.format(
-                'gateii_rate_limit_tokens_at_hit{user="%s",model="%s",limit_type="%s"} %d',
-                escape_label(rl_user), escape_label(rl_model), escape_label(rl_ltype), val)
-        end
     end
 end
 
