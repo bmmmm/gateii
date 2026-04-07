@@ -11,6 +11,7 @@ local pricing = {
 }
 local cache_write_mult = 1.25
 local cache_read_mult = 0.1
+local tokens_window_limit  -- set by try_providers_json() via closure
 
 local function try_providers_json()
     local f = io.open("/etc/nginx/lua/providers.json", "r")
@@ -25,6 +26,7 @@ local function try_providers_json()
             pricing = p.models
             cache_write_mult = p.cache_write_multiplier or cache_write_mult
             cache_read_mult = p.cache_read_multiplier or cache_read_mult
+            tokens_window_limit = p.tokens_window_limit  -- may be nil
             return true
         end
     end
@@ -276,6 +278,12 @@ if rl_reset_ts ~= nil then
         local seconds_remaining = math.max(0, reset_unix - ngx.time())
         add(string.format("gateii_rate_limit_seconds_until_reset %d", seconds_remaining))
     end
+end
+
+add("# HELP gateii_rate_limit_tokens_max Configured max tokens per rate limit window (from providers.json)")
+add("# TYPE gateii_rate_limit_tokens_max gauge")
+if tokens_window_limit ~= nil then
+    add(string.format("gateii_rate_limit_tokens_max %d", tokens_window_limit))
 end
 
 -- Model pricing (gauge — tracks price changes over time via Prometheus)
