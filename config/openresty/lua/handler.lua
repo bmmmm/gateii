@@ -42,7 +42,7 @@ local function track_rl_429(res, u, m, pname)
     local hit_tokens = 0
     local cd = ngx.shared.counters
     if cd and u and m then
-        for _, t in ipairs({"input", "output"}) do
+        for _, t in ipairs({"input", "output", "cache_creation", "cache_read"}) do
             local v = cd:get(u .. "|" .. pname .. "|" .. m .. "|" .. t)
             if v then hit_tokens = hit_tokens + v end
         end

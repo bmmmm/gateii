@@ -63,19 +63,32 @@ function _M.record(user, provider, model, input_tokens, output_tokens, opts)
     counters:incr(day_prefix .. "|requests", 1, 0, 90000)
 end
 
+local function dict_set(key, value, ttl)
+    local ok, err = counters:set(key, value, ttl)
+    if not ok then
+        ngx.log(ngx.ERR, "tracking: shared dict write failed key=", key, " err=", tostring(err),
+                " free=", counters:free_space())
+    end
+    return ok
+end
+
+-- TTL for rate-limit event keys: 30 days so Prometheus history is preserved
+-- but old events eventually evict from the dict
+local RL_EVENT_TTL = 86400 * 30
+
 function _M.set_rate_limit_wait(user, model, limit_type, seconds)
     local key = "ratelimit_wait|" .. user .. "|" .. model .. "|" .. limit_type
-    counters:set(key, seconds)
+    dict_set(key, seconds, RL_EVENT_TTL)
 end
 
 function _M.set_rate_limit_tokens_at_hit(user, model, limit_type, tokens)
     local key = "ratelimit_tokens|" .. user .. "|" .. model .. "|" .. limit_type
-    counters:set(key, tokens)
+    dict_set(key, tokens, RL_EVENT_TTL)
 end
 
 -- Store current remaining tokens for the rate limit window
 function _M.set_rate_limit_remaining(remaining)
-    counters:set("ratelimit_remaining", remaining)
+    dict_set("ratelimit_remaining", remaining)
 end
 
 -- Store the reset timestamp string for change detection
@@ -84,12 +97,12 @@ function _M.get_rate_limit_reset()
 end
 
 function _M.set_rate_limit_reset(ts)
-    counters:set("ratelimit_reset_ts", ts)
+    dict_set("ratelimit_reset_ts", ts)
 end
 
 -- Record tokens that expired (window reset without hitting limit)
 function _M.set_rate_limit_tokens_expired(tokens)
-    counters:set("ratelimit_tokens_expired", tokens)
+    dict_set("ratelimit_tokens_expired", tokens)
 end
 
 return _M

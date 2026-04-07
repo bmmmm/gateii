@@ -268,4 +268,13 @@ for _, p in ipairs(pricing) do
     add(string.format('gateii_model_pricing_per_mtok{model="%s",type="cache_read"} %.2f', p.pattern, p.input * cache_read_mult))
 end
 
+-- Shared dict health (free space in bytes — alert if approaching 0)
+add("# HELP gateii_shared_dict_free_bytes Free bytes remaining in shared dicts")
+add("# TYPE gateii_shared_dict_free_bytes gauge")
+add(string.format('gateii_shared_dict_free_bytes{dict="counters"} %d', counters:free_space()))
+local blocking_free = blocking_dict:free_space()
+if blocking_free then
+    add(string.format('gateii_shared_dict_free_bytes{dict="blocking"} %d', blocking_free))
+end
+
 ngx.print(table.concat(lines, "\n") .. "\n")
