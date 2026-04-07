@@ -247,6 +247,22 @@ add("# HELP gateii_rate_limit_tokens_at_hit Tokens consumed when rate limit was 
 add("# TYPE gateii_rate_limit_tokens_at_hit gauge")
 for _, l in ipairs(rl_tokens_lines) do add(l) end
 
+-- Rate limit window: remaining tokens and expired tokens
+local rl_win_remaining = counters:get("ratelimit_remaining")
+local rl_win_expired   = counters:get("ratelimit_tokens_expired")
+
+add("# HELP gateii_rate_limit_tokens_remaining Tokens remaining in current Anthropic rate limit window")
+add("# TYPE gateii_rate_limit_tokens_remaining gauge")
+if rl_win_remaining ~= nil then
+    add(string.format("gateii_rate_limit_tokens_remaining %d", rl_win_remaining))
+end
+
+add("# HELP gateii_rate_limit_tokens_expired Tokens unused when last rate limit window expired")
+add("# TYPE gateii_rate_limit_tokens_expired gauge")
+if rl_win_expired ~= nil then
+    add(string.format("gateii_rate_limit_tokens_expired %d", rl_win_expired))
+end
+
 -- Model pricing (gauge — tracks price changes over time via Prometheus)
 add("# HELP gateii_model_pricing_per_mtok Current Anthropic pricing per 1M tokens (USD)")
 add("# TYPE gateii_model_pricing_per_mtok gauge")
