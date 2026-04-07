@@ -63,4 +63,14 @@ function _M.record(user, provider, model, input_tokens, output_tokens, opts)
     counters:incr(day_prefix .. "|requests", 1, 0, 90000)
 end
 
+function _M.set_rate_limit_wait(user, model, limit_type, seconds)
+    local key = "ratelimit_wait|" .. user .. "|" .. model .. "|" .. limit_type
+    counters:set(key, seconds)
+end
+
+function _M.set_rate_limit_tokens_at_hit(user, model, limit_type, tokens)
+    local key = "ratelimit_tokens|" .. user .. "|" .. model .. "|" .. limit_type
+    counters:set(key, tokens)
+end
+
 return _M
