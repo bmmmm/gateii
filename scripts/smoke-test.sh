@@ -13,6 +13,14 @@ if [ -z "${DOCKER_HOST:-}" ]; then
   fi
 fi
 
+# Detect --sandbox flag
+SANDBOX_MODE=0
+for arg in "$@"; do
+  if [ "$arg" = "--sandbox" ]; then
+    SANDBOX_MODE=1
+  fi
+done
+
 PASS=0; FAIL=0
 
 ok()   { echo -e "  ${GRN}✓${NC} $1"; PASS=$((PASS+1)); }
@@ -21,6 +29,9 @@ info() { echo -e "  ${DIM}  $1${NC}"; }
 
 echo ""
 echo -e "${BOLD}gateii smoke test${NC}"
+if [ "$SANDBOX_MODE" -eq 1 ]; then
+  echo -e "${DIM}[sandbox mode — network tests skipped]${NC}"
+fi
 echo ""
 
 # --- Container health ---
@@ -40,94 +51,110 @@ echo ""
 
 # --- Proxy ---
 echo -e "${BOLD}Proxy :8888${NC}"
-HEALTH=$(curl -sf --max-time 5 http://localhost:8888/health 2>/dev/null || echo "")
-if [ "$HEALTH" = "ok" ]; then
-  ok "/health → ok"
-else
-  fail "/health → '${HEALTH:-no response}'"
-fi
-
-# Test request (passthrough — uses whatever ANTHROPIC_API_KEY or OAuth is set)
-if [ -n "${ANTHROPIC_API_KEY:-}" ]; then
-  HTTP=$(curl -s --max-time 15 -o /dev/null -w "%{http_code}" \
-    -X POST http://localhost:8888/v1/messages \
-    -H "x-api-key: $ANTHROPIC_API_KEY" \
-    -H "Content-Type: application/json" \
-    -d '{"model":"claude-haiku-4-5-20251001","max_tokens":5,"messages":[{"role":"user","content":"hi"}]}' \
-    2>/dev/null || echo "000")
-  if [ "$HTTP" = "200" ]; then
-    ok "test request → 200"
+if [ "$SANDBOX_MODE" -eq 0 ]; then
+  HEALTH=$(curl -sf --max-time 5 http://localhost:8888/health 2>/dev/null || echo "")
+  if [ "$HEALTH" = "ok" ]; then
+    ok "/health → ok"
   else
-    fail "test request → $HTTP"
-    info "Set ANTHROPIC_API_KEY to test end-to-end"
+    fail "/health → '${HEALTH:-no response}'"
+  fi
+
+  # Test request (passthrough — uses whatever ANTHROPIC_API_KEY or OAuth is set)
+  if [ -n "${ANTHROPIC_API_KEY:-}" ]; then
+    HTTP=$(curl -s --max-time 15 -o /dev/null -w "%{http_code}" \
+      -X POST http://localhost:8888/v1/messages \
+      -H "x-api-key: $ANTHROPIC_API_KEY" \
+      -H "Content-Type: application/json" \
+      -d '{"model":"claude-haiku-4-5-20251001","max_tokens":5,"messages":[{"role":"user","content":"hi"}]}' \
+      2>/dev/null || echo "000")
+    if [ "$HTTP" = "200" ]; then
+      ok "test request → 200"
+    else
+      fail "test request → $HTTP"
+      info "Set ANTHROPIC_API_KEY to test end-to-end"
+    fi
+  else
+    echo -e "  ${DIM}⊘  skipping end-to-end request — ANTHROPIC_API_KEY not set${NC}"
   fi
 else
-  echo -e "  ${DIM}⊘  skipping end-to-end request — ANTHROPIC_API_KEY not set${NC}"
+  echo -e "  ${DIM}⊘  network tests skipped${NC}"
 fi
 
 echo ""
 
 # --- Metrics (from proxy /metrics) ---
 echo -e "${BOLD}Metrics :8888/metrics${NC}"
-METRICS=$(curl -sf --max-time 5 http://localhost:8888/metrics 2>/dev/null || echo "")
-if echo "$METRICS" | grep -q "# HELP gateii_requests_total"; then
-  ok "/metrics — gateii_requests_total present"
+if [ "$SANDBOX_MODE" -eq 0 ]; then
+  METRICS=$(curl -sf --max-time 5 http://localhost:8888/metrics 2>/dev/null || echo "")
+  if echo "$METRICS" | grep -q "# HELP gateii_requests_total"; then
+    ok "/metrics — gateii_requests_total present"
+  else
+    fail "/metrics — gateii metrics missing"
+  fi
+  if echo "$METRICS" | grep -q "# HELP gateii_cost_dollars_total"; then
+    ok "/metrics — gateii_cost_dollars_total present"
+  else
+    fail "/metrics — gateii_cost_dollars_total missing"
+  fi
 else
-  fail "/metrics — gateii metrics missing"
-fi
-if echo "$METRICS" | grep -q "# HELP gateii_cost_dollars_total"; then
-  ok "/metrics — gateii_cost_dollars_total present"
-else
-  fail "/metrics — gateii_cost_dollars_total missing"
+  echo -e "  ${DIM}⊘  network tests skipped${NC}"
 fi
 
 echo ""
 
 # --- Prometheus ---
 echo -e "${BOLD}Prometheus :9090${NC}"
-PROM=$(curl -sf --max-time 5 "http://localhost:9090/api/v1/query?query=up" 2>/dev/null || echo "")
-if echo "$PROM" | grep -q '"status":"success"'; then
-  ok "API responding"
-else
-  fail "API not responding"
-fi
+if [ "$SANDBOX_MODE" -eq 0 ]; then
+  PROM=$(curl -sf --max-time 5 "http://localhost:9090/api/v1/query?query=up" 2>/dev/null || echo "")
+  if echo "$PROM" | grep -q '"status":"success"'; then
+    ok "API responding"
+  else
+    fail "API not responding"
+  fi
 
-# Check gateii scrape target is up
-TARGET=$(curl -sf --max-time 5 "http://localhost:9090/api/v1/query?query=up%7Bjob%3D%22gateii%22%7D" 2>/dev/null || echo "")
-if echo "$TARGET" | grep -q '"value":\[.*,"1"\]'; then
-  ok "gateii scrape target — up"
+  # Check gateii scrape target is up
+  TARGET=$(curl -sf --max-time 5 "http://localhost:9090/api/v1/query?query=up%7Bjob%3D%22gateii%22%7D" 2>/dev/null || echo "")
+  if echo "$TARGET" | grep -q '"value":\[.*,"1"\]'; then
+    ok "gateii scrape target — up"
+  else
+    fail "gateii scrape target — down or not found"
+    info "Prometheus may not have scraped yet (wait ~15s)"
+  fi
 else
-  fail "gateii scrape target — down or not found"
-  info "Prometheus may not have scraped yet (wait ~15s)"
+  echo -e "  ${DIM}⊘  network tests skipped${NC}"
 fi
 
 echo ""
 
 # --- Grafana ---
 echo -e "${BOLD}Grafana :3001${NC}"
-GF_HEALTH=$(curl -sf --max-time 5 http://localhost:3001/api/health 2>/dev/null || echo "")
-GF_DB=$(echo "$GF_HEALTH" | jq -r '.database // ""' 2>/dev/null || echo "")
-if [ "$GF_DB" = "ok" ]; then
-  ok "API healthy"
-else
-  fail "API not responding"
-fi
+if [ "$SANDBOX_MODE" -eq 0 ]; then
+  GF_HEALTH=$(curl -sf --max-time 5 http://localhost:3001/api/health 2>/dev/null || echo "")
+  GF_DB=$(echo "$GF_HEALTH" | jq -r '.database // ""' 2>/dev/null || echo "")
+  if [ "$GF_DB" = "ok" ]; then
+    ok "API healthy"
+  else
+    fail "API not responding"
+  fi
 
-DASHBOARD=$(curl -sf --max-time 5 http://localhost:3001/api/dashboards/uid/gateii-proxy 2>/dev/null || echo "")
-DASH_UID=$(echo "$DASHBOARD" | jq -r '.dashboard.uid // ""' 2>/dev/null || echo "")
-if [ "$DASH_UID" = "gateii-proxy" ]; then
-  TITLE=$(echo "$DASHBOARD" | jq -r '.dashboard.title // "?"' 2>/dev/null || echo "?")
-  ok "dashboard loaded — \"$TITLE\""
-else
-  fail "dashboard not found (uid: gateii-proxy)"
-  info "Grafana may still be provisioning — retry in 10s"
-fi
+  DASHBOARD=$(curl -sf --max-time 5 http://localhost:3001/api/dashboards/uid/gateii-proxy 2>/dev/null || echo "")
+  DASH_UID=$(echo "$DASHBOARD" | jq -r '.dashboard.uid // ""' 2>/dev/null || echo "")
+  if [ "$DASH_UID" = "gateii-proxy" ]; then
+    TITLE=$(echo "$DASHBOARD" | jq -r '.dashboard.title // "?"' 2>/dev/null || echo "?")
+    ok "dashboard loaded — \"$TITLE\""
+  else
+    fail "dashboard not found (uid: gateii-proxy)"
+    info "Grafana may still be provisioning — retry in 10s"
+  fi
 
-DS=$(curl -sf --max-time 5 http://localhost:3001/api/datasources 2>/dev/null || echo "")
-if echo "$DS" | grep -q '"type":"prometheus"'; then
-  ok "Prometheus datasource provisioned"
+  DS=$(curl -sf --max-time 5 http://localhost:3001/api/datasources 2>/dev/null || echo "")
+  if echo "$DS" | grep -q '"type":"prometheus"'; then
+    ok "Prometheus datasource provisioned"
+  else
+    fail "Prometheus datasource missing"
+  fi
 else
-  fail "Prometheus datasource missing"
+  echo -e "  ${DIM}⊘  network tests skipped${NC}"
 fi
 
 echo ""
