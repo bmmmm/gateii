@@ -94,6 +94,25 @@ if uri == "/internal/admin/limit" and method == "POST" then
         ngx.say('{"error":"Invalid JSON body"}')
         return
     end
+    -- Validate field types — prevent negative or non-numeric values reaching auth.lua
+    local function is_pos_int(v)
+        return type(v) == "number" and v > 0 and math.floor(v) == v
+    end
+    if limits.tokens_per_day ~= nil and not is_pos_int(limits.tokens_per_day) then
+        ngx.status = 400
+        ngx.say('{"error":"tokens_per_day must be a positive integer"}')
+        return
+    end
+    if limits.requests_per_day ~= nil and not is_pos_int(limits.requests_per_day) then
+        ngx.status = 400
+        ngx.say('{"error":"requests_per_day must be a positive integer"}')
+        return
+    end
+    if limits.tokens_per_day == nil and limits.requests_per_day == nil then
+        ngx.status = 400
+        ngx.say('{"error":"Provide at least one of: tokens_per_day, requests_per_day"}')
+        return
+    end
     blocking_dict:set("limits|" .. user, cjson.encode(limits))
     save_limits()
     ngx.say(cjson.encode({ok = true, user = user}))
@@ -270,13 +289,9 @@ if uri == "/internal/admin/addkey" and method == "POST" then
         local obj = cjson.decode(body)
         if obj then key = tostring(obj.key or "") end
     end
-    -- fallback: accept query string for backward compat with admin.sh CLI
-    if key == "" then
-        key = tostring(args.key or "")
-    end
     if key == "" then
         ngx.status = 400
-        ngx.say('{"error":"Missing key in JSON body or query string"}')
+        ngx.say('{"error":"Missing key — send JSON body: {\"key\":\"sk-proxy-...\"}"}')
         return
     end
     -- Validate key format
