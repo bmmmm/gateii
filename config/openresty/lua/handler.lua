@@ -56,11 +56,17 @@ local body_str = ngx.req.get_body_data()
 if not body_str then
     local body_file = ngx.req.get_body_file()
     if body_file then
-        local f = io.open(body_file, "rb")
-        if f then
+        local f, open_err = io.open(body_file, "rb")
+        if not f then
+            ngx.log(ngx.ERR, "handler: cannot open body file: ", open_err)
+        else
             local ok, result = pcall(f.read, f, "*a")
             f:close()
-            if ok then body_str = result end
+            if not ok then
+                ngx.log(ngx.ERR, "handler: cannot read body file: ", result)
+            else
+                body_str = result
+            end
         end
     end
 end
@@ -125,6 +131,12 @@ for name, value in pairs(req_headers) do
         -- Strip CRLF to prevent header injection into upstream request
         if type(value) == "string" then
             upstream_headers[lower] = value:gsub("[\r\n]", "")
+        elseif type(value) == "table" then
+            local cleaned = {}
+            for i, v in ipairs(value) do
+                cleaned[i] = tostring(v):gsub("[\r\n]", "")
+            end
+            upstream_headers[lower] = cleaned
         end
     end
 end
