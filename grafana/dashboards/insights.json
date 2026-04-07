@@ -15,75 +15,12 @@
   },
   "panels": [
     {
-      "id": 1,
-      "title": "Activity",
-      "description": "Prompt density over time \u2014 darker cells = more activity",
-      "type": "heatmap",
-      "gridPos": {
-        "x": 0,
-        "y": 0,
-        "w": 24,
-        "h": 8
-      },
-      "datasource": {
-        "type": "prometheus"
-      },
-      "targets": [
-        {
-          "datasource": {
-            "type": "prometheus"
-          },
-          "expr": "sum(increase(gateii_requests_total[$__interval]))",
-          "legendFormat": "Prompts",
-          "format": "heatmap"
-        }
-      ],
-      "fieldConfig": {
-        "defaults": {
-          "custom": {
-            "scaleDistribution": {
-              "type": "linear"
-            }
-          }
-        }
-      },
-      "options": {
-        "calculate": true,
-        "calculation": {
-          "xBuckets": {
-            "mode": "size"
-          },
-          "yBuckets": {
-            "mode": "count",
-            "value": "10"
-          }
-        },
-        "color": {
-          "mode": "scheme",
-          "scheme": "Greens",
-          "steps": 128
-        },
-        "cellGap": 2,
-        "filterValues": {
-          "le": 0
-        },
-        "tooltip": {
-          "show": true,
-          "yHistogram": false
-        },
-        "yAxis": {
-          "unit": "short",
-          "decimals": 0
-        }
-      }
-    },
-    {
       "id": 2,
       "title": "Prompts (24h)",
       "type": "stat",
       "gridPos": {
         "x": 0,
-        "y": 8,
+        "y": 0,
         "w": 6,
         "h": 4
       },
@@ -137,7 +74,7 @@
       "type": "stat",
       "gridPos": {
         "x": 6,
-        "y": 8,
+        "y": 0,
         "w": 6,
         "h": 4
       },
@@ -199,7 +136,7 @@
       "type": "stat",
       "gridPos": {
         "x": 12,
-        "y": 8,
+        "y": 0,
         "w": 6,
         "h": 4
       },
@@ -261,7 +198,7 @@
       "type": "stat",
       "gridPos": {
         "x": 18,
-        "y": 8,
+        "y": 0,
         "w": 6,
         "h": 4
       },
@@ -327,7 +264,7 @@
       "type": "timeseries",
       "gridPos": {
         "x": 0,
-        "y": 12,
+        "y": 4,
         "w": 12,
         "h": 8
       },
@@ -504,7 +441,7 @@
       "type": "timeseries",
       "gridPos": {
         "x": 12,
-        "y": 12,
+        "y": 4,
         "w": 12,
         "h": 8
       },
@@ -571,7 +508,7 @@
       "type": "stat",
       "gridPos": {
         "x": 0,
-        "y": 20,
+        "y": 12,
         "w": 8,
         "h": 4
       },
@@ -633,7 +570,7 @@
       "type": "stat",
       "gridPos": {
         "x": 8,
-        "y": 20,
+        "y": 12,
         "w": 8,
         "h": 4
       },
@@ -688,7 +625,7 @@
       "type": "stat",
       "gridPos": {
         "x": 16,
-        "y": 20,
+        "y": 12,
         "w": 8,
         "h": 4
       },
@@ -742,7 +679,7 @@
       "type": "stat",
       "gridPos": {
         "x": 0,
-        "y": 24,
+        "y": 16,
         "w": 8,
         "h": 4
       },
@@ -802,7 +739,7 @@
       "type": "stat",
       "gridPos": {
         "x": 8,
-        "y": 24,
+        "y": 16,
         "w": 8,
         "h": 4
       },
@@ -862,7 +799,7 @@
       "type": "bargauge",
       "gridPos": {
         "x": 16,
-        "y": 24,
+        "y": 16,
         "w": 8,
         "h": 4
       },
