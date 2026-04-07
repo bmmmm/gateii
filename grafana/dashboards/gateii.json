@@ -87,7 +87,7 @@
           "datasource": {
             "type": "prometheus"
           },
-          "expr": "sum(increase(gateii_tokens_total[24h]))",
+          "expr": "sum(increase(gateii_tokens_total{type=~\"input|output\"}[24h]))",
           "legendFormat": "Tokens",
           "instant": true,
           "refId": "A"
@@ -271,7 +271,7 @@
           "datasource": {
             "type": "prometheus"
           },
-          "expr": "sum by (model) (rate(gateii_tokens_total[5m]))",
+          "expr": "sum by (model) (rate(gateii_tokens_total{type=~\"input|output\"}[5m]))",
           "legendFormat": "{{model}}",
           "refId": "A"
         }
@@ -449,7 +449,7 @@
           "datasource": {
             "type": "prometheus"
           },
-          "expr": "sum by (model) (increase(gateii_tokens_total[24h]))",
+          "expr": "sum by (model) (increase(gateii_tokens_total{type=~\"input|output\"}[24h]))",
           "legendFormat": "{{model}}",
           "instant": true,
           "refId": "A"
@@ -640,7 +640,7 @@
           "datasource": {
             "type": "prometheus"
           },
-          "expr": "sum by (model) (increase(gateii_tokens_total[$__range]))",
+          "expr": "sum by (model) (increase(gateii_tokens_total{type=~\"input|output\"}[$__range]))",
           "legendFormat": "{{model}}",
           "instant": true,
           "refId": "A"
@@ -831,7 +831,7 @@
           "datasource": {
             "type": "prometheus"
           },
-          "expr": "sum by (user) (increase(gateii_tokens_total[24h]))",
+          "expr": "sum by (user) (increase(gateii_tokens_total{type=~\"input|output\"}[24h]))",
           "legendFormat": "{{user}}",
           "instant": true,
           "refId": "A"
