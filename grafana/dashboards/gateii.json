@@ -966,6 +966,50 @@
           "refId": "A"
         }
       ]
+    },
+    {
+      "id": 18,
+      "title": "Rate Limit Window",
+      "type": "timeseries",
+      "gridPos": {"x": 0, "y": 68, "w": 24, "h": 8},
+      "datasource": {"type": "prometheus"},
+      "fieldConfig": {
+        "defaults": {"color": {"mode": "palette-classic"}},
+        "overrides": [
+          {
+            "matcher": {"id": "byName", "options": "Tokens remaining"},
+            "properties": [
+              {"id": "color", "value": {"fixedColor": "#73bf69", "mode": "fixed"}},
+              {"id": "custom.fillOpacity", "value": 15}
+            ]
+          },
+          {
+            "matcher": {"id": "byName", "options": "Tokens expired (wasted)"},
+            "properties": [
+              {"id": "color", "value": {"fixedColor": "#ff9830", "mode": "fixed"}},
+              {"id": "custom.lineWidth", "value": 2}
+            ]
+          }
+        ]
+      },
+      "options": {
+        "tooltip": {"mode": "multi"},
+        "legend": {"displayMode": "table", "placement": "bottom"}
+      },
+      "targets": [
+        {
+          "datasource": {"type": "prometheus"},
+          "expr": "gateii_rate_limit_tokens_remaining",
+          "legendFormat": "Tokens remaining",
+          "refId": "A"
+        },
+        {
+          "datasource": {"type": "prometheus"},
+          "expr": "gateii_rate_limit_tokens_expired",
+          "legendFormat": "Tokens expired (wasted)",
+          "refId": "B"
+        }
+      ]
     }
   ]
 }
