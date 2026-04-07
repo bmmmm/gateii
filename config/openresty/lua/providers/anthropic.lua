@@ -19,6 +19,30 @@ function _M.build_headers(upstream_key, auth_type)
     return headers
 end
 
+-- Returns: input_tokens, output_tokens, stop_reason, cache_creation, cache_read (from SSE body)
+function _M.extract_tokens_streaming(body)
+    local input_tokens, output_tokens, stop_reason, cache_creation, cache_read = 0, 0, nil, 0, 0
+    local data = body:match("event: message_start\r?\ndata: ([^\r\n]+)")
+    if data then
+        local obj = cjson.decode(data)
+        if obj and obj.message and obj.message.usage then
+            local u = obj.message.usage
+            input_tokens   = u.input_tokens or 0
+            cache_creation = u.cache_creation_input_tokens or 0
+            cache_read     = u.cache_read_input_tokens or 0
+        end
+    end
+    data = body:match("event: message_delta\r?\ndata: ([^\r\n]+)")
+    if data then
+        local obj = cjson.decode(data)
+        if obj then
+            if obj.usage then output_tokens = obj.usage.output_tokens or 0 end
+            if obj.delta then stop_reason = obj.delta.stop_reason end
+        end
+    end
+    return input_tokens, output_tokens, stop_reason, cache_creation, cache_read
+end
+
 -- Returns: input_tokens, output_tokens, stop_reason, cache_creation_tokens, cache_read_tokens
 function _M.extract_tokens(response_body)
     if not response_body then return 0, 0, nil, 0, 0 end
