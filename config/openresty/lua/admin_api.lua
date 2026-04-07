@@ -253,14 +253,30 @@ if uri == "/internal/admin/usage-all" and method == "GET" then
     return
 end
 
--- POST /internal/admin/addkey?user=X&key=sk-proxy-...
+-- POST /internal/admin/addkey?user=X  body: {"key":"sk-proxy-..."}
 if uri == "/internal/admin/addkey" and method == "POST" then
+    ngx.req.read_body()
     local args = ngx.req.get_uri_args()
     local user = sanitize(args.user or "")
-    local key = tostring(args.key or "")
-    if user == "" or key == "" then
+    if user == "" then
         ngx.status = 400
-        ngx.say('{"error":"Missing user or key parameter"}')
+        ngx.say('{"error":"Missing user parameter"}')
+        return
+    end
+
+    local body = ngx.req.get_body_data()
+    local key = ""
+    if body then
+        local obj = cjson.decode(body)
+        if obj then key = tostring(obj.key or "") end
+    end
+    -- fallback: accept query string for backward compat with admin.sh CLI
+    if key == "" then
+        key = tostring(args.key or "")
+    end
+    if key == "" then
+        ngx.status = 400
+        ngx.say('{"error":"Missing key in JSON body or query string"}')
         return
     end
     -- Validate key format
