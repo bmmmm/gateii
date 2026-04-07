@@ -223,12 +223,18 @@ case "$SUBCMD" in
 
     case "$TARGET" in
       local)
-        # Safety: check proxy is reachable before switching
-        if ! curl -sf --max-time 2 "$PROXY/health" >/dev/null 2>&1; then
-          echo -e "${RED}Proxy not reachable at $PROXY — start it first:${NC}" >&2
-          echo -e "  ${DIM}cd $PROJECT_DIR && docker compose up -d${NC}" >&2
-          exit 1
-        fi
+        # Safety: check proxy is reachable with retries (10 attempts, 2s between each)
+        local attempts=0
+        until curl -sf --max-time 2 "$PROXY/health" >/dev/null 2>&1; do
+          attempts=$((attempts + 1))
+          if [ $attempts -ge 10 ]; then
+            echo -e "  ${RED}✗${NC} Proxy not reachable after 20s — start it first:" >&2
+            echo -e "  ${DIM}  DOCKER_CONTEXT=colima docker compose up -d${NC}" >&2
+            exit 1
+          fi
+          echo -e "  ${DIM}  Waiting for proxy... (${attempts}/10)${NC}"
+          sleep 2
+        done
         TMP="${CLAUDE_SETTINGS}.tmp"
         jq --arg url "$PROXY" '.env //= {} | .env.ANTHROPIC_BASE_URL = $url' \
           "$CLAUDE_SETTINGS" > "$TMP" && mv "$TMP" "$CLAUDE_SETTINGS"
