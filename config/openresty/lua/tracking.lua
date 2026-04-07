@@ -73,4 +73,23 @@ function _M.set_rate_limit_tokens_at_hit(user, model, limit_type, tokens)
     counters:set(key, tokens)
 end
 
+-- Store current remaining tokens for the rate limit window
+function _M.set_rate_limit_remaining(remaining)
+    counters:set("ratelimit_remaining", remaining)
+end
+
+-- Store the reset timestamp string for change detection
+function _M.get_rate_limit_reset()
+    return counters:get("ratelimit_reset_ts")
+end
+
+function _M.set_rate_limit_reset(ts)
+    counters:set("ratelimit_reset_ts", ts)
+end
+
+-- Record tokens that expired (window reset without hitting limit)
+function _M.set_rate_limit_tokens_expired(tokens)
+    counters:set("ratelimit_tokens_expired", tokens)
+end
+
 return _M
