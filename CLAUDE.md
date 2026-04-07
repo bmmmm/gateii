@@ -91,6 +91,10 @@ Each provider in `config/openresty/lua/providers/` must export:
 - `_M.build_headers(upstream_key, auth_type)` — returns header table
 - `_M.extract_tokens(body)` — returns `input_tokens, output_tokens, stop_reason`
 
+Optional fields:
+- `_M.extract_tokens_streaming(body)` — for streaming SSE token parsing. If absent, streaming token counts are 0. Returns: `input_tokens, output_tokens, stop_reason, cache_creation, cache_read`
+- `_M.stream_options_usage` — optional boolean flag. If `true`, handler.lua injects `stream_options: {include_usage: true}` into the upstream request (needed for OpenAI-format providers to return usage in streaming responses)
+
 ## Testing
 
 ```bash
