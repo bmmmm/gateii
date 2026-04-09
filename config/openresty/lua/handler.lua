@@ -231,7 +231,7 @@ if not parsed_uri then
     return
 end
 
-local scheme, host, port, path, query = unpack(parsed_uri)
+local scheme, host, port, path = unpack(parsed_uri)
 local ok, conn_err = httpc:connect({
     scheme          = scheme,
     host            = host,
@@ -250,7 +250,7 @@ if not ok then
     return
 end
 
-local req_path = (query and query ~= "") and (path .. "?" .. query) or path
+local req_path = path
 local res, req_err = httpc:request({
     method  = ngx.var.request_method,
     path    = req_path,
