@@ -9,6 +9,7 @@
       "cache_write_multiplier": 1.25,
       "cache_read_multiplier": 0.1,
       "tokens_window_limit": 200000,
+      "window_seconds": 18000,
       "models": [
         { "pattern": "opus",   "name": "Claude Opus 4",   "input": 5.0,  "output": 25.0 },
         { "pattern": "sonnet", "name": "Claude Sonnet 4",  "input": 3.0,  "output": 15.0 },

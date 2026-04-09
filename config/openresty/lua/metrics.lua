@@ -298,6 +298,46 @@ if tokens_window_limit ~= nil then
     add(string.format("gateii_rate_limit_tokens_max %d", tokens_window_limit))
 end
 
+-- Utilization fractions from anthropic-ratelimit-unified-* headers
+local rl_5h_util = counters:get("ratelimit_5h_utilization")
+local rl_7d_util = counters:get("ratelimit_7d_utilization")
+
+add("# HELP gateii_rate_limit_5h_utilization Fraction of 5h token window consumed (0.0-1.0, from unified headers)")
+add("# TYPE gateii_rate_limit_5h_utilization gauge")
+if rl_5h_util ~= nil then
+    add(string.format("gateii_rate_limit_5h_utilization %.4f", rl_5h_util))
+end
+
+add("# HELP gateii_rate_limit_7d_utilization Fraction of 7-day token window consumed (0.0-1.0, from unified headers)")
+add("# TYPE gateii_rate_limit_7d_utilization gauge")
+if rl_7d_util ~= nil then
+    add(string.format("gateii_rate_limit_7d_utilization %.4f", rl_7d_util))
+end
+
+-- 7d reset countdown
+local rl_7d_reset_ts = counters:get("ratelimit_7d_reset_ts")
+add("# HELP gateii_rate_limit_7d_seconds_until_reset Seconds until the 7-day token window resets")
+add("# TYPE gateii_rate_limit_7d_seconds_until_reset gauge")
+if rl_7d_reset_ts ~= nil then
+    local y7, mo7, d7, h7, mi7, s7 = rl_7d_reset_ts:match("^(%d+)-(%d+)-(%d+)T(%d+):(%d+):(%d+)")
+    if y7 then
+        local reset7_unix = os.time({
+            year=tonumber(y7), month=tonumber(mo7), day=tonumber(d7),
+            hour=tonumber(h7), min=tonumber(mi7), sec=tonumber(s7),
+        })
+        add(string.format("gateii_rate_limit_7d_seconds_until_reset %d",
+            math.max(0, reset7_unix - ngx.time())))
+    end
+end
+
+-- Fallback capacity fraction (extra tokens available after primary 5h window is exhausted)
+local rl_fallback_pct = counters:get("ratelimit_fallback_pct")
+add("# HELP gateii_rate_limit_fallback_pct Extra token capacity fraction beyond primary 5h limit (0.0-1.0)")
+add("# TYPE gateii_rate_limit_fallback_pct gauge")
+if rl_fallback_pct ~= nil then
+    add(string.format("gateii_rate_limit_fallback_pct %.4f", rl_fallback_pct))
+end
+
 -- Model pricing (gauge — tracks price changes over time via Prometheus)
 add("# HELP gateii_model_pricing_per_mtok Current Anthropic pricing per 1M tokens (USD)")
 add("# TYPE gateii_model_pricing_per_mtok gauge")
