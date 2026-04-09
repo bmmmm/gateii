@@ -105,4 +105,23 @@ function _M.set_rate_limit_tokens_expired(tokens)
     dict_set("ratelimit_tokens_expired", tokens)
 end
 
+-- Store utilization fractions from unified rate limit headers (0.0–1.0)
+function _M.set_rate_limit_5h_utilization(util)
+    dict_set("ratelimit_5h_utilization", util)
+end
+
+function _M.set_rate_limit_7d_utilization(util)
+    dict_set("ratelimit_7d_utilization", util)
+end
+
+-- 7d window reset RFC3339 timestamp
+function _M.set_rate_limit_7d_reset(ts)
+    dict_set("ratelimit_7d_reset_ts", ts)
+end
+
+-- Fraction of extra capacity available after primary 5h limit is consumed (e.g. 0.5 = 50% fallback)
+function _M.set_rate_limit_fallback_pct(pct)
+    dict_set("ratelimit_fallback_pct", pct)
+end
+
 return _M

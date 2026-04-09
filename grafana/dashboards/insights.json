@@ -1698,13 +1698,13 @@
     },
     {
       "id": 51,
-      "title": "Rate Limit Window — Tokens Remaining",
-      "description": "Tokens left in current Anthropic rate limit window. Drops toward 0 as you use tokens; jumps back up when window resets.",
+      "title": "5h Window — Seconds Until Reset",
+      "description": "Seconds remaining in the current Anthropic 5h token rate limit window. Sawtooth pattern: counts down from ~18000, resets on next request after window expires (or within 60s via auto-reset timer). Right axis: tokens remaining.",
       "type": "timeseries",
       "gridPos": {
         "x": 0,
         "y": 57,
-        "w": 12,
+        "w": 24,
         "h": 8
       },
       "datasource": {
@@ -1715,25 +1715,27 @@
           "datasource": {
             "type": "prometheus"
           },
-          "expr": "gateii_rate_limit_tokens_remaining",
-          "legendFormat": "Tokens remaining",
+          "expr": "gateii_rate_limit_seconds_until_reset",
+          "legendFormat": "Seconds until reset",
           "refId": "A"
         },
         {
           "datasource": {
             "type": "prometheus"
           },
-          "expr": "gateii_rate_limit_tokens_expired",
-          "legendFormat": "Tokens wasted on reset",
+          "expr": "gateii_rate_limit_tokens_remaining",
+          "legendFormat": "Tokens remaining",
           "refId": "B"
         }
       ],
       "fieldConfig": {
         "defaults": {
+          "unit": "s",
           "custom": {
             "lineWidth": 2,
-            "fillOpacity": 15,
-            "spanNulls": true
+            "fillOpacity": 10,
+            "spanNulls": false,
+            "lineInterpolation": "stepAfter"
           },
           "color": {
             "mode": "palette-classic"
@@ -1747,38 +1749,38 @@
             },
             "properties": [
               {
+                "id": "unit",
+                "value": "short"
+              },
+              {
+                "id": "decimals",
+                "value": 0
+              },
+              {
+                "id": "custom.axisPlacement",
+                "value": "right"
+              },
+              {
                 "id": "color",
                 "value": {
                   "fixedColor": "#73bf69",
                   "mode": "fixed"
                 }
-              },
-              {
-                "id": "custom.fillOpacity",
-                "value": 20
               }
             ]
           },
           {
             "matcher": {
               "id": "byName",
-              "options": "Tokens wasted on reset"
+              "options": "Seconds until reset"
             },
             "properties": [
               {
                 "id": "color",
                 "value": {
-                  "fixedColor": "#ff9830",
+                  "fixedColor": "#5b9aff",
                   "mode": "fixed"
                 }
-              },
-              {
-                "id": "custom.drawStyle",
-                "value": "bars"
-              },
-              {
-                "id": "custom.fillOpacity",
-                "value": 60
               }
             ]
           }
@@ -1796,204 +1798,12 @@
       }
     },
     {
-      "id": 52,
-      "title": "Rate Limit Events — Wait Time",
-      "description": "Seconds you had to wait after hitting 5h or weekly token limit. Gauge = last recorded wait time per limit type.",
-      "type": "timeseries",
-      "gridPos": {
-        "x": 12,
-        "y": 57,
-        "w": 12,
-        "h": 8
-      },
-      "datasource": {
-        "type": "prometheus"
-      },
-      "targets": [
-        {
-          "datasource": {
-            "type": "prometheus"
-          },
-          "expr": "gateii_rate_limit_wait_seconds{limit_type=\"5h\"}",
-          "legendFormat": "5h — {{model}} ({{user}})",
-          "refId": "A"
-        },
-        {
-          "datasource": {
-            "type": "prometheus"
-          },
-          "expr": "gateii_rate_limit_wait_seconds{limit_type=\"weekly\"}",
-          "legendFormat": "weekly — {{model}} ({{user}})",
-          "refId": "B"
-        }
-      ],
-      "fieldConfig": {
-        "defaults": {
-          "unit": "s",
-          "custom": {
-            "lineWidth": 0,
-            "fillOpacity": 80,
-            "drawStyle": "bars",
-            "barMaxWidth": 16,
-            "spanNulls": false
-          },
-          "color": {
-            "mode": "palette-classic"
-          }
-        },
-        "overrides": [
-          {
-            "matcher": {
-              "id": "byRegexp",
-              "options": "/5h/i"
-            },
-            "properties": [
-              {
-                "id": "color",
-                "value": {
-                  "fixedColor": "#ff9830",
-                  "mode": "fixed"
-                }
-              }
-            ]
-          },
-          {
-            "matcher": {
-              "id": "byRegexp",
-              "options": "/weekly/i"
-            },
-            "properties": [
-              {
-                "id": "color",
-                "value": {
-                  "fixedColor": "#f2495c",
-                  "mode": "fixed"
-                }
-              }
-            ]
-          }
-        ]
-      },
-      "options": {
-        "tooltip": {
-          "mode": "multi",
-          "sort": "desc"
-        },
-        "legend": {
-          "displayMode": "table",
-          "placement": "bottom",
-          "calcs": [
-            "max",
-            "lastNotNull"
-          ]
-        }
-      }
-    },
-    {
-      "id": 53,
-      "title": "Tokens at Rate Limit Hit",
-      "description": "Cumulative tokens (input + output + cache) consumed by the time the rate limit was triggered.",
-      "type": "bargauge",
-      "gridPos": {
-        "x": 0,
-        "y": 65,
-        "w": 24,
-        "h": 6
-      },
-      "datasource": {
-        "type": "prometheus"
-      },
-      "targets": [
-        {
-          "datasource": {
-            "type": "prometheus"
-          },
-          "expr": "gateii_rate_limit_tokens_at_hit",
-          "legendFormat": "{{user}} — {{model}} ({{limit_type}})",
-          "instant": true,
-          "refId": "A"
-        }
-      ],
-      "fieldConfig": {
-        "defaults": {
-          "unit": "short",
-          "decimals": 0,
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "green",
-                "value": null
-              }
-            ]
-          }
-        },
-        "overrides": [
-          {
-            "matcher": {
-              "id": "byRegexp",
-              "options": "/sonnet/i"
-            },
-            "properties": [
-              {
-                "id": "color",
-                "value": {
-                  "fixedColor": "#33ff66",
-                  "mode": "fixed"
-                }
-              }
-            ]
-          },
-          {
-            "matcher": {
-              "id": "byRegexp",
-              "options": "/opus/i"
-            },
-            "properties": [
-              {
-                "id": "color",
-                "value": {
-                  "fixedColor": "#a78bfa",
-                  "mode": "fixed"
-                }
-              }
-            ]
-          },
-          {
-            "matcher": {
-              "id": "byRegexp",
-              "options": "/haiku/i"
-            },
-            "properties": [
-              {
-                "id": "color",
-                "value": {
-                  "fixedColor": "#5b9aff",
-                  "mode": "fixed"
-                }
-              }
-            ]
-          }
-        ]
-      },
-      "options": {
-        "orientation": "horizontal",
-        "reduceOptions": {
-          "calcs": [
-            "lastNotNull"
-          ]
-        },
-        "displayMode": "gradient",
-        "valueMode": "color"
-      }
-    },
-    {
       "id": 60,
       "title": "Git (requires git-tracking plugin)",
       "type": "row",
       "gridPos": {
         "x": 0,
-        "y": 71,
+        "y": 65,
         "w": 24,
         "h": 1
       },
@@ -2006,7 +1816,7 @@
           "type": "stat",
           "gridPos": {
             "x": 0,
-            "y": 72,
+            "y": 66,
             "w": 8,
             "h": 4
           },
@@ -2066,7 +1876,7 @@
           "type": "stat",
           "gridPos": {
             "x": 8,
-            "y": 72,
+            "y": 66,
             "w": 8,
             "h": 4
           },
@@ -2127,7 +1937,7 @@
           "type": "bargauge",
           "gridPos": {
             "x": 16,
-            "y": 72,
+            "y": 66,
             "w": 8,
             "h": 4
           },

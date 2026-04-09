@@ -4,41 +4,64 @@ local http     = require "resty.http"
 local providers = require "providers.init"
 local tracking  = require "tracking"
 
-local function parse_rfc3339_offset(s)
-    -- Returns seconds until the given RFC3339 timestamp, relative to now.
-    -- Handles "2026-04-07T15:30:00Z" format (UTC only, ignores timezone offset).
-    if not s then return nil end
-    local y, mo, d, h, mi, se = s:match("(%d+)-(%d+)-(%d+)T(%d+):(%d+):(%d+)")
-    if not y then return nil end
-    local months = {0,31,59,90,120,151,181,212,243,273,304,334}
-    local days = (tonumber(y) - 1970) * 365 + math.floor((tonumber(y) - 1969) / 4)
-              + (months[tonumber(mo)] or 0) + tonumber(d) - 1
-    local epoch = days * 86400 + tonumber(h) * 3600 + tonumber(mi) * 60 + tonumber(se)
-    return epoch - ngx.time()
-end
-
 local function track_rl_window(res)
-    local rl_remaining = tonumber(res.headers and res.headers["anthropic-ratelimit-tokens-remaining"])
-    local rl_reset     = res.headers and res.headers["anthropic-ratelimit-tokens-reset"]
-    if rl_remaining == nil then return end
-    local prev_reset = tracking.get_rate_limit_reset()
-    if prev_reset and rl_reset and prev_reset ~= rl_reset then
-        local old_remaining = tonumber(ngx.shared.counters:get("ratelimit_remaining")) or 0
-        tracking.set_rate_limit_tokens_expired(old_remaining)
-        ngx.log(ngx.INFO, "rate limit window reset: ", old_remaining, " tokens expired")
+    if not res.headers then return end
+    local h = res.headers
+    -- Anthropic unified rate limit headers (replaced old anthropic-ratelimit-tokens-* headers)
+    local util_5h  = tonumber(h["anthropic-ratelimit-unified-5h-utilization"])
+    local reset_5h = tonumber(h["anthropic-ratelimit-unified-5h-reset"])  -- Unix timestamp
+    local util_7d  = tonumber(h["anthropic-ratelimit-unified-7d-utilization"])
+    if util_5h == nil or reset_5h == nil then return end
+
+    -- Convert Unix timestamp → RFC3339 (compatible with auto-reset timer and metrics.lua parser)
+    local reset_ts = os.date("!%Y-%m-%dT%H:%M:%SZ", reset_5h)
+
+    tracking.set_rate_limit_5h_utilization(util_5h)
+    if util_7d ~= nil then tracking.set_rate_limit_7d_utilization(util_7d) end
+
+    -- 7d window reset time (separate from 5h)
+    local reset_7d = tonumber(h["anthropic-ratelimit-unified-7d-reset"])
+    if reset_7d ~= nil then
+        tracking.set_rate_limit_7d_reset(os.date("!%Y-%m-%dT%H:%M:%SZ", reset_7d))
     end
-    if rl_reset then tracking.set_rate_limit_reset(rl_reset) end
-    tracking.set_rate_limit_remaining(rl_remaining)
+
+    -- Fallback capacity: fraction of extra tokens available after primary 5h limit is hit
+    local fallback_pct = tonumber(h["anthropic-ratelimit-unified-fallback-percentage"])
+    if fallback_pct ~= nil then
+        tracking.set_rate_limit_fallback_pct(fallback_pct)
+    end
+
+    -- Compute absolute remaining tokens using tokens_window_limit from shared dict
+    local tokens_limit = tonumber(ngx.shared.counters:get("tokens_window_limit"))
+    if tokens_limit then
+        local remaining = math.floor(tokens_limit * (1.0 - util_5h))
+        local prev_reset = tracking.get_rate_limit_reset()
+        if prev_reset and prev_reset ~= reset_ts then
+            local old_remaining = tonumber(ngx.shared.counters:get("ratelimit_remaining")) or 0
+            tracking.set_rate_limit_tokens_expired(old_remaining)
+            ngx.log(ngx.INFO, "rate limit window reset: ", old_remaining, " tokens expired")
+        end
+        tracking.set_rate_limit_remaining(remaining)
+    end
+    tracking.set_rate_limit_reset(reset_ts)
 end
 
 local function track_rl_429(res, u, m, pname)
-    local reset_header = res.headers and res.headers["anthropic-ratelimit-tokens-reset"]
+    local h = res.headers or {}
+    -- Map representative-claim to limit_type label
+    local claim = h["anthropic-ratelimit-unified-representative-claim"]
     local limit_type = "unknown"
-    if reset_header then
-        local offset = parse_rfc3339_offset(reset_header)
-        if offset then limit_type = (offset <= 21600) and "5h" or "weekly" end
+    if claim == "five_hour" then limit_type = "5h"
+    elseif claim == "7d"    then limit_type = "weekly"
     end
-    local retry_after = tonumber(res.headers and res.headers["retry-after"]) or 0
+    -- Reset Unix timestamp → seconds to wait; fall back to retry-after
+    local reset_unix = tonumber(h["anthropic-ratelimit-unified-reset"])
+    local retry_after
+    if reset_unix then
+        retry_after = math.max(0, reset_unix - ngx.time())
+    else
+        retry_after = tonumber(h["retry-after"]) or 0
+    end
     local hit_tokens = 0
     local cd = ngx.shared.counters
     if cd and u and m then
