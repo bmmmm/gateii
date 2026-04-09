@@ -224,7 +224,7 @@ case "$SUBCMD" in
     case "$TARGET" in
       local)
         # Safety: check proxy is reachable with retries (10 attempts, 2s between each)
-        local attempts=0
+        attempts=0
         until curl -sf --max-time 2 "$PROXY/health" >/dev/null 2>&1; do
           attempts=$((attempts + 1))
           if [ $attempts -ge 10 ]; then

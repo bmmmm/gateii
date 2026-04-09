@@ -4,10 +4,16 @@ local _M = {}
 
 -- Build upstream headers for OpenAI-compatible APIs.
 -- auth_type is accepted but ignored — OpenAI-compatible APIs always use Bearer.
+-- In passthrough mode upstream_key is the client's key; in apikey mode falls
+-- back to OPENAI_API_KEY / OPENROUTER_API_KEY from the environment.
 function _M.build_headers(upstream_key, auth_type)
+    local key = upstream_key
+             or os.getenv("OPENAI_API_KEY")
+             or os.getenv("OPENROUTER_API_KEY")
+             or ""
     return {
         ["Content-Type"]  = "application/json",
-        ["Authorization"] = "Bearer " .. (upstream_key or ""),
+        ["Authorization"] = "Bearer " .. key,
     }
 end
 

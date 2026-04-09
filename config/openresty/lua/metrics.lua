@@ -276,14 +276,11 @@ if rl_reset_ts ~= nil then
     if y then
         mo, d, h, mi, s = tonumber(mo), tonumber(d), tonumber(h), tonumber(mi), tonumber(s)
         if mo >= 1 and mo <= 12 and d >= 1 and d <= 31 and h <= 23 and mi <= 59 and s <= 60 then
-            local reset_unix = os.time({
-                year  = tonumber(y),
-                month = mo,
-                day   = d,
-                hour  = h,
-                min   = mi,
-                sec   = s,
-            })
+            local mdays = {0,31,59,90,120,151,181,212,243,273,304,334}
+            local days_epoch = (tonumber(y) - 1970) * 365
+                + math.floor((tonumber(y) - 1969) / 4)
+                + (mdays[mo] or 0) + d - 1
+            local reset_unix = days_epoch * 86400 + h * 3600 + mi * 60 + s
             local seconds_remaining = math.max(0, reset_unix - ngx.time())
             add(string.format("gateii_rate_limit_seconds_until_reset %d", seconds_remaining))
         else
@@ -321,10 +318,13 @@ add("# TYPE gateii_rate_limit_7d_seconds_until_reset gauge")
 if rl_7d_reset_ts ~= nil then
     local y7, mo7, d7, h7, mi7, s7 = rl_7d_reset_ts:match("^(%d+)-(%d+)-(%d+)T(%d+):(%d+):(%d+)")
     if y7 then
-        local reset7_unix = os.time({
-            year=tonumber(y7), month=tonumber(mo7), day=tonumber(d7),
-            hour=tonumber(h7), min=tonumber(mi7), sec=tonumber(s7),
-        })
+        local mdays7 = {0,31,59,90,120,151,181,212,243,273,304,334}
+        local y7n, mo7n, d7n = tonumber(y7), tonumber(mo7), tonumber(d7)
+        local h7n, mi7n, s7n = tonumber(h7), tonumber(mi7), tonumber(s7)
+        local days7 = (y7n - 1970) * 365
+            + math.floor((y7n - 1969) / 4)
+            + (mdays7[mo7n] or 0) + d7n - 1
+        local reset7_unix = days7 * 86400 + h7n * 3600 + mi7n * 60 + s7n
         add(string.format("gateii_rate_limit_7d_seconds_until_reset %d",
             math.max(0, reset7_unix - ngx.time())))
     end
