@@ -1687,114 +1687,234 @@
       "id": 50,
       "title": "Rate Limits",
       "type": "row",
-      "gridPos": {
-        "x": 0,
-        "y": 56,
-        "w": 24,
-        "h": 1
-      },
+      "gridPos": { "x": 0, "y": 56, "w": 24, "h": 1 },
       "collapsed": false,
       "panels": []
     },
     {
       "id": 51,
-      "title": "5h Window — Seconds Until Reset",
-      "description": "Seconds remaining in the current Anthropic 5h token rate limit window. Sawtooth pattern: counts down from ~18000, resets on next request after window expires (or within 60s via auto-reset timer). Right axis: tokens remaining.",
-      "type": "timeseries",
-      "gridPos": {
-        "x": 0,
-        "y": 57,
-        "w": 24,
-        "h": 8
-      },
-      "datasource": {
-        "type": "prometheus"
-      },
+      "title": "5h Window Used",
+      "description": "Fraction of the Anthropic 5h token window consumed. Resets every ~5 hours.",
+      "type": "gauge",
+      "gridPos": { "x": 0, "y": 57, "w": 6, "h": 5 },
+      "datasource": { "type": "prometheus" },
       "targets": [
         {
-          "datasource": {
-            "type": "prometheus"
-          },
-          "expr": "gateii_rate_limit_seconds_until_reset",
-          "legendFormat": "Seconds until reset",
+          "datasource": { "type": "prometheus" },
+          "expr": "gateii_rate_limit_5h_utilization * 100",
+          "legendFormat": "5h Used %",
+          "instant": true,
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "decimals": 1,
+          "min": 0,
+          "max": 100,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 60 },
+              { "color": "red", "value": 85 }
+            ]
+          }
+        }
+      },
+      "options": {
+        "reduceOptions": { "calcs": ["lastNotNull"] },
+        "orientation": "auto",
+        "showThresholdLabels": false,
+        "showThresholdMarkers": true
+      }
+    },
+    {
+      "id": 52,
+      "title": "7d Window Used",
+      "description": "Fraction of the Anthropic 7-day token window consumed.",
+      "type": "gauge",
+      "gridPos": { "x": 6, "y": 57, "w": 6, "h": 5 },
+      "datasource": { "type": "prometheus" },
+      "targets": [
+        {
+          "datasource": { "type": "prometheus" },
+          "expr": "gateii_rate_limit_7d_utilization * 100",
+          "legendFormat": "7d Used %",
+          "instant": true,
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "decimals": 1,
+          "min": 0,
+          "max": 100,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 60 },
+              { "color": "red", "value": 85 }
+            ]
+          }
+        }
+      },
+      "options": {
+        "reduceOptions": { "calcs": ["lastNotNull"] },
+        "orientation": "auto",
+        "showThresholdLabels": false,
+        "showThresholdMarkers": true
+      }
+    },
+    {
+      "id": 53,
+      "title": "Tokens Remaining (5h)",
+      "description": "Absolute tokens left in current 5h window. Computed from utilization × limit.",
+      "type": "stat",
+      "gridPos": { "x": 12, "y": 57, "w": 6, "h": 5 },
+      "datasource": { "type": "prometheus" },
+      "targets": [
+        {
+          "datasource": { "type": "prometheus" },
+          "expr": "gateii_rate_limit_tokens_remaining",
+          "legendFormat": "Tokens Remaining",
+          "instant": true,
           "refId": "A"
         },
         {
-          "datasource": {
-            "type": "prometheus"
-          },
-          "expr": "gateii_rate_limit_tokens_remaining",
-          "legendFormat": "Tokens remaining",
+          "datasource": { "type": "prometheus" },
+          "expr": "gateii_rate_limit_tokens_max",
+          "legendFormat": "Max",
+          "instant": true,
           "refId": "B"
         }
       ],
       "fieldConfig": {
         "defaults": {
-          "unit": "s",
+          "unit": "short",
+          "decimals": 0,
+          "color": { "mode": "thresholds" },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "red", "value": null },
+              { "color": "yellow", "value": 50000 },
+              { "color": "green", "value": 100000 }
+            ]
+          }
+        }
+      },
+      "options": {
+        "reduceOptions": { "calcs": ["lastNotNull"] },
+        "colorMode": "value",
+        "graphMode": "none",
+        "orientation": "auto",
+        "textMode": "auto"
+      }
+    },
+    {
+      "id": 54,
+      "title": "Fallback Buffer",
+      "description": "Extra token capacity available after primary 5h limit is exhausted (anthropic-ratelimit-unified-fallback-percentage).",
+      "type": "stat",
+      "gridPos": { "x": 18, "y": 57, "w": 6, "h": 5 },
+      "datasource": { "type": "prometheus" },
+      "targets": [
+        {
+          "datasource": { "type": "prometheus" },
+          "expr": "gateii_rate_limit_fallback_pct * 100",
+          "legendFormat": "Fallback %",
+          "instant": true,
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "decimals": 0,
+          "color": { "mode": "thresholds" },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "red", "value": null },
+              { "color": "yellow", "value": 10 },
+              { "color": "green", "value": 25 }
+            ]
+          }
+        }
+      },
+      "options": {
+        "reduceOptions": { "calcs": ["lastNotNull"] },
+        "colorMode": "background",
+        "graphMode": "none",
+        "orientation": "auto",
+        "textMode": "auto"
+      }
+    },
+    {
+      "id": 55,
+      "title": "Rate Limit Utilization Over Time",
+      "description": "5h and 7d window utilization as percentage. Works at any time range — builds up historical context over time. A value near 100% means you're close to the limit.",
+      "type": "timeseries",
+      "gridPos": { "x": 0, "y": 62, "w": 24, "h": 9 },
+      "datasource": { "type": "prometheus" },
+      "targets": [
+        {
+          "datasource": { "type": "prometheus" },
+          "expr": "gateii_rate_limit_5h_utilization * 100",
+          "legendFormat": "5h Window Used %",
+          "refId": "A"
+        },
+        {
+          "datasource": { "type": "prometheus" },
+          "expr": "gateii_rate_limit_7d_utilization * 100",
+          "legendFormat": "7d Window Used %",
+          "refId": "B"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "decimals": 1,
+          "min": 0,
+          "max": 100,
           "custom": {
             "lineWidth": 2,
-            "fillOpacity": 10,
+            "fillOpacity": 15,
             "spanNulls": false,
             "lineInterpolation": "stepAfter"
           },
-          "color": {
-            "mode": "palette-classic"
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 60 },
+              { "color": "red", "value": 85 }
+            ]
           }
         },
         "overrides": [
           {
-            "matcher": {
-              "id": "byName",
-              "options": "Tokens remaining"
-            },
+            "matcher": { "id": "byName", "options": "5h Window Used %" },
             "properties": [
-              {
-                "id": "unit",
-                "value": "short"
-              },
-              {
-                "id": "decimals",
-                "value": 0
-              },
-              {
-                "id": "custom.axisPlacement",
-                "value": "right"
-              },
-              {
-                "id": "color",
-                "value": {
-                  "fixedColor": "#73bf69",
-                  "mode": "fixed"
-                }
-              }
+              { "id": "color", "value": { "fixedColor": "#5b9aff", "mode": "fixed" } }
             ]
           },
           {
-            "matcher": {
-              "id": "byName",
-              "options": "Seconds until reset"
-            },
+            "matcher": { "id": "byName", "options": "7d Window Used %" },
             "properties": [
-              {
-                "id": "color",
-                "value": {
-                  "fixedColor": "#5b9aff",
-                  "mode": "fixed"
-                }
-              }
+              { "id": "color", "value": { "fixedColor": "#a78bfa", "mode": "fixed" } },
+              { "id": "custom.lineStyle", "value": { "fill": "dash", "dash": [6, 4] } }
             ]
           }
         ]
       },
       "options": {
-        "tooltip": {
-          "mode": "multi",
-          "sort": "desc"
-        },
-        "legend": {
-          "displayMode": "list",
-          "placement": "bottom"
-        }
+        "tooltip": { "mode": "multi", "sort": "desc" },
+        "legend": { "displayMode": "list", "placement": "bottom" }
       }
     },
     {
@@ -1803,7 +1923,7 @@
       "type": "row",
       "gridPos": {
         "x": 0,
-        "y": 65,
+        "y": 71,
         "w": 24,
         "h": 1
       },
@@ -1816,7 +1936,7 @@
           "type": "stat",
           "gridPos": {
             "x": 0,
-            "y": 66,
+            "y": 72,
             "w": 8,
             "h": 4
           },
@@ -1876,7 +1996,7 @@
           "type": "stat",
           "gridPos": {
             "x": 8,
-            "y": 66,
+            "y": 72,
             "w": 8,
             "h": 4
           },
@@ -1937,7 +2057,7 @@
           "type": "bargauge",
           "gridPos": {
             "x": 16,
-            "y": 66,
+            "y": 72,
             "w": 8,
             "h": 4
           },
