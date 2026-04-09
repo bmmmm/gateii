@@ -8,6 +8,20 @@ local function sanitize(s)
     return (tostring(s or "unknown"):gsub("[:|%s]", "_"):sub(1, 64))
 end
 
+-- Today's UTC date — module-level cache refreshed at most once per 60s.
+-- Avoids a C-level os.date() call on every request.
+local _today    = ""
+local _today_ts = 0
+
+local function get_today()
+    local now = ngx.time()
+    if now - _today_ts >= 60 then
+        _today    = os.date("!%Y-%m-%d", now)
+        _today_ts = now
+    end
+    return _today
+end
+
 -- record(user, provider, model, input_tokens, output_tokens, opts)
 -- opts = { latency_ms=N, status=N, stop_reason="end_turn"|...,
 --          cache_creation=N, cache_read=N }
@@ -52,7 +66,7 @@ function _M.record(user, provider, model, input_tokens, output_tokens, opts)
     end
 
     -- Daily counters (for limit checks) — with TTL (25h = 90000s)
-    local today = os.date("!%Y-%m-%d")
+    local today = get_today()
     local day_prefix = "day|" .. user .. "|" .. today
     if input_tokens > 0 then
         counters:incr(day_prefix .. "|input", input_tokens, 0, 90000)

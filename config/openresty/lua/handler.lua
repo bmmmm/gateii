@@ -65,8 +65,9 @@ local function track_rl_429(res, u, m, pname)
     local hit_tokens = 0
     local cd = ngx.shared.counters
     if cd and u and m then
+        local base = u .. "|" .. pname .. "|" .. m .. "|"
         for _, t in ipairs({"input", "output", "cache_creation", "cache_read"}) do
-            local v = cd:get(u .. "|" .. pname .. "|" .. m .. "|" .. t)
+            local v = cd:get(base .. t)
             if v then hit_tokens = hit_tokens + v end
         end
     end
@@ -109,8 +110,11 @@ if not body_obj then
     return
 end
 
+-- Get request headers once — reused for both provider selection and header forwarding
+local req_headers = ngx.req.get_headers()
+
 -- Resolve provider (whitelist enforced by providers.get)
-local provider_name = ngx.req.get_headers()["X-Provider"] or "anthropic"
+local provider_name = req_headers["X-Provider"] or "anthropic"
 local provider = providers.get(provider_name)
 if not provider then
     ngx.status = 400
@@ -147,10 +151,10 @@ local upstream_headers = provider.build_headers(ngx.ctx.upstream_key, ngx.ctx.up
 -- x-stainless-* SDK telemetry headers, and user-agent to upstream.
 -- Auth headers (x-api-key, authorization) are handled by build_headers above.
 -- Use normalized lowercase keys to prevent duplicate headers with mixed casing.
-local req_headers = ngx.req.get_headers()
 for name, value in pairs(req_headers) do
     local lower = name:lower()
-    if lower:match("^anthropic%-") or lower:match("^x%-stainless%-") or lower == "user-agent" then
+    -- string.sub prefix checks avoid the regex engine for the common case
+    if lower:sub(1, 10) == "anthropic-" or lower:sub(1, 12) == "x-stainless-" or lower == "user-agent" then
         -- Strip CRLF to prevent header injection into upstream request
         if type(value) == "string" then
             upstream_headers[lower] = value:gsub("[\r\n]", "")

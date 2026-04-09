@@ -5,6 +5,9 @@ local _M = {}
 
 _M.upstream_url = "https://api.anthropic.com"
 
+-- Read once at module load time — never changes during worker lifetime
+local ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY") or ""
+
 function _M.build_headers(upstream_key, auth_type)
     local headers = {
         ["Content-Type"]      = "application/json",
@@ -14,7 +17,7 @@ function _M.build_headers(upstream_key, auth_type)
     if auth_type == "bearer" then
         headers["Authorization"] = "Bearer " .. (upstream_key or "")
     else
-        headers["x-api-key"] = upstream_key or os.getenv("ANTHROPIC_API_KEY") or ""
+        headers["x-api-key"] = upstream_key or ANTHROPIC_API_KEY
     end
     return headers
 end
