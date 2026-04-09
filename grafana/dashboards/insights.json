@@ -1696,7 +1696,7 @@
       "title": "5h Window Used",
       "description": "Fraction of the Anthropic 5h token window consumed. Resets every ~5 hours.",
       "type": "gauge",
-      "gridPos": { "x": 0, "y": 57, "w": 6, "h": 5 },
+      "gridPos": { "x": 0, "y": 57, "w": 8, "h": 5 },
       "datasource": { "type": "prometheus" },
       "targets": [
         {
@@ -1735,7 +1735,7 @@
       "title": "7d Window Used",
       "description": "Fraction of the Anthropic 7-day token window consumed.",
       "type": "gauge",
-      "gridPos": { "x": 6, "y": 57, "w": 6, "h": 5 },
+      "gridPos": { "x": 8, "y": 57, "w": 8, "h": 5 },
       "datasource": { "type": "prometheus" },
       "targets": [
         {
@@ -1774,7 +1774,7 @@
       "title": "Tokens Remaining (5h)",
       "description": "Absolute tokens left in current 5h window. Computed from utilization × limit.",
       "type": "stat",
-      "gridPos": { "x": 12, "y": 57, "w": 6, "h": 5 },
+      "gridPos": { "x": 16, "y": 57, "w": 8, "h": 5 },
       "datasource": { "type": "prometheus" },
       "targets": [
         {
@@ -1816,46 +1816,8 @@
       }
     },
     {
-      "id": 54,
-      "title": "Fallback Buffer",
-      "description": "Extra token capacity available after primary 5h limit is exhausted (anthropic-ratelimit-unified-fallback-percentage).",
-      "type": "stat",
-      "gridPos": { "x": 18, "y": 57, "w": 6, "h": 5 },
-      "datasource": { "type": "prometheus" },
-      "targets": [
-        {
-          "datasource": { "type": "prometheus" },
-          "expr": "gateii_rate_limit_fallback_pct * 100",
-          "legendFormat": "Fallback %",
-          "instant": true,
-          "refId": "A"
-        }
-      ],
-      "fieldConfig": {
-        "defaults": {
-          "unit": "percent",
-          "decimals": 0,
-          "color": { "mode": "thresholds" },
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              { "color": "red", "value": null },
-              { "color": "yellow", "value": 10 },
-              { "color": "green", "value": 25 }
-            ]
-          }
-        }
-      },
-      "options": {
-        "reduceOptions": { "calcs": ["lastNotNull"] },
-        "colorMode": "background",
-        "graphMode": "none",
-        "orientation": "auto",
-        "textMode": "auto"
-      }
-    },
-    {
       "id": 55,
+      "timeFrom": "24h",
       "title": "Rate Limit Utilization Over Time",
       "description": "5h and 7d window utilization as percentage. Works at any time range — builds up historical context over time. A value near 100% means you're close to the limit.",
       "type": "timeseries",
