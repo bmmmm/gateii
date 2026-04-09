@@ -1,10 +1,11 @@
 -- auth.lua: API key validation + rate limiting (no Redis)
-local cjson     = require "cjson.safe"
-local limit_req = require "resty.limit.req"
+local cjson        = require "cjson.safe"
+local limit_req    = require "resty.limit.req"
+local proxy_config = require "proxy_config"
 
-local auth_cache = ngx.shared.auth_cache
+local auth_cache    = ngx.shared.auth_cache
 local blocking_dict = ngx.shared.blocking
-local counters = ngx.shared.counters
+local counters      = ngx.shared.counters
 
 -- Rate limiter: 1 req/s average (= 60/min), burst of 10
 local lim, lim_err = limit_req.new("limit_req", 1, 10)
@@ -31,16 +32,6 @@ local function reject(status, message)
     return ngx.exit(status)
 end
 
--- Load keys from JSON file (apikey mode)
-local function load_keys()
-    local f = io.open("/etc/nginx/data/keys.json", "r")
-    if not f then return {} end
-    local data = f:read("*a")
-    f:close()
-    local keys = cjson.decode(data)
-    return keys or {}
-end
-
 -- 1. Extract API key — accept both Anthropic native (x-api-key) and Bearer format
 local api_key = ngx.var.http_x_api_key
 if not api_key or api_key == "" then
@@ -55,12 +46,12 @@ end
 
 -- 2. Lookup user
 -- In passthrough mode: forward the client's key directly to upstream
-local proxy_mode = os.getenv("PROXY_MODE") or "apikey"
+local proxy_mode = proxy_config.PROXY_MODE
 local user
 
 if proxy_mode == "passthrough" then
     -- Use configured name, else fall back to a generic identifier (never log key fragments)
-    user = os.getenv("PASSTHROUGH_USER") or "passthrough"
+    user = proxy_config.PASSTHROUGH_USER
     ngx.ctx.upstream_key = api_key
     -- Remember original auth format — OAuth tokens must stay as Bearer, not x-api-key
     if ngx.var.http_x_api_key and ngx.var.http_x_api_key ~= "" then
@@ -77,7 +68,7 @@ else
     end
     user = cached
     if not user then
-        local keys = load_keys()
+        local keys = proxy_config.load_keys()
         local val = keys[api_key]
         if not val or val == "" then
             auth_cache:set(api_key, false, 60)  -- negative cache: 60s
@@ -114,7 +105,7 @@ do
         if not limits then
             ngx.log(ngx.WARN, "failed to decode limits for user ", user, ": ", decode_err)
         else
-            local today = os.date("!%Y-%m-%d")
+            local today = proxy_config.get_today()
             local day_prefix = "day|" .. user .. "|" .. today
 
             if limits.tokens_per_day then

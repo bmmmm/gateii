@@ -2,15 +2,18 @@
 local cjson = require "cjson.safe"
 local _M = {}
 
+-- Read once at module load time — never changes during worker lifetime
+local OPENAI_API_KEY    = os.getenv("OPENAI_API_KEY") or ""
+local OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY") or ""
+
 -- Build upstream headers for OpenAI-compatible APIs.
 -- auth_type is accepted but ignored — OpenAI-compatible APIs always use Bearer.
 -- In passthrough mode upstream_key is the client's key; in apikey mode falls
 -- back to OPENAI_API_KEY / OPENROUTER_API_KEY from the environment.
 function _M.build_headers(upstream_key, auth_type)
     local key = upstream_key
-             or os.getenv("OPENAI_API_KEY")
-             or os.getenv("OPENROUTER_API_KEY")
-             or ""
+             or (OPENAI_API_KEY ~= "" and OPENAI_API_KEY)
+             or OPENROUTER_API_KEY
     return {
         ["Content-Type"]  = "application/json",
         ["Authorization"] = "Bearer " .. key,
