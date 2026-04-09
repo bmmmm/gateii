@@ -52,10 +52,16 @@ local function save_limits()
     end
     local tmp = LIMITS_FILE .. ".tmp"
     local f = io.open(tmp, "w")
-    if not f then return end
+    if not f then
+        ngx.log(ngx.ERR, "save_limits: cannot open ", tmp, " for writing — limits not persisted to disk")
+        return
+    end
     f:write(encoded)
     f:close()
-    os.rename(tmp, LIMITS_FILE)
+    local ok, err = os.rename(tmp, LIMITS_FILE)
+    if not ok then
+        ngx.log(ngx.ERR, "save_limits: rename failed: ", err)
+    end
 end
 
 -- POST /internal/admin/block?user=X&ttl=86400
@@ -319,6 +325,8 @@ if uri == "/internal/admin/addkey" and method == "POST" then
     wf:write(encoded)
     wf:close()
     os.rename(tmp, "/etc/nginx/data/keys.json")
+    -- Clear any negative cache entry so the new key is usable immediately
+    ngx.shared.auth_cache:delete(key)
     ngx.say(cjson.encode({ok = true, user = user}))
     return
 end
@@ -355,7 +363,7 @@ if uri == "/internal/admin/llm-prices" and method == "GET" then
     local httpc = http.new()
     httpc:set_timeouts(5000, 5000, 10000)
     local res, err = httpc:request_uri("https://www.llm-prices.com/current-v1.json", {
-        ssl_verify = false,
+        ssl_verify = true,
         headers = { ["User-Agent"] = "gateii-proxy/1.0" },
     })
     if not res then
@@ -395,7 +403,7 @@ if uri == "/internal/admin/openrouter-models" and method == "GET" then
     local httpc = http.new()
     httpc:set_timeouts(5000, 5000, 15000)
     local res, err = httpc:request_uri("https://openrouter.ai/api/v1/models?order=top-weekly&categories=programming", {
-        ssl_verify = false,
+        ssl_verify = true,
         headers = { ["User-Agent"] = "gateii-proxy/1.0", ["Accept"] = "application/json" },
     })
     if not res then
