@@ -10,6 +10,16 @@ local registry = {
     openrouter = require "providers.openrouter",
 }
 
+-- SSRF defense-in-depth: reject any provider whose upstream is not HTTPS.
+-- Fails worker startup so misconfiguration is loud, not silent.
+for name, p in pairs(registry) do
+    local url = p and p.upstream_url
+    if type(url) ~= "string" or url:sub(1, 8) ~= "https://" then
+        error("provider '" .. name .. "' has invalid upstream_url (must start with https://): "
+              .. tostring(url))
+    end
+end
+
 function _M.get(name)
     return registry[name]  -- nil if unknown
 end
