@@ -31,13 +31,14 @@ local function track_rl_window(res)
         tracking.set_rate_limit_fallback_pct(fallback_pct)
     end
 
+    local cd = ngx.shared.counters
     -- Compute absolute remaining tokens using tokens_window_limit from shared dict
-    local tokens_limit = tonumber(ngx.shared.counters:get("tokens_window_limit"))
+    local tokens_limit = tonumber(cd:get("tokens_window_limit"))
     if tokens_limit then
         local remaining = math.floor(tokens_limit * (1.0 - util_5h))
         local prev_reset = tracking.get_rate_limit_reset()
         if prev_reset and prev_reset ~= reset_ts then
-            local old_remaining = tonumber(ngx.shared.counters:get("ratelimit_remaining")) or 0
+            local old_remaining = tonumber(cd:get("ratelimit_remaining")) or 0
             tracking.set_rate_limit_tokens_expired(old_remaining)
             ngx.log(ngx.INFO, "rate limit window reset: ", old_remaining, " tokens expired")
         end
@@ -281,8 +282,13 @@ for k, v in pairs(res.headers) do
     end
 end
 
--- Accumulate chunks for SSE token parsing while streaming to client
-local chunks = {}
+-- Accumulate only what the SSE parser needs: first chunk (Anthropic message_start
+-- lives here) + a rolling tail (message_delta / OpenAI final-usage chunk). Avoids
+-- buffering the entire response body, which can be hundreds of KB on long streams.
+local TAIL_BYTES = 32 * 1024
+local first_chunk
+local tail = {}
+local tail_bytes = 0
 local had_read_err = false
 local reader = res.body_reader
 repeat
@@ -295,7 +301,16 @@ repeat
     if chunk then
         ngx.print(chunk)
         ngx.flush(true)
-        chunks[#chunks+1] = chunk
+        if not first_chunk then
+            first_chunk = chunk
+        else
+            tail[#tail+1] = chunk
+            tail_bytes = tail_bytes + #chunk
+            while tail_bytes > TAIL_BYTES and #tail > 1 do
+                tail_bytes = tail_bytes - #tail[1]
+                table.remove(tail, 1)
+            end
+        end
     end
 until not chunk
 if had_read_err then
@@ -304,12 +319,15 @@ else
     httpc:set_keepalive()
 end
 
--- Parse SSE events for token tracking — delegate to provider-specific parser
+-- Parse SSE events for token tracking — delegate to provider-specific parser.
+-- Concat first chunk with tail; middle of stream (all content deltas) is discarded
+-- since it carries no token-accounting data for any supported provider.
 local input_tokens, output_tokens, stop_reason = 0, 0, nil
 local cache_creation, cache_read = 0, 0
-if res.status == 200 and provider.extract_tokens_streaming then
+if res.status == 200 and provider.extract_tokens_streaming and first_chunk then
+    local body = #tail > 0 and (first_chunk .. table.concat(tail)) or first_chunk
     input_tokens, output_tokens, stop_reason, cache_creation, cache_read =
-        provider.extract_tokens_streaming(table.concat(chunks))
+        provider.extract_tokens_streaming(body)
 end
 
 if res.status == 200 then track_rl_window(res) end
