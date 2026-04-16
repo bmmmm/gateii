@@ -19,8 +19,11 @@ function _M.extract_tokens_streaming(body)
                         input_tokens  = obj.usage.prompt_tokens or input_tokens
                         output_tokens = obj.usage.completion_tokens or output_tokens
                     end
-                    if obj.choices and obj.choices[1] then
-                        stop_reason = obj.choices[1].finish_reason or stop_reason
+                    -- choices can be cjson.null (not a table) on some upstreams;
+                    -- type() check avoids indexing userdata.
+                    if type(obj.choices) == "table" and type(obj.choices[1]) == "table" then
+                        local fr = obj.choices[1].finish_reason
+                        if type(fr) == "string" then stop_reason = fr end
                     end
                 end
             end

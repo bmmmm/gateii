@@ -145,6 +145,7 @@ end
 local tok_lines, req_lines, lat_lines, err_lines = {}, {}, {}, {}
 for upm, data in pairs(usage) do
     local user, provider, model = upm:match("^([^|]+)|([^|]+)|(.+)$")
+    if user then
     local eu, ep, em = labels_upm(user, provider, model)
     for _, typ in ipairs({"input", "output", "cache_creation", "cache_read"}) do
         local val = data[typ] or 0
@@ -169,6 +170,9 @@ for upm, data in pairs(usage) do
         err_lines[#err_lines+1] = string.format(
             'gateii_upstream_errors_total{user="%s",provider="%s",model="%s"} %d', eu, ep, em, errs)
     end
+    else
+        ngx.log(ngx.WARN, "metrics: unparseable usage key, skipping: ", upm)
+    end
 end
 
 add("# HELP gateii_tokens_total Token usage by user/provider/model/type")
@@ -192,8 +196,9 @@ add("# HELP gateii_cost_dollars_total Estimated API cost in USD (Anthropic prici
 add("# TYPE gateii_cost_dollars_total counter")
 for upm, data in pairs(usage) do
     local user, provider, model = upm:match("^([^|]+)|([^|]+)|(.+)$")
-    local eu, ep, em = labels_upm(user, provider, model)
-    local price = model_price(model)
+    local price = user and model_price(model) or nil
+    local eu, ep, em
+    if user then eu, ep, em = labels_upm(user, provider, model) end
     if price then
         -- Standard input/output tokens
         for _, typ in ipairs({"input", "output"}) do
@@ -318,15 +323,21 @@ add("# TYPE gateii_rate_limit_7d_seconds_until_reset gauge")
 if rl_7d_reset_ts ~= nil then
     local y7, mo7, d7, h7, mi7, s7 = rl_7d_reset_ts:match("^(%d+)-(%d+)-(%d+)T(%d+):(%d+):(%d+)")
     if y7 then
-        local mdays7 = {0,31,59,90,120,151,181,212,243,273,304,334}
         local y7n, mo7n, d7n = tonumber(y7), tonumber(mo7), tonumber(d7)
         local h7n, mi7n, s7n = tonumber(h7), tonumber(mi7), tonumber(s7)
-        local days7 = (y7n - 1970) * 365
-            + math.floor((y7n - 1969) / 4)
-            + (mdays7[mo7n] or 0) + d7n - 1
-        local reset7_unix = days7 * 86400 + h7n * 3600 + mi7n * 60 + s7n
-        add(string.format("gateii_rate_limit_7d_seconds_until_reset %d",
-            math.max(0, reset7_unix - ngx.time())))
+        -- Same bounds guard as the 5h block above: prevents mdays7[0]/nil crash
+        if mo7n >= 1 and mo7n <= 12 and d7n >= 1 and d7n <= 31
+           and h7n <= 23 and mi7n <= 59 and s7n <= 60 then
+            local mdays7 = {0,31,59,90,120,151,181,212,243,273,304,334}
+            local days7 = (y7n - 1970) * 365
+                + math.floor((y7n - 1969) / 4)
+                + mdays7[mo7n] + d7n - 1
+            local reset7_unix = days7 * 86400 + h7n * 3600 + mi7n * 60 + s7n
+            add(string.format("gateii_rate_limit_7d_seconds_until_reset %d",
+                math.max(0, reset7_unix - ngx.time())))
+        else
+            ngx.log(ngx.WARN, "metrics: invalid 7d RFC3339 timestamp, skipping: ", rl_7d_reset_ts)
+        end
     end
 end
 

@@ -145,8 +145,10 @@ if uri == "/internal/admin/status" and method == "GET" then
     for _, key in ipairs(block_keys) do
         if key:sub(1, 8) == "blocked|" then
             local buser = key:sub(9)
-            local ttl = blocking_dict:ttl(key)
-            blocked[#blocked + 1] = { user = buser, ttl = math.ceil(ttl or 0) }
+            -- :ttl() returns -1 for no-expire keys and -2 for missing; clamp to 0
+            local ttl = blocking_dict:ttl(key) or 0
+            if ttl < 0 then ttl = 0 end
+            blocked[#blocked + 1] = { user = buser, ttl = math.ceil(ttl) }
         end
     end
     -- Collect limits
@@ -337,7 +339,13 @@ if uri == "/internal/admin/addkey" and method == "POST" then
     end
     wf:write(encoded)
     wf:close()
-    os.rename(tmp, "/etc/nginx/data/keys.json")
+    local rok, rerr = os.rename(tmp, "/etc/nginx/data/keys.json")
+    if not rok then
+        ngx.log(ngx.ERR, "addkey: rename failed: ", rerr)
+        ngx.status = 500
+        ngx.say('{"error":"Failed to persist keys.json — check server logs"}')
+        return
+    end
     -- Clear any negative cache entry so the new key is usable immediately
     ngx.shared.auth_cache:delete(key)
     ngx.say(cjson.encode({ok = true, user = user}))

@@ -13,7 +13,8 @@ local OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY") or ""
 function _M.build_headers(upstream_key, auth_type)
     local key = upstream_key
              or (OPENAI_API_KEY ~= "" and OPENAI_API_KEY)
-             or OPENROUTER_API_KEY
+             or (OPENROUTER_API_KEY ~= "" and OPENROUTER_API_KEY)
+             or ""
     return {
         ["Content-Type"]  = "application/json",
         ["Authorization"] = "Bearer " .. key,
