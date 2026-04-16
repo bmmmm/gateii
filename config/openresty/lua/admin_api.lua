@@ -82,7 +82,14 @@ if uri == "/internal/admin/block" and method == "POST" then
     local args = ngx.req.get_uri_args()
     local user = require_user(args); if not user then return end
     local ttl = tonumber(args.ttl) or 86400
-    blocking_dict:set("blocked|" .. user, "manual", ttl)
+    local bok, berr = blocking_dict:set("blocked|" .. user, "manual", ttl)
+    if not bok then
+        ngx.log(ngx.ERR, "admin: block set failed key=blocked|", user, " err=", berr,
+                " free=", blocking_dict:free_space())
+        ngx.status = 500
+        ngx.say('{"error":"Failed to persist limits — shared dict full"}')
+        return
+    end
     ngx.say(cjson.encode({ok = true, user = user, ttl = ttl}))
     return
 end
@@ -132,7 +139,14 @@ if uri == "/internal/admin/limit" and method == "POST" then
         ngx.say('{"error":"Provide at least one of: tokens_per_day, requests_per_day"}')
         return
     end
-    blocking_dict:set("limits|" .. user, cjson.encode(limits))
+    local lok, lerr = blocking_dict:set("limits|" .. user, cjson.encode(limits), 90 * 86400)
+    if not lok then
+        ngx.log(ngx.ERR, "admin: limits set failed key=limits|", user, " err=", lerr,
+                " free=", blocking_dict:free_space())
+        ngx.status = 500
+        ngx.say('{"error":"Failed to persist limits — shared dict full"}')
+        return
+    end
     save_limits()
     ngx.say(cjson.encode({ok = true, user = user}))
     return
