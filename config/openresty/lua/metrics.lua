@@ -100,8 +100,9 @@ end
 
 -- Collect all counter keys and group by user|provider|model
 local keys = counters:get_keys(0) or {}
-local usage = {}   -- { "user|provider|model" = { input=N, output=N, ... } }
-local stops = {}   -- { "user|provider|model|reason" = N }
+local usage = {}    -- { "user|provider|model" = { input=N, output=N, ... } }
+local stops = {}    -- { "user|provider|model|reason" = N }
+local statuses = {} -- { "user|provider|model|bucket" = N }
 local rl_wait_lines = {}
 local rl_tokens_lines = {}
 
@@ -148,6 +149,10 @@ for _, key in ipairs(keys) do
                 local reason = STOP_REASON_ALLOWED[parts[5]] and parts[5] or "other"
                 local stop_key = upm .. "|" .. reason
                 stops[stop_key] = (stops[stop_key] or 0) + (counters:get(key) or 0)
+            elseif #parts == 5 and parts[4] == "status" then
+                -- Status code bucket: user|provider|model|status|<bucket>
+                local status_key = upm .. "|" .. parts[5]
+                statuses[status_key] = (statuses[status_key] or 0) + (counters:get(key) or 0)
             end
         end
     end
@@ -257,6 +262,18 @@ for key, val in pairs(stops) do
     if user and val > 0 then
         add(string.format('gateii_stop_reason_total{user="%s",provider="%s",model="%s",reason="%s"} %d',
             escape_label(user), escape_label(provider), escape_label(model), escape_label(reason), val))
+    end
+end
+
+-- Status code buckets
+add("# HELP gateii_upstream_status_code_total Upstream response status codes bucketed by class (2xx,3xx,4xx,429,5xx,other)")
+add("# TYPE gateii_upstream_status_code_total counter")
+for key, val in pairs(statuses) do
+    local user, provider, model, bucket = key:match("^([^|]+)|([^|]+)|([^|]+)|(.+)$")
+    if user and val > 0 then
+        local eu, ep, em = labels_upm(user, provider, model)
+        add(string.format('gateii_upstream_status_code_total{user="%s",provider="%s",model="%s",status_class="%s"} %d',
+            eu, ep, em, escape_label(bucket), val))
     end
 end
 

@@ -62,6 +62,7 @@ services:
       - --storage.tsdb.retention.time=${HISTORY_RETENTION:-0}
     volumes:
       - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./config/prometheus/alerts.yml:/etc/prometheus/alerts.yml:ro
       - prometheus_data:/prometheus
     networks:
       - gateii
