@@ -22,6 +22,7 @@ if ADMIN_TOKEN ~= "" then
 end
 
 local LIMITS_FILE = "/etc/nginx/data/limits.json"
+local MAX_ITER_KEYS = 5000
 
 -- Sanitize user for key construction
 local function sanitize(s)
@@ -50,12 +51,19 @@ end
 -- Persist limits to disk (survives container restarts)
 local function save_limits()
     local all = {}
-    local keys = blocking_dict:get_keys(0)
+    local keys = blocking_dict:get_keys(MAX_ITER_KEYS)
     for _, key in ipairs(keys) do
         if key:sub(1, 7) == "limits|" then
             local u = key:sub(8)
             local raw = blocking_dict:get(key)
-            if raw then all[u] = cjson.decode(raw) end
+            if raw then
+                local decoded, err = cjson.decode(raw)
+                if decoded then
+                    all[u] = decoded
+                else
+                    ngx.log(ngx.ERR, "save_limits: skipping corrupt entry key=", key, " err=", tostring(err))
+                end
+            end
         end
     end
     local encoded = cjson.encode(all)
@@ -155,7 +163,7 @@ end
 -- GET /internal/admin/status
 if uri == "/internal/admin/status" and method == "GET" then
     local blocked = {}
-    local block_keys = blocking_dict:get_keys(0)
+    local block_keys = blocking_dict:get_keys(MAX_ITER_KEYS)
     for _, key in ipairs(block_keys) do
         if key:sub(1, 8) == "blocked|" then
             local buser = key:sub(9)
@@ -229,7 +237,7 @@ if uri == "/internal/admin/overview" and method == "GET" then
 
     -- Blocked count
     local blocked_count = 0
-    local block_keys = blocking_dict:get_keys(0) or {}
+    local block_keys = blocking_dict:get_keys(MAX_ITER_KEYS) or {}
     for _, key in ipairs(block_keys) do
         if key:sub(1, 8) == "blocked|" then
             blocked_count = blocked_count + 1
@@ -260,9 +268,11 @@ end
 if uri == "/internal/admin/usage-all" and method == "GET" then
     local today = os.date("!%Y-%m-%d")
     local users = {}
+    local truncated = false
 
     -- Collect all day|*|today|* keys from counters
-    local all_keys = counters:get_keys(0)
+    local all_keys = counters:get_keys(MAX_ITER_KEYS)
+    if #all_keys >= MAX_ITER_KEYS then truncated = true end
     for _, key in ipairs(all_keys) do
         -- Match: day|<user>|<date>|<field>
         local u, date, field = key:match("^day|([^|]+)|([^|]+)|(.+)$")
@@ -276,7 +286,8 @@ if uri == "/internal/admin/usage-all" and method == "GET" then
     end
 
     -- Attach limits and block status per user
-    local block_keys = blocking_dict:get_keys(0)
+    local block_keys = blocking_dict:get_keys(MAX_ITER_KEYS)
+    if #block_keys >= MAX_ITER_KEYS then truncated = true end
     for _, key in ipairs(block_keys) do
         if key:sub(1, 7) == "limits|" then
             local luser = key:sub(8)
@@ -299,10 +310,16 @@ if uri == "/internal/admin/usage-all" and method == "GET" then
     end
     table.sort(result, function(a, b) return a.user < b.user end)
 
-    if #result == 0 then
+    if #result == 0 and not truncated then
         ngx.say('[]')
     else
-        ngx.say(cjson.encode(result))
+        local payload = cjson.encode(result)
+        if truncated then
+            -- Inject truncated flag: wrap in object so callers can detect partial results
+            ngx.say('{"users":' .. payload .. ',"truncated":true}')
+        else
+            ngx.say(payload)
+        end
     end
     return
 end
@@ -327,6 +344,17 @@ if uri == "/internal/admin/addkey" and method == "POST" then
     if key == "" then
         ngx.status = 400
         ngx.say('{"error":"Missing key — send JSON body: {\"key\":\"sk-proxy-...\"}"}')
+        return
+    end
+    -- Validate key length
+    if #key < 8 then
+        ngx.status = 400
+        ngx.say('{"error":"API key too short — min 8 chars"}')
+        return
+    end
+    if #key > 256 then
+        ngx.status = 400
+        ngx.say('{"error":"API key too long — max 256 chars"}')
         return
     end
     -- Validate key format
@@ -508,7 +536,7 @@ if uri == "/internal/admin/health" and method == "GET" then
 
     -- Upstream error rate from counters (no network call needed)
     local all_req, all_err = 0, 0
-    for _, key in ipairs(counters:get_keys(0)) do
+    for _, key in ipairs(counters:get_keys(MAX_ITER_KEYS)) do
         local parts = {}
         for p in key:gmatch("[^|]+") do parts[#parts+1] = p end
         if #parts == 4 and parts[1] ~= "day" then
