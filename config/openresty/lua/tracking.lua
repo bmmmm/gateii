@@ -3,6 +3,9 @@ local _M = {}
 
 local counters = ngx.shared.counters
 
+-- TTL for lifetime (per-user/provider/model) counters: 60 days
+local COUNTER_TTL = 60 * 86400
+
 -- Sanitize key components: pipes are the separator
 local function sanitize(s)
     return (tostring(s or "unknown"):gsub("[:|%s]", "_"):sub(1, 64))
@@ -22,6 +25,14 @@ local function get_today()
     return _today
 end
 
+local function bump(key, value, ttl)
+    local _, err = counters:incr(key, value, 0, ttl)
+    if err then
+        ngx.log(ngx.ERR, "tracking: incr failed key=", key, " err=", err,
+                " free=", counters:free_space())
+    end
+end
+
 -- record(user, provider, model, input_tokens, output_tokens, opts)
 -- opts = { latency_ms=N, status=N, stop_reason="end_turn"|...,
 --          cache_creation=N, cache_read=N }
@@ -35,34 +46,34 @@ function _M.record(user, provider, model, input_tokens, output_tokens, opts)
 
     -- Token counts (only on successful upstream responses)
     if input_tokens > 0 then
-        counters:incr(prefix .. "|input", input_tokens, 0)
+        bump(prefix .. "|input", input_tokens, COUNTER_TTL)
     end
     if output_tokens > 0 then
-        counters:incr(prefix .. "|output", output_tokens, 0)
+        bump(prefix .. "|output", output_tokens, COUNTER_TTL)
     end
 
     -- Cache token counts
     if opts.cache_creation and opts.cache_creation > 0 then
-        counters:incr(prefix .. "|cache_creation", opts.cache_creation, 0)
+        bump(prefix .. "|cache_creation", opts.cache_creation, COUNTER_TTL)
     end
     if opts.cache_read and opts.cache_read > 0 then
-        counters:incr(prefix .. "|cache_read", opts.cache_read, 0)
+        bump(prefix .. "|cache_read", opts.cache_read, COUNTER_TTL)
     end
 
     -- Request count + latency sum (for average latency computation in Grafana)
-    counters:incr(prefix .. "|requests", 1, 0)
+    bump(prefix .. "|requests", 1, COUNTER_TTL)
     if opts.latency_ms then
-        counters:incr(prefix .. "|latency_ms_sum", math.floor(opts.latency_ms + 0.5), 0)
+        bump(prefix .. "|latency_ms_sum", math.floor(opts.latency_ms + 0.5), COUNTER_TTL)
     end
 
     -- Upstream error count (status != 200)
     if opts.status and opts.status ~= 200 then
-        counters:incr(prefix .. "|errors", 1, 0)
+        bump(prefix .. "|errors", 1, COUNTER_TTL)
     end
 
     -- Stop reason counter
     if opts.stop_reason and opts.stop_reason ~= ngx.null and opts.stop_reason ~= "" then
-        counters:incr(prefix .. "|stop|" .. sanitize(opts.stop_reason), 1, 0)
+        bump(prefix .. "|stop|" .. sanitize(opts.stop_reason), 1, COUNTER_TTL)
     end
 
     -- Daily counters (for limit checks) — with TTL (25h = 90000s)
