@@ -40,7 +40,9 @@ function _M.extract_tokens_streaming(body)
         local obj = cjson.decode(data)
         if obj then
             if obj.usage then output_tokens = obj.usage.output_tokens or 0 end
-            if obj.delta then stop_reason = obj.delta.stop_reason end
+            if obj.delta and type(obj.delta.stop_reason) == "string" then
+                stop_reason = obj.delta.stop_reason
+            end
         end
     end
     return input_tokens, output_tokens, stop_reason, cache_creation, cache_read
@@ -56,7 +58,9 @@ function _M.extract_tokens(response_body)
     local output = u.output_tokens or 0
     local cache_create = u.cache_creation_input_tokens or 0
     local cache_read   = u.cache_read_input_tokens or 0
-    local stop   = obj.stop_reason  -- "end_turn", "max_tokens", "stop_sequence", "tool_use"
+    -- cjson.null arrives as userdata, not a string — filter by type
+    local stop   = obj.stop_reason
+    if type(stop) ~= "string" then stop = nil end
     return input, output, stop, cache_create, cache_read
 end
 
