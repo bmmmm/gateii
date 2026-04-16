@@ -334,17 +334,38 @@ const esc = s => String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>
 
 // Inject X-Admin-Token header into /internal/admin/* calls when the server
 // embedded a token (meta tag is written by the Lua /console handler).
+// Also wraps every fetch with a 10-second AbortSignal timeout.
 (() => {
   const meta = document.querySelector('meta[name="admin-token"]');
   const token = meta && meta.content ? meta.content : '';
-  if (!token) return;
   const _fetch = window.fetch.bind(window);
   window.fetch = (url, opts) => {
-    if (typeof url === 'string' && url.startsWith('/internal/admin')) {
-      opts = opts || {};
+    opts = opts || {};
+    if (typeof url === 'string' && url.startsWith('/internal/admin') && token) {
       opts.headers = Object.assign({}, opts.headers || {}, { 'X-Admin-Token': token });
     }
-    return _fetch(url, opts);
+    // Attach a 10-second timeout via AbortSignal
+    let signal = opts.signal;
+    let cleanup;
+    if (!signal) {
+      if (typeof AbortSignal !== 'undefined' && AbortSignal.timeout) {
+        signal = AbortSignal.timeout(10000);
+      } else {
+        const ctrl = new AbortController();
+        const tid = setTimeout(() => ctrl.abort(), 10000);
+        cleanup = () => clearTimeout(tid);
+        signal = ctrl.signal;
+      }
+      opts.signal = signal;
+    }
+    const p = _fetch(url, opts);
+    if (cleanup) p.then(cleanup, cleanup);
+    return p.catch(err => {
+      if (err && err.name === 'AbortError') {
+        throw new Error('Request timed out after 10s — check proxy/network');
+      }
+      throw err;
+    });
   };
 })();
 
@@ -357,22 +378,27 @@ function toast(msg, isError) {
 }
 
 function parseMetrics(text) {
-  const m = {};
-  for (const line of text.split('\n')) {
-    if (line.startsWith('#') || !line.trim()) continue;
-    const match = line.match(/^(\w+)\{([^}]*)\}\s+(.+)$/);
-    if (match) {
-      const [, name, labels, value] = match;
-      if (!m[name]) m[name] = [];
-      const lo = {};
-      labels.split(',').forEach(l => {
-        const eq = l.indexOf('=');
-        if (eq > 0) lo[l.slice(0, eq)] = l.slice(eq + 1).replace(/"/g, '');
-      });
-      m[name].push({ l: lo, v: parseFloat(value) });
+  try {
+    const m = {};
+    for (const line of text.split('\n')) {
+      if (line.startsWith('#') || !line.trim()) continue;
+      const match = line.match(/^(\w+)\{([^}]*)\}\s+(.+)$/);
+      if (match) {
+        const [, name, labels, value] = match;
+        if (!m[name]) m[name] = [];
+        const lo = {};
+        labels.split(',').forEach(l => {
+          const eq = l.indexOf('=');
+          if (eq > 0) lo[l.slice(0, eq)] = l.slice(eq + 1).replace(/"/g, '');
+        });
+        m[name].push({ l: lo, v: parseFloat(value) });
+      }
     }
+    return m;
+  } catch (err) {
+    console.warn('parseMetrics failed:', err);
+    return {};
   }
-  return m;
 }
 
 function fmt(n) {
@@ -714,14 +740,17 @@ async function refresh() {
     const akr = $('add-key-row');
     if (akr) akr.style.display = ov.proxy_mode === 'passthrough' ? 'none' : 'flex';
 
-    const [raw] = await Promise.all([
+    const [metricsResult] = await Promise.allSettled([
       fetch('/metrics').then(r => r.text()),
       loadHealth(),
     ]);
-    const m = parseMetrics(raw);
+    if (metricsResult.status === 'rejected') {
+      console.warn('metrics fetch failed:', metricsResult.reason);
+    }
+    const m = parseMetrics(metricsResult.status === 'fulfilled' ? metricsResult.value : '');
 
     // --- Stats: try Prometheus for real 24h data, fallback to live counters ---
-    const [pReq, pTok, pCost, pLatSum, pInTok, pOutTok, pMonthlyCost] = await Promise.all([
+    const promResults = await Promise.allSettled([
       promScalar('sum(increase(gateii_requests_total[24h]))'),
       promScalar('sum(increase(gateii_tokens_total[24h]))'),
       promScalar('sum(increase(gateii_cost_dollars_total[24h]))'),
@@ -730,6 +759,9 @@ async function refresh() {
       promScalar('sum(increase(gateii_tokens_total{type="output"}[24h]))'),
       promScalar('sum(increase(gateii_cost_dollars_total[7d])) / 7 * 30'),
     ]);
+    promResults.forEach((r, i) => { if (r.status === 'rejected') console.warn('promScalar[' + i + '] failed:', r.reason); });
+    const [pReq, pTok, pCost, pLatSum, pInTok, pOutTok, pMonthlyCost] =
+      promResults.map(r => r.status === 'fulfilled' ? r.value : null);
 
     // Also fetch monthly token projection for provider comparison
     monthlyTokensByPattern = await fetchMonthlyProjection();
