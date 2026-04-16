@@ -71,6 +71,25 @@ function _M.record(user, provider, model, input_tokens, output_tokens, opts)
         bump(prefix .. "|errors", 1, COUNTER_TTL)
     end
 
+    -- Status code bucket: 2xx, 3xx, 4xx, 429 (special bucket for rate limiting), 5xx, other
+    if opts.status then
+        local status_bucket
+        if opts.status == 429 then
+            status_bucket = "429"
+        elseif opts.status >= 200 and opts.status < 300 then
+            status_bucket = "2xx"
+        elseif opts.status >= 300 and opts.status < 400 then
+            status_bucket = "3xx"
+        elseif opts.status >= 400 and opts.status < 500 then
+            status_bucket = "4xx"
+        elseif opts.status >= 500 and opts.status < 600 then
+            status_bucket = "5xx"
+        else
+            status_bucket = "other"
+        end
+        bump(prefix .. "|status|" .. status_bucket, 1, COUNTER_TTL)
+    end
+
     -- Stop reason counter
     if opts.stop_reason and opts.stop_reason ~= ngx.null and opts.stop_reason ~= "" then
         bump(prefix .. "|stop|" .. sanitize(opts.stop_reason), 1, COUNTER_TTL)
