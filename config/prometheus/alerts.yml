@@ -1,0 +1,39 @@
+groups:
+  - name: gateii.rules
+    interval: 30s
+    rules:
+      - alert: GateiiSharedDictNearFull
+        expr: min(gateii_shared_dict_free_bytes) by (dict) < 204800
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "gateii shared dict {{ $labels.dict }} has less than 200 KB free"
+          description: "Shared dict is close to eviction. Values may be lost. Current free: {{ $value | humanize1024 }}B"
+
+      - alert: GateiiUpstream5xxRateHigh
+        expr: sum(rate(gateii_upstream_status_code_total{status_class="5xx"}[5m])) / sum(rate(gateii_upstream_status_code_total[5m])) > 0.01
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "gateii upstream 5xx rate above 1%"
+          description: "Upstream 5xx ratio has exceeded 1% for 10 minutes"
+
+      - alert: GateiiRateLimit429Spike
+        expr: sum(increase(gateii_upstream_status_code_total{status_class="429"}[5m])) > 20
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "gateii hit upstream 429 rate limit {{ $value }} times in 5m"
+          description: "Consider backing off or enabling multi-provider fallback"
+
+      - alert: GateiiAuthCacheFull
+        expr: gateii_shared_dict_free_bytes{dict="auth_cache"} < 51200
+        for: 15m
+        labels:
+          severity: info
+        annotations:
+          summary: "auth_cache dict close to full"
+          description: "Auth cache under 50 KB free — keys.json re-reads may increase"
