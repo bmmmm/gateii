@@ -3,6 +3,10 @@ local cjson = require "cjson.safe"
 local counters = ngx.shared.counters
 local blocking_dict = ngx.shared.blocking
 
+local STOP_REASON_ALLOWED = { end_turn=true, max_tokens=true, stop_sequence=true, tool_use=true, refusal=true, pause_turn=true }
+local _price_cache = {}
+local _price_warn_logged = false
+
 -- Load pricing from providers.json (active provider) or legacy pricing.json
 local pricing = {
     { pattern = "opus",   input = 5.0,  output = 25.0 },
@@ -20,11 +24,17 @@ local function try_providers_json()
     f:close()
     local cfg, decode_err = cjson.decode(data)
     if not cfg then
-        ngx.log(ngx.WARN, "metrics: failed to parse providers.json: ", decode_err)
+        if not _price_warn_logged then
+            ngx.log(ngx.WARN, "metrics: failed to parse providers.json: ", decode_err)
+            _price_warn_logged = true
+        end
         return false
     end
     if not cfg.providers then
-        ngx.log(ngx.WARN, "metrics: providers.json missing 'providers' key")
+        if not _price_warn_logged then
+            ngx.log(ngx.WARN, "metrics: providers.json missing 'providers' key")
+            _price_warn_logged = true
+        end
         return false
     end
     local active_id = cfg.active_provider or "anthropic"
@@ -34,6 +44,8 @@ local function try_providers_json()
             cache_write_mult = p.cache_write_multiplier or cache_write_mult
             cache_read_mult = p.cache_read_multiplier or cache_read_mult
             tokens_window_limit = p.tokens_window_limit  -- may be nil
+            _price_warn_logged = false  -- reset on successful load
+            _price_cache = {}           -- invalidate model price cache
             return true
         end
     end
@@ -57,16 +69,25 @@ if not pricing_loaded then
     end
 end
 if not pricing_loaded then
-    ngx.log(ngx.WARN, "metrics: providers.json and pricing.json not found, using hardcoded defaults -- update providers.json")
+    if not _price_warn_logged then
+        ngx.log(ngx.WARN, "metrics: providers.json and pricing.json not found, using hardcoded defaults -- update providers.json")
+        _price_warn_logged = true
+    end
 end
 
 local function model_price(model)
     local m = model:lower()
+    local cached = _price_cache[m]
+    if cached ~= nil then
+        return cached ~= false and cached or nil
+    end
     for _, p in ipairs(pricing) do
         if m:find(p.pattern, 1, true) then
+            _price_cache[m] = p
             return p
         end
     end
+    _price_cache[m] = false
     return nil
 end
 
@@ -124,7 +145,9 @@ for _, key in ipairs(keys) do
                 usage[upm][parts[4]] = counters:get(key) or 0
             elseif #parts == 5 and parts[4] == "stop" then
                 -- Stop reason: user|provider|model|stop|reason
-                stops[upm .. "|" .. parts[5]] = counters:get(key) or 0
+                local reason = STOP_REASON_ALLOWED[parts[5]] and parts[5] or "other"
+                local stop_key = upm .. "|" .. reason
+                stops[stop_key] = (stops[stop_key] or 0) + (counters:get(key) or 0)
             end
         end
     end
