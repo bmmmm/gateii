@@ -27,4 +27,16 @@ if token ~= "" then
         '<meta name="admin-token" content="' .. token .. '"></head>', 1)
 end
 
+ngx.header["Content-Security-Policy"] =
+    "default-src 'self'; " ..
+    "style-src 'self' 'unsafe-inline'; " ..
+    "script-src 'self' 'unsafe-inline'; " ..
+    "img-src 'self' data:; " ..
+    "connect-src 'self'; " ..
+    "base-uri 'self'; " ..
+    "form-action 'self'; " ..
+    "frame-ancestors 'none'"
+ngx.header["X-Content-Type-Options"] = "nosniff"
+ngx.header["Referrer-Policy"] = "no-referrer"
+
 ngx.print(html)
