@@ -172,6 +172,7 @@ case "$SUBCMD" in
     validate_user "$USER"
     TTL="${2:-86400}"
     [[ "$TTL" =~ ^[0-9]+$ ]] || { echo -e "${RED}Invalid TTL — must be a positive integer (seconds)${NC}" >&2; exit 1; }
+    [ "$TTL" -gt 31536000 ] && { echo "TTL too large — max 31536000 (1 year)" >&2; exit 1; }
     RESULT=$(admin_curl -sf --max-time 5 -X POST "$ADMIN/block?user=$USER&ttl=$TTL" 2>/dev/null || echo "")
     if echo "$RESULT" | jq -e '.ok == true' >/dev/null 2>&1; then
       echo -e "${GRN}Blocked ${BOLD}$USER${NC} for ${TTL}s"
