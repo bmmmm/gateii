@@ -149,8 +149,10 @@ do
     end
 end
 
--- 4. Rate limit per user (apikey mode only — in passthrough you're limiting yourself)
-if proxy_mode ~= "passthrough" and lim then
+-- 4. Rate limit per user (applies in both modes — defense against runaway clients)
+-- In passthrough the PASSTHROUGH_USER is a single bucket; burst 10 covers normal
+-- interactive use, sustained rate is 1 req/s. Tune via limit_req.new() if needed.
+if lim then
     local delay, err = lim:incoming(user, true)
     if not delay then
         if err == "rejected" then

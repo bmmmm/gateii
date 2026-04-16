@@ -26,6 +26,18 @@ PROXY="http://${PROXY_HOST}:${PROXY_PORT}"
 ADMIN="${PROXY}/internal/admin"
 KEYS_FILE="${PROJECT_DIR}/data/keys.json"
 
+# Admin token (optional) — sent as X-Admin-Token header when set. Protects the
+# admin API against lateral movement on the Docker network.
+# Wrapped in a function because `"${arr[@]}"` on an empty array trips `set -u`
+# on older bash (shipped with macOS).
+admin_curl() {
+    if [ -n "${ADMIN_TOKEN:-}" ]; then
+        curl -H "X-Admin-Token: ${ADMIN_TOKEN}" "$@"
+    else
+        curl "$@"
+    fi
+}
+
 # Ensure keys.json exists
 if [ ! -f "$KEYS_FILE" ]; then
     mkdir -p "$(dirname "$KEYS_FILE")"
@@ -83,7 +95,7 @@ case "$SUBCMD" in
     echo ""
     KEYS_COUNT=$(jq 'length' "$KEYS_FILE" 2>/dev/null || echo 0)
     echo -e "  Proxy keys:      ${CYN}${KEYS_COUNT}${NC}"
-    BLOCKED=$(curl -sf --max-time 5 "$ADMIN/status" 2>/dev/null || echo '{"blocked":[]}')
+    BLOCKED=$(admin_curl -sf --max-time 5 "$ADMIN/status" 2>/dev/null || echo '{"blocked":[]}')
     BLOCKED_COUNT=$(echo "$BLOCKED" | jq '.blocked | length' 2>/dev/null || echo 0)
     echo -e "  Blocked users:   ${RED}${BLOCKED_COUNT}${NC}"
     echo ""
@@ -160,7 +172,7 @@ case "$SUBCMD" in
     validate_user "$USER"
     TTL="${2:-86400}"
     [[ "$TTL" =~ ^[0-9]+$ ]] || { echo -e "${RED}Invalid TTL — must be a positive integer (seconds)${NC}" >&2; exit 1; }
-    RESULT=$(curl -sf --max-time 5 -X POST "$ADMIN/block?user=$USER&ttl=$TTL" 2>/dev/null || echo "")
+    RESULT=$(admin_curl -sf --max-time 5 -X POST "$ADMIN/block?user=$USER&ttl=$TTL" 2>/dev/null || echo "")
     if echo "$RESULT" | jq -e '.ok == true' >/dev/null 2>&1; then
       echo -e "${GRN}Blocked ${BOLD}$USER${NC} for ${TTL}s"
     else
@@ -171,7 +183,7 @@ case "$SUBCMD" in
   unblock)
     USER="${1:?Usage: admin.sh unblock <user>}"
     validate_user "$USER"
-    RESULT=$(curl -sf --max-time 5 -X POST "$ADMIN/unblock?user=$USER" 2>/dev/null || echo "")
+    RESULT=$(admin_curl -sf --max-time 5 -X POST "$ADMIN/unblock?user=$USER" 2>/dev/null || echo "")
     if echo "$RESULT" | jq -e '.ok == true' >/dev/null 2>&1; then
       echo -e "${GRN}Unblocked ${BOLD}$USER${NC}"
     else
@@ -189,7 +201,7 @@ case "$SUBCMD" in
       *) echo -e "${RED}Invalid field '$FIELD' — allowed: tokens_per_day, requests_per_day${NC}" >&2; exit 1 ;;
     esac
     [[ "$VALUE" =~ ^[0-9]+$ ]] || { echo -e "${RED}Invalid value — must be a positive integer${NC}" >&2; exit 1; }
-    RESULT=$(curl -sf --max-time 5 -X POST "$ADMIN/limit?user=$USER" \
+    RESULT=$(admin_curl -sf --max-time 5 -X POST "$ADMIN/limit?user=$USER" \
       -d "$(jq -nc --arg f "$FIELD" --argjson v "$VALUE" '{($f): $v}')" 2>/dev/null || echo "")
     if echo "$RESULT" | jq -e '.ok == true' >/dev/null 2>&1; then
       echo -e "${GRN}Set ${BOLD}$USER${NC} ${FIELD}=${VALUE}"
@@ -204,7 +216,7 @@ case "$SUBCMD" in
     echo ""
     echo -e "${BOLD}Usage for $USER${NC}"
     echo ""
-    RESULT=$(curl -sf --max-time 5 "$ADMIN/usage?user=$USER" 2>/dev/null || echo "")
+    RESULT=$(admin_curl -sf --max-time 5 "$ADMIN/usage?user=$USER" 2>/dev/null || echo "")
     if [ -n "$RESULT" ]; then
       echo "$RESULT" | jq -r '"  Today (\(.today)): \(.daily_requests) reqs, \(.daily_input) in + \(.daily_output) out tokens"' \
         2>/dev/null || echo -e "  ${DIM}Could not parse response${NC}"

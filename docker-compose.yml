@@ -17,6 +17,7 @@ services:
       - PROXY_MODE=${PROXY_MODE:-passthrough}
       - PASSTHROUGH_USER=${PASSTHROUGH_USER:-}
       - CONSOLE_ENABLED=${CONSOLE_ENABLED:-0}
+      - ADMIN_TOKEN=${ADMIN_TOKEN:-}
     volumes:
       - ./config/openresty/nginx.conf:/usr/local/openresty/nginx/conf/nginx.conf:ro
       - ./config/openresty/lua:/etc/nginx/lua:ro

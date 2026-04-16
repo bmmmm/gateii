@@ -8,6 +8,19 @@ local uri = ngx.var.uri
 
 ngx.header["Content-Type"] = "application/json"
 
+-- Defense-in-depth auth: require X-Admin-Token header when ADMIN_TOKEN env is set.
+-- Protects against lateral movement from a compromised container on the Docker network;
+-- the IP allow-list in nginx.conf alone trusts every sidecar.
+local ADMIN_TOKEN = os.getenv("ADMIN_TOKEN") or ""
+if ADMIN_TOKEN ~= "" then
+    local supplied = ngx.var.http_x_admin_token or ""
+    if supplied ~= ADMIN_TOKEN then
+        ngx.status = 401
+        ngx.say('{"error":"Missing or invalid X-Admin-Token header"}')
+        return ngx.exit(401)
+    end
+end
+
 local LIMITS_FILE = "/etc/nginx/data/limits.json"
 
 -- Sanitize user for key construction

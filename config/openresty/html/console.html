@@ -332,6 +332,22 @@ select.input{cursor:pointer;-webkit-appearance:none;padding-right:28px;
 const $ = id => document.getElementById(id);
 const esc = s => String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
 
+// Inject X-Admin-Token header into /internal/admin/* calls when the server
+// embedded a token (meta tag is written by the Lua /console handler).
+(() => {
+  const meta = document.querySelector('meta[name="admin-token"]');
+  const token = meta && meta.content ? meta.content : '';
+  if (!token) return;
+  const _fetch = window.fetch.bind(window);
+  window.fetch = (url, opts) => {
+    if (typeof url === 'string' && url.startsWith('/internal/admin')) {
+      opts = opts || {};
+      opts.headers = Object.assign({}, opts.headers || {}, { 'X-Admin-Token': token });
+    }
+    return _fetch(url, opts);
+  };
+})();
+
 function toast(msg, isError) {
   const t = $('toast');
   t.textContent = msg;
