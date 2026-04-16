@@ -53,7 +53,8 @@ echo ""
 echo -e "${BOLD}Proxy :8888${NC}"
 if [ "$SANDBOX_MODE" -eq 0 ]; then
   HEALTH=$(curl -sf --max-time 5 http://localhost:8888/health 2>/dev/null || echo "")
-  if [ "$HEALTH" = "ok" ]; then
+  # /health returns JSON {"status":"ok", ...} — grep for the status field
+  if echo "$HEALTH" | grep -q '"status":"ok"'; then
     ok "/health → ok"
   else
     fail "/health → '${HEALTH:-no response}'"

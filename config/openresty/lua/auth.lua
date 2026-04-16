@@ -7,6 +7,24 @@ local auth_cache    = ngx.shared.auth_cache
 local blocking_dict = ngx.shared.blocking
 local counters      = ngx.shared.counters
 
+-- Seed RNG once per worker (module-level, runs on first require per worker process)
+math.randomseed(ngx.now() * 1000 + ngx.worker.pid())
+
+local function new_request_id()
+    -- 16 random hex chars — collision-safe for request correlation, cheap to generate
+    local b = { string.byte(ngx.var.remote_addr or "", 1, -1) }
+    local t = ngx.now()
+    return string.format("%08x%08x", math.floor(t * 1000) % 0xffffffff,
+        (ngx.worker.pid() * 0x01000193) + (#b > 0 and b[1] or 0)) ..
+        string.format("%04x", math.random(0, 0xffff))
+end
+
+local incoming_rid = ngx.var.http_x_request_id or ""
+local rid = (#incoming_rid > 0 and #incoming_rid <= 128 and incoming_rid:match("^[A-Za-z0-9%-]+$"))
+            and incoming_rid or new_request_id()
+ngx.ctx.request_id = rid
+ngx.header["X-Request-Id"] = rid
+
 -- Rate limiter: 1 req/s average (= 60/min), burst of 10
 local lim, lim_err = limit_req.new("limit_req", 1, 10)
 if not lim then
@@ -38,6 +56,7 @@ if not api_key or api_key == "" then
     local auth_header = ngx.var.http_authorization
     if auth_header then
         api_key = auth_header:match("^[Bb]earer%s+(.+)$")
+        if api_key then api_key = api_key:match("^%s*(.-)%s*$") end
     end
 end
 if not api_key or api_key == "" then
@@ -83,7 +102,7 @@ user = sanitize(user)
 ngx.ctx.user = user
 
 -- Structured access log (INFO level)
-ngx.log(ngx.INFO, "auth ok user=", user,
+ngx.log(ngx.INFO, "[rid=", rid, "] auth ok user=", user,
     " method=", ngx.var.request_method,
     " uri=", ngx.var.uri,
     " ip=", ngx.var.remote_addr)
@@ -103,7 +122,7 @@ do
     if limits_raw then
         local limits, decode_err = cjson.decode(limits_raw)
         if not limits then
-            ngx.log(ngx.WARN, "failed to decode limits for user ", user, ": ", decode_err)
+            ngx.log(ngx.WARN, "[rid=", rid, "] failed to decode limits for user ", user, ": ", decode_err)
         else
             local today = proxy_config.get_today()
             local day_prefix = "day|" .. user .. "|" .. today
@@ -159,7 +178,7 @@ if lim then
             ngx.header["Retry-After"] = "60"
             return reject(429, "Rate limit exceeded — max 60 requests/min per key")
         end
-        ngx.log(ngx.WARN, "rate limiter error: ", err)
+        ngx.log(ngx.WARN, "[rid=", rid, "] rate limiter error: ", err)
     elseif delay > 0 then
         ngx.sleep(delay)
     end

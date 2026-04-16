@@ -4,6 +4,11 @@ local http     = require "resty.http"
 local providers = require "providers.init"
 local tracking  = require "tracking"
 
+-- Request ID is set by auth.lua into ngx.ctx.request_id. Declare at top of
+-- chunk so the closures below capture it as an upvalue — a local declared
+-- later in the chunk would not be visible to functions defined above it.
+local rid = ngx.ctx.request_id or "-"
+
 local function track_rl_window(res)
     if not res.headers then return end
     local h = res.headers
@@ -40,7 +45,7 @@ local function track_rl_window(res)
         if prev_reset and prev_reset ~= reset_ts then
             local old_remaining = tonumber(cd:get("ratelimit_remaining")) or 0
             tracking.set_rate_limit_tokens_expired(old_remaining)
-            ngx.log(ngx.INFO, "rate limit window reset: ", old_remaining, " tokens expired")
+            ngx.log(ngx.INFO, "[rid=", rid, "] rate limit window reset: ", old_remaining, " tokens expired")
         end
         tracking.set_rate_limit_remaining(remaining)
     end
@@ -83,12 +88,12 @@ if not body_str then
     if body_file then
         local f, open_err = io.open(body_file, "rb")
         if not f then
-            ngx.log(ngx.ERR, "handler: cannot open body file: ", open_err)
+            ngx.log(ngx.ERR, "[rid=", rid, "] handler: cannot open body file: ", open_err)
         else
             local ok, result = pcall(f.read, f, "*a")
             f:close()
             if not ok then
-                ngx.log(ngx.ERR, "handler: cannot read body file: ", result)
+                ngx.log(ngx.ERR, "[rid=", rid, "] handler: cannot read body file: ", result)
             else
                 body_str = result
             end
@@ -104,7 +109,7 @@ end
 
 local body_obj, parse_err = cjson.decode(body_str)
 if not body_obj then
-    ngx.log(ngx.WARN, "request JSON parse error: ", parse_err)
+    ngx.log(ngx.WARN, "[rid=", rid, "] request JSON parse error: ", parse_err)
     ngx.status = 400
     ngx.header["Content-Type"] = "application/json"
     ngx.say('{"error":"Invalid JSON — check your request body"}')
@@ -115,7 +120,7 @@ end
 local req_headers = ngx.req.get_headers()
 
 -- Resolve provider (whitelist enforced by providers.get)
-local provider_name = req_headers["X-Provider"] or "anthropic"
+local provider_name = req_headers["x-provider"] or "anthropic"
 local provider = providers.get(provider_name)
 if not provider then
     ngx.status = 400
@@ -125,7 +130,7 @@ if not provider then
     return
 end
 if not provider.upstream_url or provider.upstream_url == "" then
-    ngx.log(ngx.ERR, "provider has no upstream_url: ", provider_name)
+    ngx.log(ngx.ERR, "[rid=", rid, "] provider has no upstream_url: ", provider_name)
     ngx.status = 500
     ngx.header["Content-Type"] = "application/json"
     ngx.say('{"error":"Internal configuration error"}')
@@ -185,7 +190,7 @@ if not is_streaming then
     local latency_ms = (ngx.now() - t0) * 1000
 
     if not res then
-        ngx.log(ngx.ERR, "upstream error (user=", user, " model=", model, "): ", proxy_err)
+        ngx.log(ngx.ERR, "[rid=", rid, "] upstream error (user=", user, " model=", model, "): ", proxy_err)
         ngx.status = 502
         ngx.header["Content-Type"] = "application/json"
         ngx.say('{"error":"Upstream request failed — check logs for details"}')
@@ -226,7 +231,7 @@ local t0_stream = ngx.now()
 
 local parsed_uri, parse_err2 = httpc:parse_uri(upstream_url, false)
 if not parsed_uri then
-    ngx.log(ngx.ERR, "streaming URI parse error: ", parse_err2)
+    ngx.log(ngx.ERR, "[rid=", rid, "] streaming URI parse error: ", parse_err2)
     httpc:close()
     ngx.status = 500
     ngx.header["Content-Type"] = "application/json"
@@ -245,7 +250,7 @@ local ok, conn_err = httpc:connect({
     ssl_verify      = true,
 })
 if not ok then
-    ngx.log(ngx.ERR, "streaming connect error (user=", user, "): ", conn_err)
+    ngx.log(ngx.ERR, "[rid=", rid, "] streaming connect error (user=", user, "): ", conn_err)
     httpc:close()
     ngx.status = 502
     ngx.header["Content-Type"] = "application/json"
@@ -264,7 +269,7 @@ local res, req_err = httpc:request({
 })
 
 if not res then
-    ngx.log(ngx.ERR, "streaming upstream error (user=", user, "): ", req_err)
+    ngx.log(ngx.ERR, "[rid=", rid, "] streaming upstream error (user=", user, "): ", req_err)
     httpc:close()
     ngx.status = 502
     ngx.header["Content-Type"] = "application/json"
@@ -294,7 +299,7 @@ local reader = res.body_reader
 repeat
     local chunk, read_err = reader(8192)
     if read_err then
-        ngx.log(ngx.ERR, "streaming read error (user=", user, "): ", read_err)
+        ngx.log(ngx.ERR, "[rid=", rid, "] streaming read error (user=", user, "): ", read_err)
         had_read_err = true
         break
     end
