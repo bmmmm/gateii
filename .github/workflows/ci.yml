@@ -1,0 +1,36 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install luarocks
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y luarocks
+
+      - name: Install luacheck
+        run: |
+          luarocks install luacheck
+
+      - name: Run luacheck
+        run: |
+          luacheck config/openresty/lua/
+
+      - name: Add job summary
+        if: always()
+        run: |
+          cat >> $GITHUB_STEP_SUMMARY <<'EOF'
+          ## CI Results
+          - **luacheck**: Syntax and style validation for Lua code
+          - **Smoke tests**: Require a live Docker stack with Colima — must be run locally via `bash scripts/smoke-test.sh`
+          EOF
