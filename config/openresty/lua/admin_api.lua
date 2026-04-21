@@ -8,15 +8,34 @@ local uri = ngx.var.uri
 
 ngx.header["Content-Type"] = "application/json"
 
--- Defense-in-depth auth: require X-Admin-Token header when ADMIN_TOKEN env is set.
--- Protects against lateral movement from a compromised container on the Docker network;
--- the IP allow-list in nginx.conf alone trusts every sidecar.
+-- Defense-in-depth auth: require X-Admin-Token header or valid session cookie when
+-- ADMIN_TOKEN env is set. Protects against lateral movement from a compromised container
+-- on the Docker network; the IP allow-list in nginx.conf alone trusts every sidecar.
 local ADMIN_TOKEN = os.getenv("ADMIN_TOKEN") or ""
 if ADMIN_TOKEN ~= "" then
-    local supplied = ngx.var.http_x_admin_token or ""
-    if supplied ~= ADMIN_TOKEN then
+    local supplied_header = ngx.var.http_x_admin_token or ""
+    local authed = false
+
+    if supplied_header == ADMIN_TOKEN then
+        authed = true
+    else
+        -- Check session cookie
+        local cookie_header = ngx.var.http_cookie or ""
+        local session_id = cookie_header:match("admin_session=([a-f0-9]+)")
+        if session_id then
+            local sessions = ngx.shared.admin_sessions
+            local valid = sessions:get(session_id)
+            if valid then
+                -- Refresh TTL on activity
+                sessions:set(session_id, "1", 3600)
+                authed = true
+            end
+        end
+    end
+
+    if not authed then
         ngx.status = 401
-        ngx.say('{"error":"Missing or invalid X-Admin-Token header"}')
+        ngx.say('{"error":"Unauthorized — use X-Admin-Token header or login via /internal/admin/login"}')
         return ngx.exit(401)
     end
 end
