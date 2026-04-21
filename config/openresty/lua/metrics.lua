@@ -17,26 +17,18 @@ local cache_write_mult = 1.25
 local cache_read_mult = 0.1
 local tokens_window_limit  -- set by try_providers_json() via closure
 
+local schema = require "schema"
+
 local function try_providers_json()
-    local f = io.open("/etc/nginx/lua/providers.json", "r")
-    if not f then return false end
-    local data = f:read("*a")
-    f:close()
-    local cfg, decode_err = cjson.decode(data)
-    if not cfg then
+    local cfg, cfg_err = schema.load_validated("/etc/nginx/lua/providers.json", schema.validate_providers)
+    if cfg_err then
         if not _price_warn_logged then
-            ngx.log(ngx.WARN, "metrics: failed to parse providers.json: ", decode_err)
+            ngx.log(ngx.WARN, "metrics: providers.json validation failed — ", cfg_err, " — using fallback")
             _price_warn_logged = true
         end
         return false
     end
-    if not cfg.providers then
-        if not _price_warn_logged then
-            ngx.log(ngx.WARN, "metrics: providers.json missing 'providers' key")
-            _price_warn_logged = true
-        end
-        return false
-    end
+    if not cfg then return false end
     local active_id = cfg.active_provider or "anthropic"
     for _, p in ipairs(cfg.providers) do
         if p.id == active_id and p.models then
