@@ -3,6 +3,7 @@ local cjson    = require "cjson.safe"
 local http     = require "resty.http"
 local providers = require "providers.init"
 local tracking  = require "tracking"
+local circuit_breaker = require "circuit_breaker"
 
 -- Request ID is set by auth.lua into ngx.ctx.request_id. Declare at top of
 -- chunk so the closures below capture it as an upvalue — a local declared
@@ -177,6 +178,18 @@ local upstream_url = provider.upstream_url .. ngx.var.request_uri
 
 -- Non-streaming: direct proxy
 if not is_streaming then
+    local cb_ok, cb_reason = circuit_breaker.allow_request(provider_name)
+    if not cb_ok then
+        ngx.log(ngx.WARN, "[rid=", rid, "] circuit breaker blocked ", provider_name, " (", cb_reason, ")")
+        ngx.status = 503
+        ngx.header["Content-Type"] = "application/json"
+        ngx.header["Retry-After"]  = "30"
+        ngx.say('{"error":"Upstream temporarily unavailable — retry in 30s"}')
+        pcall(tracking.record, user, provider_name, model, 0, 0,
+              { latency_ms = 0, status = 503 })
+        return
+    end
+
     local httpc = http.new()
     httpc:set_timeout(60000)
 
@@ -186,11 +199,14 @@ if not is_streaming then
         body    = body_str,
         headers = upstream_headers,
         ssl_verify = true,
+        keepalive_timeout = 60000,  -- 60s idle
+        keepalive_pool    = 32,     -- pool size per worker
     })
     local latency_ms = (ngx.now() - t0) * 1000
 
     if not res then
         ngx.log(ngx.ERR, "[rid=", rid, "] upstream error (user=", user, " model=", model, "): ", proxy_err)
+        circuit_breaker.record(provider_name, nil, proxy_err)
         ngx.status = 502
         ngx.header["Content-Type"] = "application/json"
         ngx.say('{"error":"Upstream request failed — check logs for details"}')
@@ -218,6 +234,7 @@ if not is_streaming then
 
     ngx.print(response_body)
     ngx.flush(true)  -- send to client before tracking write
+    circuit_breaker.record(provider_name, res.status, nil)
     pcall(tracking.record, user, provider_name, model, input_tokens, output_tokens,
           { latency_ms = latency_ms, status = res.status, stop_reason = stop_reason,
             cache_creation = cache_creation, cache_read = cache_read })
@@ -225,6 +242,18 @@ if not is_streaming then
 end
 
 -- Streaming path: proxy directly
+local cb_ok, cb_reason = circuit_breaker.allow_request(provider_name)
+if not cb_ok then
+    ngx.log(ngx.WARN, "[rid=", rid, "] circuit breaker blocked ", provider_name, " (", cb_reason, ")")
+    ngx.status = 503
+    ngx.header["Content-Type"] = "application/json"
+    ngx.header["Retry-After"]  = "30"
+    ngx.say('{"error":"Upstream temporarily unavailable — retry in 30s"}')
+    pcall(tracking.record, user, provider_name, model, 0, 0,
+          { latency_ms = 0, status = 503 })
+    return
+end
+
 local httpc = http.new()
 httpc:set_timeout(120000)
 local t0_stream = ngx.now()
@@ -251,6 +280,7 @@ local ok, conn_err = httpc:connect({
 })
 if not ok then
     ngx.log(ngx.ERR, "[rid=", rid, "] streaming connect error (user=", user, "): ", conn_err)
+    circuit_breaker.record(provider_name, nil, conn_err)
     httpc:close()
     ngx.status = 502
     ngx.header["Content-Type"] = "application/json"
@@ -270,6 +300,7 @@ local res, req_err = httpc:request({
 
 if not res then
     ngx.log(ngx.ERR, "[rid=", rid, "] streaming upstream error (user=", user, "): ", req_err)
+    circuit_breaker.record(provider_name, nil, req_err)
     httpc:close()
     ngx.status = 502
     ngx.header["Content-Type"] = "application/json"
@@ -338,6 +369,7 @@ end
 if res.status == 200 then track_rl_window(res) end
 if res.status == 429 then track_rl_429(res, user, model, provider_name) end
 
+circuit_breaker.record(provider_name, res.status, had_read_err and "read_error" or nil)
 pcall(tracking.record, user, provider_name, model, input_tokens, output_tokens,
       { latency_ms = (ngx.now() - t0_stream) * 1000, status = res.status, stop_reason = stop_reason,
         cache_creation = cache_creation, cache_read = cache_read })
