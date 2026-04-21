@@ -1,6 +1,5 @@
--- console_serve.lua: serves /console HTML with ADMIN_TOKEN injected as a
--- meta tag. Fetches from the console JS use that token as X-Admin-Token
--- so the admin API stays reachable when ADMIN_TOKEN is set.
+-- console_serve.lua: serves /console HTML. Auth is handled via HttpOnly session
+-- cookie issued by /internal/admin/login — no token injection into the DOM.
 if os.getenv("CONSOLE_ENABLED") ~= "1" then
     ngx.status = 404
     ngx.header["Content-Type"] = "application/json"
@@ -15,17 +14,6 @@ if not f then
     return
 end
 local html = f:read("*a"); f:close()
-
-local token = os.getenv("ADMIN_TOKEN") or ""
-if token ~= "" then
-    -- Escape in order: & first so later replacements are not double-encoded.
-    token = token:gsub("&", "&amp;")
-                 :gsub('"', "&quot;")
-                 :gsub("<", "&lt;")
-                 :gsub(">", "&gt;")
-    html = html:gsub("</head>",
-        '<meta name="admin-token" content="' .. token .. '"></head>', 1)
-end
 
 ngx.header["Content-Security-Policy"] =
     "default-src 'self'; " ..
