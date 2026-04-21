@@ -332,35 +332,73 @@ select.input{cursor:pointer;-webkit-appearance:none;padding-right:28px;
 const $ = id => document.getElementById(id);
 const esc = s => String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
 
-// Inject X-Admin-Token header into /internal/admin/* calls when the server
-// embedded a token (meta tag is written by the Lua /console handler).
-// Also wraps every fetch with a 10-second AbortSignal timeout.
+// Fetch wrapper: credentials:include for cookie-based admin auth + 10s timeout.
+// On 401, shows login dialog and retries once.
+// X-Admin-Token header auth (curl/CLI) still works server-side.
 (() => {
-  const meta = document.querySelector('meta[name="admin-token"]');
-  const token = meta && meta.content ? meta.content : '';
-  const _fetch = window.fetch.bind(window);
+  let _loginInProgress = false;
+
+  async function _doLogin() {
+    if (_loginInProgress) return;
+    _loginInProgress = true;
+    const token = prompt('Admin token required:');
+    if (!token) { _loginInProgress = false; return; }
+    try {
+      const r = await window._rawFetch('/internal/admin/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ token }),
+        credentials: 'include',
+      });
+      if (!r.ok) { alert('Login failed — check token'); }
+    } catch (e) {
+      alert('Login error: ' + e.message);
+    }
+    _loginInProgress = false;
+  }
+
+  window._rawFetch = window.fetch.bind(window);
   window.fetch = (url, opts) => {
     opts = opts || {};
-    if (typeof url === 'string' && url.startsWith('/internal/admin') && token) {
-      opts.headers = Object.assign({}, opts.headers || {}, { 'X-Admin-Token': token });
+    const mergedOpts = {
+      credentials: 'include',
+      ...opts,
+    };
+    // Strip any leftover X-Admin-Token headers — auth is now cookie-only in the browser
+    if (mergedOpts.headers) {
+      delete mergedOpts.headers['X-Admin-Token'];
+      delete mergedOpts.headers['x-admin-token'];
     }
     // Attach a 10-second timeout via AbortSignal
-    let signal = opts.signal;
-    let cleanup;
-    if (!signal) {
+    if (!mergedOpts.signal) {
       if (typeof AbortSignal !== 'undefined' && AbortSignal.timeout) {
-        signal = AbortSignal.timeout(10000);
+        mergedOpts.signal = AbortSignal.timeout(10000);
       } else {
         const ctrl = new AbortController();
         const tid = setTimeout(() => ctrl.abort(), 10000);
-        cleanup = () => clearTimeout(tid);
-        signal = ctrl.signal;
+        const p = window._rawFetch(url, mergedOpts);
+        p.then(() => clearTimeout(tid), () => clearTimeout(tid));
+        return p.then(async r => {
+          if (r.status === 401 && typeof url === 'string' && !url.includes('/login')) {
+            await _doLogin();
+            return window._rawFetch(url, mergedOpts);
+          }
+          return r;
+        }).catch(err => {
+          if (err && err.name === 'AbortError') {
+            throw new Error('Request timed out after 10s — check proxy/network');
+          }
+          throw err;
+        });
       }
-      opts.signal = signal;
     }
-    const p = _fetch(url, opts);
-    if (cleanup) p.then(cleanup, cleanup);
-    return p.catch(err => {
+    return window._rawFetch(url, mergedOpts).then(async r => {
+      if (r.status === 401 && typeof url === 'string' && !url.includes('/login')) {
+        await _doLogin();
+        return window._rawFetch(url, mergedOpts);
+      }
+      return r;
+    }).catch(err => {
       if (err && err.name === 'AbortError') {
         throw new Error('Request timed out after 10s — check proxy/network');
       }
