@@ -269,31 +269,43 @@ case "$SUBCMD" in
     ;;
 
   switch)
-    TARGET="${1:?Usage: admin.sh switch <local|direct>}"
+    TARGET="${1:?Usage: admin.sh switch <local|nutc|direct>}"
     CLAUDE_SETTINGS="$HOME/.claude/settings.json"
     if [ ! -f "$CLAUDE_SETTINGS" ]; then
       echo -e "${RED}Claude settings not found at $CLAUDE_SETTINGS${NC}" >&2; exit 1
     fi
 
+    set_base_url() {
+      local url="$1" label="$2"
+      local tmp="${CLAUDE_SETTINGS}.tmp"
+      jq --arg url "$url" '.env //= {} | .env.ANTHROPIC_BASE_URL = $url' \
+        "$CLAUDE_SETTINGS" > "$tmp" && mv "$tmp" "$CLAUDE_SETTINGS"
+      echo -e "${GRN}Switched to ${label}${NC} ($url)"
+      echo -e "  ${DIM}Restart Claude Code to apply${NC}"
+    }
+
+    wait_health() {
+      local url="$1" label="$2" attempts=0
+      until curl -sf --max-time 2 "$url/health" >/dev/null 2>&1; do
+        attempts=$((attempts + 1))
+        if [ $attempts -ge 10 ]; then
+          echo -e "  ${RED}✗${NC} ${label} proxy not reachable at $url after 20s" >&2
+          return 1
+        fi
+        echo -e "  ${DIM}  Waiting for ${label}... (${attempts}/10)${NC}"
+        sleep 2
+      done
+    }
+
     case "$TARGET" in
       local)
-        # Safety: check proxy is reachable with retries (10 attempts, 2s between each)
-        attempts=0
-        until curl -sf --max-time 2 "$PROXY/health" >/dev/null 2>&1; do
-          attempts=$((attempts + 1))
-          if [ $attempts -ge 10 ]; then
-            echo -e "  ${RED}✗${NC} Proxy not reachable after 20s — start it first:" >&2
-            echo -e "  ${DIM}  DOCKER_CONTEXT=colima docker compose up -d${NC}" >&2
-            exit 1
-          fi
-          echo -e "  ${DIM}  Waiting for proxy... (${attempts}/10)${NC}"
-          sleep 2
-        done
-        TMP="${CLAUDE_SETTINGS}.tmp"
-        jq --arg url "$PROXY" '.env //= {} | .env.ANTHROPIC_BASE_URL = $url' \
-          "$CLAUDE_SETTINGS" > "$TMP" && mv "$TMP" "$CLAUDE_SETTINGS"
-        echo -e "${GRN}Switched to local proxy${NC} ($PROXY)"
-        echo -e "  ${DIM}Restart Claude Code to apply${NC}"
+        wait_health "$PROXY" "local" || exit 1
+        set_base_url "$PROXY" "local proxy"
+        ;;
+      nutc)
+        NUTC="${NUTC_URL:-http://192.168.189.4:8888}"
+        wait_health "$NUTC" "nutc" || exit 1
+        set_base_url "$NUTC" "nutc proxy"
         ;;
       direct)
         TMP="${CLAUDE_SETTINGS}.tmp"
@@ -302,8 +314,12 @@ case "$SUBCMD" in
         echo -e "${GRN}Switched to direct Anthropic connection${NC}"
         echo -e "  ${DIM}Restart Claude Code to apply. Safe to stop the proxy now.${NC}"
         ;;
+      status)
+        CUR=$(jq -r '.env.ANTHROPIC_BASE_URL // "direct (unset)"' "$CLAUDE_SETTINGS")
+        echo -e "Current ANTHROPIC_BASE_URL: ${BOLD}${CUR}${NC}"
+        ;;
       *)
-        echo -e "${RED}Unknown target '$TARGET' — use 'local' or 'direct'${NC}" >&2; exit 1
+        echo -e "${RED}Unknown target '$TARGET' — use 'local', 'nutc', 'direct', or 'status'${NC}" >&2; exit 1
         ;;
     esac
     ;;
@@ -577,8 +593,10 @@ YAML
     echo -e "${BOLD}gateii admin${NC}"
     echo ""
     echo "  ${BOLD}Proxy routing${NC}"
-    echo "  switch local                    Route Claude Code through proxy (checks health first)"
+    echo "  switch local                    Route Claude Code through the local proxy (checks health first)"
+    echo "  switch nutc                     Route Claude Code through the NUTC proxy (NUTC_URL in .env)"
     echo "  switch direct                   Route Claude Code directly to Anthropic"
+    echo "  switch status                   Show the current ANTHROPIC_BASE_URL"
     echo ""
     echo "  ${BOLD}Key management${NC} (apikey mode — structured per-user upstream routing)"
     echo "  keys                                    All proxy keys (masked)"
