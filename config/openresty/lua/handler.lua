@@ -120,8 +120,9 @@ end
 -- Get request headers once — reused for both provider selection and header forwarding
 local req_headers = ngx.req.get_headers()
 
--- Resolve provider (whitelist enforced by providers.get)
-local provider_name = req_headers["x-provider"] or "anthropic"
+-- Resolve provider. Prefer the per-user pin from auth.lua (ngx.ctx.upstream_provider).
+-- x-provider header remains supported as an override for ad-hoc testing + passthrough mode.
+local provider_name = ngx.ctx.upstream_provider or req_headers["x-provider"] or "anthropic"
 local provider = providers.get(provider_name)
 if not provider then
     ngx.status = 400
