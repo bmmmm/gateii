@@ -656,4 +656,5 @@ do
 end
 
 ngx.status = 404
-ngx.say('{"error":"Unknown admin endpoint — available: /internal/admin/{block,unblock,limit,status,usage,keys,addkey,overview,providers,llm-prices,openrouter-models,health,bootstrap}"}')
+ngx.say('{"error":"Unknown admin endpoint — available: /internal/admin/{block,unblock,limit,status,'
+    .. 'usage,keys,addkey,overview,providers,llm-prices,openrouter-models,health,bootstrap}"}')
