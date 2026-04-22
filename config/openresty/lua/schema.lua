@@ -93,20 +93,34 @@ function _M.validate_limits(data)
     return true, nil
 end
 
--- Validate keys.json (map of key -> user)
+-- Validate keys.json — structured format:
+--   { "<api_key>": { "user":"...", "provider":"...", "upstream_key":"...",
+--                    "created_at":"?", "bootstrap_code":"?" } }
+-- Flat {key: user-string} format is rejected (abolished).
 function _M.validate_keys(data)
     if not is_table(data) then
-        return false, "keys.json: root must be an object (map key -> user)"
+        return false, "keys.json: root must be an object (map key -> {user, provider, upstream_key})"
     end
-    for key, user in pairs(data) do
+    for key, entry in pairs(data) do
         if not is_string(key) then
             return false, "keys.json: key must be a non-empty string"
         end
         if #key < 8 then
             return false, "keys.json: key '" .. key:sub(1, 8) .. "...' too short (min 8 chars)"
         end
-        if not is_string(user) then
-            return false, "keys.json[" .. key:sub(1, 12) .. "...]: user must be a non-empty string"
+        local short = key:sub(1, 12) .. "..."
+        if type(entry) ~= "table" then
+            return false, "keys.json[" .. short .. "]: value must be an object with user/provider/upstream_key"
+                .. " (flat {key:user} format is no longer supported — run admin.sh migrate)"
+        end
+        if not is_string(entry.user) then
+            return false, "keys.json[" .. short .. "].user: must be a non-empty string"
+        end
+        if not is_string(entry.provider) then
+            return false, "keys.json[" .. short .. "].provider: must be a non-empty string"
+        end
+        if not is_string(entry.upstream_key) then
+            return false, "keys.json[" .. short .. "].upstream_key: must be a non-empty string"
         end
     end
     return true, nil

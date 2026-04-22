@@ -117,30 +117,59 @@ case "$SUBCMD" in
     if [ "$COUNT" -eq 0 ]; then
       echo -e "  ${DIM}No keys configured${NC}"
     else
-      jq -r 'to_entries[] | "\(.key[:12])...\(.key[-6:])\t\(.value)"' "$KEYS_FILE" 2>/dev/null | \
-        while IFS=$'\t' read -r masked user; do
-          echo -e "  ${CYN}${masked}${NC}  ->  ${BOLD}${user}${NC}"
+      # Structured format: {key: {user, provider, upstream_key}}
+      jq -r 'to_entries[] |
+        "\(.key[:12])...\(.key[-6:])\t\(.value.user // "?")\t\(.value.provider // "?")\t\(.value.upstream_key // "" | if length > 8 then .[:6] + "***" + .[-4:] else . end)"' \
+        "$KEYS_FILE" 2>/dev/null | \
+        while IFS=$'\t' read -r masked user provider ukey; do
+          echo -e "  ${CYN}${masked}${NC}  ${BOLD}${user}${NC}  ${DIM}[${provider}]${NC}  upstream=${DIM}${ukey}${NC}"
         done
     fi
     echo ""
     ;;
 
   add)
-    USER="${1:?Usage: admin.sh add <user> [key]}"
-    KEY="${2:-sk-proxy-$(openssl rand -hex 16)}"
+    # Usage: admin.sh add <user> --provider <p> --upstream-key <k> [--key <proxy-key>]
+    USER=""
+    PROVIDER=""
+    UPSTREAM_KEY=""
+    PROXY_KEY=""
+    while [ $# -gt 0 ]; do
+      case "$1" in
+        --provider)     PROVIDER="${2:?}"; shift 2 ;;
+        --upstream-key) UPSTREAM_KEY="${2:?}"; shift 2 ;;
+        --key)          PROXY_KEY="${2:?}"; shift 2 ;;
+        -*) echo -e "${RED}Unknown flag: $1${NC}" >&2; exit 1 ;;
+        *) [ -z "$USER" ] && USER="$1" || { echo -e "${RED}Too many positional args${NC}" >&2; exit 1; }; shift ;;
+      esac
+    done
+    if [ -z "$USER" ] || [ -z "$PROVIDER" ] || [ -z "$UPSTREAM_KEY" ]; then
+      echo -e "${RED}Usage: admin.sh add <user> --provider <p> --upstream-key <k> [--key <proxy-key>]${NC}" >&2
+      echo -e "${DIM}  Example: admin.sh add alice --provider anthropic --upstream-key sk-ant-api03-...${NC}" >&2
+      echo -e "${DIM}  Hint: for provisioning via handshake use 'admin.sh bootstrap create'${NC}" >&2
+      exit 1
+    fi
     validate_user "$USER"
-    validate_key "$KEY"
-    write_keys --arg key "$KEY" --arg user "$USER" '. + {($key): $user}'
+    [ -z "$PROXY_KEY" ] && PROXY_KEY="sk-proxy-$(openssl rand -hex 16)"
+    validate_key "$PROXY_KEY"
+    CREATED_AT="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+    write_keys \
+      --arg key "$PROXY_KEY" \
+      --arg user "$USER" \
+      --arg provider "$PROVIDER" \
+      --arg upstream "$UPSTREAM_KEY" \
+      --arg created "$CREATED_AT" \
+      '. + {($key): {user: $user, provider: $provider, upstream_key: $upstream, created_at: $created}}'
     reload_proxy
-    echo -e "${GRN}Added key for ${BOLD}$USER${NC}"
-    echo -e "  Key: ${CYN}$KEY${NC}"
-    echo -e "  ${DIM}Set ANTHROPIC_API_KEY=$KEY in your Claude settings${NC}"
+    echo -e "${GRN}Added key for ${BOLD}$USER${NC} (${PROVIDER})"
+    echo -e "  Key: ${CYN}$PROXY_KEY${NC}"
+    echo -e "  ${DIM}Set ANTHROPIC_API_KEY=$PROXY_KEY in your Claude settings${NC}"
     ;;
 
   revoke)
     KEY="${1:?Usage: admin.sh revoke <key>}"
     validate_key "$KEY"
-    USER=$(jq -r --arg key "$KEY" '.[$key] // empty' "$KEYS_FILE" 2>/dev/null)
+    USER=$(jq -r --arg key "$KEY" '.[$key].user // empty' "$KEYS_FILE" 2>/dev/null)
     if [ -z "$USER" ]; then
       echo -e "${RED}Key not found${NC}" >&2; exit 1
     fi
@@ -153,18 +182,30 @@ case "$SUBCMD" in
   rotate)
     USER="${1:?Usage: admin.sh rotate <user>}"
     validate_user "$USER"
+    # Pick the first existing entry for this user to preserve provider + upstream_key
+    EXISTING=$(jq -r --arg u "$USER" '[to_entries[] | select(.value.user == $u)] | .[0] // empty' "$KEYS_FILE")
+    if [ -z "$EXISTING" ] || [ "$EXISTING" = "null" ]; then
+      echo -e "${RED}No existing key for $USER — use 'admin.sh add' instead${NC}" >&2; exit 1
+    fi
+    PROVIDER=$(echo "$EXISTING" | jq -r '.value.provider')
+    UPSTREAM_KEY=$(echo "$EXISTING" | jq -r '.value.upstream_key')
     NEW_KEY="sk-proxy-$(openssl rand -hex 16)"
     validate_key "$NEW_KEY"
     # Show old keys being revoked
-    jq -r --arg user "$USER" 'to_entries[] | select(.value == $user) | .key' "$KEYS_FILE" | \
+    jq -r --arg user "$USER" 'to_entries[] | select(.value.user == $user) | .key' "$KEYS_FILE" | \
       while read -r old_key; do
         echo -e "  ${DIM}Revoked: ${old_key:0:12}...${old_key: -6}${NC}"
       done
-    # Remove all old keys for user, add new one
-    write_keys --arg user "$USER" --arg new_key "$NEW_KEY" \
-      '[to_entries[] | select(.value != $user)] | from_entries + {($new_key): $user}'
+    CREATED_AT="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+    write_keys \
+      --arg user "$USER" \
+      --arg new_key "$NEW_KEY" \
+      --arg provider "$PROVIDER" \
+      --arg upstream "$UPSTREAM_KEY" \
+      --arg created "$CREATED_AT" \
+      '[to_entries[] | select(.value.user != $user)] | from_entries + {($new_key): {user: $user, provider: $provider, upstream_key: $upstream, created_at: $created}}'
     reload_proxy
-    echo -e "${GRN}New key for ${BOLD}$USER${NC}: ${CYN}$NEW_KEY${NC}"
+    echo -e "${GRN}New key for ${BOLD}$USER${NC} (${PROVIDER}): ${CYN}$NEW_KEY${NC}"
     ;;
 
   block)
@@ -449,6 +490,88 @@ YAML
     esac
     ;;
 
+  bootstrap)
+    # Usage:
+    #   admin.sh bootstrap create --user <u> --provider <p> --upstream-key <k> [--ttl 600]
+    #   admin.sh bootstrap list
+    #   admin.sh bootstrap revoke <code>
+    ACTION="${1:?Usage: admin.sh bootstrap {create|list|revoke}}"
+    shift
+    case "$ACTION" in
+      create)
+        USER=""; PROVIDER=""; UPSTREAM_KEY=""; TTL=600
+        while [ $# -gt 0 ]; do
+          case "$1" in
+            --user)         USER="${2:?}"; shift 2 ;;
+            --provider)     PROVIDER="${2:?}"; shift 2 ;;
+            --upstream-key) UPSTREAM_KEY="${2:?}"; shift 2 ;;
+            --ttl)          TTL="${2:?}"; shift 2 ;;
+            *) echo -e "${RED}Unknown flag: $1${NC}" >&2; exit 1 ;;
+          esac
+        done
+        if [ -z "$USER" ] || [ -z "$PROVIDER" ] || [ -z "$UPSTREAM_KEY" ]; then
+          echo -e "${RED}Usage: admin.sh bootstrap create --user <u> --provider <p> --upstream-key <k> [--ttl 600]${NC}" >&2
+          exit 1
+        fi
+        validate_user "$USER"
+        [[ "$TTL" =~ ^[0-9]+$ ]] || { echo -e "${RED}--ttl must be a positive integer${NC}" >&2; exit 1; }
+        BODY=$(jq -nc --arg u "$USER" --arg p "$PROVIDER" --arg k "$UPSTREAM_KEY" --argjson t "$TTL" \
+          '{user: $u, provider: $p, upstream_key: $k, ttl: $t}')
+        RESULT=$(admin_curl -sf --max-time 5 -X POST "$ADMIN/bootstrap" \
+          -H 'Content-Type: application/json' -d "$BODY" 2>/dev/null || echo "")
+        if ! echo "$RESULT" | jq -e '.code' >/dev/null 2>&1; then
+          echo -e "${RED}Failed to create bootstrap — proxy unreachable or error${NC}" >&2
+          [ -n "$RESULT" ] && echo "$RESULT" >&2
+          exit 1
+        fi
+        CODE=$(echo "$RESULT" | jq -r '.code')
+        SECRET=$(echo "$RESULT" | jq -r '.secret')
+        EXPIRES=$(echo "$RESULT" | jq -r '.expires')
+        echo ""
+        echo -e "${BOLD}Bootstrap created for ${GRN}$USER${NC}${BOLD} (${PROVIDER}):${NC}"
+        echo -e "  code:    ${CYN}$CODE${NC}"
+        echo -e "  secret:  ${CYN}$SECRET${NC}"
+        echo -e "  expires: ${DIM}$EXPIRES${NC}  (TTL ${TTL}s)"
+        echo ""
+        echo -e "${BOLD}Hand these to the client (one-time):${NC}"
+        echo -e "  ${DIM}export GATEII_URL=$PROXY${NC}"
+        echo -e "  ${DIM}export GATEII_BOOTSTRAP_CODE=$CODE${NC}"
+        echo -e "  ${DIM}export GATEII_BOOTSTRAP_SECRET=$SECRET${NC}"
+        echo -e "  ${DIM}bash scripts/gateii-connect.sh${NC}"
+        echo ""
+        ;;
+      list)
+        RESULT=$(admin_curl -sf --max-time 5 "$ADMIN/bootstrap" 2>/dev/null || echo "")
+        if [ -z "$RESULT" ]; then
+          echo -e "${RED}Proxy unreachable${NC}" >&2; exit 1
+        fi
+        PENDING=$(echo "$RESULT" | jq '.pending // [] | length')
+        SESSIONS=$(echo "$RESULT" | jq '.sessions // [] | length')
+        echo ""
+        echo -e "${BOLD}Bootstrap state${NC}"
+        echo -e "  ${DIM}Pending codes (awaiting client exchange):${NC}"
+        echo "$RESULT" | jq -r '.pending // [] | .[] | "    \(.code)  \(.user)  \(.provider)  ttl=\(.ttl)s"' 2>/dev/null
+        [ "$PENDING" -eq 0 ] && echo -e "    ${DIM}(none)${NC}"
+        echo -e "  ${DIM}Active sessions (key issued, awaiting confirm):${NC}"
+        echo "$RESULT" | jq -r '.sessions // [] | .[] | "    \(.confirm_token[:8])...\(.confirm_token[-4:])  \(.user)  ttl=\(.ttl)s"' 2>/dev/null
+        [ "$SESSIONS" -eq 0 ] && echo -e "    ${DIM}(none)${NC}"
+        echo ""
+        ;;
+      revoke)
+        CODE="${1:?Usage: admin.sh bootstrap revoke <code>}"
+        RESULT=$(admin_curl -sf --max-time 5 -X DELETE "$ADMIN/bootstrap/$CODE" 2>/dev/null || echo "")
+        if echo "$RESULT" | jq -e '.ok == true' >/dev/null 2>&1; then
+          echo -e "${GRN}Revoked bootstrap ${CYN}$CODE${NC}"
+        else
+          echo -e "${RED}Revoke failed — code not found or proxy error${NC}" >&2; exit 1
+        fi
+        ;;
+      *)
+        echo -e "${RED}Unknown bootstrap action '$ACTION' — use create, list, revoke${NC}" >&2; exit 1
+        ;;
+    esac
+    ;;
+
   help|--help|-h|"")
     echo ""
     echo -e "${BOLD}gateii admin${NC}"
@@ -457,11 +580,18 @@ YAML
     echo "  switch local                    Route Claude Code through proxy (checks health first)"
     echo "  switch direct                   Route Claude Code directly to Anthropic"
     echo ""
-    echo "  ${BOLD}Key management${NC} (apikey mode)"
-    echo "  keys                            All proxy keys (masked)"
-    echo "  add <user> [key]                Add proxy key (random if omitted)"
-    echo "  revoke <key>                    Revoke a key"
-    echo "  rotate <user>                   New key, revoke all old ones"
+    echo "  ${BOLD}Key management${NC} (apikey mode — structured per-user upstream routing)"
+    echo "  keys                                    All proxy keys (masked)"
+    echo "  add <user> --provider P --upstream-key K [--key sk-proxy-...]"
+    echo "                                          Add proxy key with per-user upstream binding"
+    echo "  revoke <key>                            Revoke a key"
+    echo "  rotate <user>                           New key, preserves provider + upstream_key"
+    echo ""
+    echo "  ${BOLD}Bootstrap handshake${NC} (provision clients without copying keys manually)"
+    echo "  bootstrap create --user U --provider P --upstream-key K [--ttl 600]"
+    echo "                                          One-time code + secret for client handshake"
+    echo "  bootstrap list                          Pending codes + active sessions"
+    echo "  bootstrap revoke <code>                 Cancel a pending bootstrap"
     echo ""
     echo "  ${BOLD}Limits & blocking${NC}"
     echo "  block <user> [seconds]          Block user (default 86400 = 1 day)"
