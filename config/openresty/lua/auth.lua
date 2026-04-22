@@ -79,23 +79,40 @@ if proxy_mode == "passthrough" then
         ngx.ctx.upstream_auth_type = "bearer"
     end
 else
-    -- Apikey mode: check shared dict cache, then keys.json
+    -- Apikey mode: check shared dict cache, then keys.json.
+    -- keys.json entries are structured: {user, provider, upstream_key}; per-user
+    -- upstream routing — each proxy key pins to its own provider + upstream credential.
     local cached = auth_cache:get(api_key)
     if cached == false then
         -- Negative cache hit — known invalid key
         return reject(401, "Invalid API key — check your key or run admin.sh add <user>")
     end
-    user = cached
-    if not user then
+    local entry
+    if cached then
+        entry = cjson.decode(cached)
+    end
+    if not entry then
         local keys = proxy_config.load_keys()
         local val = keys[api_key]
-        if not val or val == "" then
+        if type(val) ~= "table" or not val.user or not val.provider or not val.upstream_key then
             auth_cache:set(api_key, false, 60)  -- negative cache: 60s
             return reject(401, "Invalid API key — check your key or run admin.sh add <user>")
         end
-        user = val
-        auth_cache:set(api_key, user, 300)
+        entry = val
+        local encoded = cjson.encode({
+            user         = entry.user,
+            provider     = entry.provider,
+            upstream_key = entry.upstream_key,
+        })
+        if encoded then auth_cache:set(api_key, encoded, 300) end
     end
+    user = entry.user
+    ngx.ctx.upstream_key       = entry.upstream_key
+    ngx.ctx.upstream_provider  = entry.provider
+    -- Anthropic always uses x-api-key; Bearer is only for OAuth passthrough.
+    -- For provisioned upstream keys we default to the provider's native scheme;
+    -- providers.build_headers() handles the actual format.
+    ngx.ctx.upstream_auth_type = "x-api-key"
 end
 -- Sanitize user for safe key construction (must match tracking.lua)
 user = sanitize(user)
