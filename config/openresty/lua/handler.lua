@@ -169,9 +169,39 @@ if type(body_obj.messages) == "table" then
 end
 
 -- Inject stream_options so OpenAI-format providers return usage in streaming responses
+local body_mutated = false
 if is_streaming and provider.stream_options_usage then
     body_obj.stream_options = body_obj.stream_options or {}
     body_obj.stream_options.include_usage = true
+    body_mutated = true
+end
+
+-- OpenRouter free-tier auto-fallback: if the requested model ends with ":free"
+-- and the caller didn't already supply a `models` array, inject one from the
+-- provider's free_fallback_pool. OR then retries the next entry on upstream
+-- 429/provider errors, transparently to the client.
+if provider.free_fallback_pool and type(body_obj.models) ~= "table"
+   and type(body_obj.model) == "string" and body_obj.model:sub(-5) == ":free" then
+    -- OpenRouter caps the `models` array at 3 entries; truncate silently.
+    local MAX_FALLBACK = 3
+    local seen = { [body_obj.model] = true }
+    local pool = { body_obj.model }
+    for _, m in ipairs(provider.free_fallback_pool) do
+        if #pool >= MAX_FALLBACK then break end
+        if not seen[m] then
+            seen[m] = true
+            pool[#pool + 1] = m
+        end
+    end
+    if #pool > 1 then
+        body_obj.models = pool
+        body_mutated = true
+        ngx.log(ngx.INFO, "[rid=", rid, "] openrouter free-pool fallback: ",
+                table.concat(pool, ","))
+    end
+end
+
+if body_mutated then
     body_str = cjson.encode(body_obj)
 end
 
