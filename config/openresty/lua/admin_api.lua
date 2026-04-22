@@ -237,8 +237,25 @@ end
 if uri == "/internal/admin/keys" and method == "GET" then
     local parsed = read_keys_file()
     local keys_data = {}
-    for key, user in pairs(parsed) do
-        keys_data[#keys_data + 1] = { key = key:sub(1, 12) .. "..." .. key:sub(-6), user = user }
+    for key, entry in pairs(parsed) do
+        local masked_key = key:sub(1, 12) .. "..." .. key:sub(-6)
+        local row = { key = masked_key }
+        if type(entry) == "table" then
+            row.user         = entry.user
+            row.provider     = entry.provider
+            local uk = entry.upstream_key or ""
+            -- Mask upstream key: first 6 + last 4 when long enough, else show full
+            if #uk > 12 then
+                row.upstream_key = uk:sub(1, 6) .. "***" .. uk:sub(-4)
+            else
+                row.upstream_key = uk
+            end
+            row.created_at = entry.created_at
+        else
+            -- Defensive: legacy flat entries shouldn't pass schema validation anymore
+            row.user = tostring(entry)
+        end
+        keys_data[#keys_data + 1] = row
     end
     ngx.say(cjson.encode({ keys = keys_data, count = #keys_data }))
     return
@@ -343,7 +360,8 @@ if uri == "/internal/admin/usage-all" and method == "GET" then
     return
 end
 
--- POST /internal/admin/addkey?user=X  body: {"key":"sk-proxy-..."}
+-- POST /internal/admin/addkey?user=X
+--   body: {"key":"sk-proxy-...","provider":"anthropic","upstream_key":"sk-ant-..."}
 if uri == "/internal/admin/addkey" and method == "POST" then
     ngx.req.read_body()
     local args = ngx.req.get_uri_args()
@@ -355,61 +373,65 @@ if uri == "/internal/admin/addkey" and method == "POST" then
     end
 
     local body = ngx.req.get_body_data()
-    local key = ""
+    local key, provider, upstream_key = "", "", ""
     if body then
         local obj = cjson.decode(body)
-        if obj then key = tostring(obj.key or "") end
+        if obj then
+            key          = tostring(obj.key or "")
+            provider     = tostring(obj.provider or "")
+            upstream_key = tostring(obj.upstream_key or "")
+        end
     end
-    if key == "" then
+    if key == "" or provider == "" or upstream_key == "" then
         ngx.status = 400
-        ngx.say('{"error":"Missing key — send JSON body: {\"key\":\"sk-proxy-...\"}"}')
+        ngx.say('{"error":"Missing fields — JSON body requires: {key, provider, upstream_key}"}')
         return
     end
-    -- Validate key length
+    -- Validate key length + format
     if #key < 8 then
-        ngx.status = 400
-        ngx.say('{"error":"API key too short — min 8 chars"}')
-        return
+        ngx.status = 400; ngx.say('{"error":"API key too short — min 8 chars"}'); return
     end
     if #key > 256 then
-        ngx.status = 400
-        ngx.say('{"error":"API key too long — max 256 chars"}')
-        return
+        ngx.status = 400; ngx.say('{"error":"API key too long — max 256 chars"}'); return
     end
-    -- Validate key format
     if not key:match("^sk%-proxy%-[a-f0-9]+$") and not key:match("^sk%-[a-zA-Z0-9_%-]+$") then
-        ngx.status = 400
-        ngx.say('{"error":"Invalid key format"}')
-        return
+        ngx.status = 400; ngx.say('{"error":"Invalid key format"}'); return
     end
-    -- Read current keys, add, write back
+    if #upstream_key < 8 then
+        ngx.status = 400; ngx.say('{"error":"upstream_key too short — min 8 chars"}'); return
+    end
+    if #upstream_key > 512 then
+        ngx.status = 400; ngx.say('{"error":"upstream_key too long — max 512 chars"}'); return
+    end
+    if not provider:match("^[a-z][a-z0-9_]+$") then
+        ngx.status = 400; ngx.say('{"error":"provider must match ^[a-z][a-z0-9_]+$"}'); return
+    end
+
     local keys_data = read_keys_file()
-    keys_data[key] = user
+    keys_data[key] = {
+        user          = user,
+        provider      = provider,
+        upstream_key  = upstream_key,
+        created_at    = os.date("!%Y-%m-%dT%H:%M:%SZ"),
+    }
     local encoded = cjson.encode(keys_data)
     if not encoded then
-        ngx.status = 500
-        ngx.say('{"error":"Failed to encode keys"}')
-        return
+        ngx.status = 500; ngx.say('{"error":"Failed to encode keys"}'); return
     end
     local tmp = "/etc/nginx/data/keys.json.tmp"
     local wf = io.open(tmp, "w")
     if not wf then
-        ngx.status = 500
-        ngx.say('{"error":"Cannot write keys.json"}')
-        return
+        ngx.status = 500; ngx.say('{"error":"Cannot write keys.json"}'); return
     end
-    wf:write(encoded)
-    wf:close()
+    wf:write(encoded); wf:close()
     local rok, rerr = os.rename(tmp, "/etc/nginx/data/keys.json")
     if not rok then
         ngx.log(ngx.ERR, "addkey: rename failed: ", rerr)
-        ngx.status = 500
-        ngx.say('{"error":"Failed to persist keys.json — check server logs"}')
-        return
+        ngx.status = 500; ngx.say('{"error":"Failed to persist keys.json — check server logs"}'); return
     end
     -- Clear any negative cache entry so the new key is usable immediately
     ngx.shared.auth_cache:delete(key)
-    ngx.say(cjson.encode({ok = true, user = user}))
+    ngx.say(cjson.encode({ ok = true, user = user, provider = provider }))
     return
 end
 
@@ -580,5 +602,58 @@ if uri == "/internal/admin/health" and method == "GET" then
     return
 end
 
+-- Bootstrap admin endpoints (protected by same admin auth as the rest)
+--   POST   /internal/admin/bootstrap          — create bootstrap (body: {user, provider, upstream_key, ttl?})
+--   GET    /internal/admin/bootstrap          — list pending + sessions
+--   DELETE /internal/admin/bootstrap/<code>   — revoke a pending bootstrap
+do
+    local is_bootstrap = uri == "/internal/admin/bootstrap"
+        or uri:sub(1, #"/internal/admin/bootstrap/") == "/internal/admin/bootstrap/"
+    if is_bootstrap then
+        local ok_req, bootstrap = pcall(require, "bootstrap")
+        if not ok_req then
+            ngx.status = 500
+            ngx.say('{"error":"bootstrap module unavailable"}')
+            return
+        end
+
+        if uri == "/internal/admin/bootstrap" and method == "POST" then
+            ngx.req.read_body()
+            local raw = ngx.req.get_body_data()
+            local body = raw and cjson.decode(raw) or nil
+            if type(body) ~= "table" then
+                ngx.status = 400; ngx.say('{"error":"Missing JSON body"}'); return
+            end
+            local result, err = bootstrap.create(body)
+            if not result then
+                ngx.status = 400; ngx.say(cjson.encode({ error = err or "create failed" })); return
+            end
+            ngx.say(cjson.encode(result))
+            return
+        end
+
+        if uri == "/internal/admin/bootstrap" and method == "GET" then
+            ngx.say(cjson.encode(bootstrap.list()))
+            return
+        end
+
+        if method == "DELETE" and uri:sub(1, #"/internal/admin/bootstrap/") == "/internal/admin/bootstrap/" then
+            local code = uri:sub(#"/internal/admin/bootstrap/" + 1)
+            local ok, err = bootstrap.revoke_code(code)
+            if not ok then
+                ngx.status = (err == "not_found") and 404 or 400
+                ngx.say(cjson.encode({ error = err or "revoke failed" }))
+                return
+            end
+            ngx.say(cjson.encode({ ok = true, code = code }))
+            return
+        end
+
+        ngx.status = 405
+        ngx.say('{"error":"Method not allowed on bootstrap endpoint"}')
+        return
+    end
+end
+
 ngx.status = 404
-ngx.say('{"error":"Unknown admin endpoint — available: /internal/admin/{block,unblock,limit,status,usage,keys,addkey,overview,providers,llm-prices,openrouter-models,health}"}')
+ngx.say('{"error":"Unknown admin endpoint — available: /internal/admin/{block,unblock,limit,status,usage,keys,addkey,overview,providers,llm-prices,openrouter-models,health,bootstrap}"}')
