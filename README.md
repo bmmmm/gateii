@@ -23,7 +23,7 @@ gateii fixes that.
 | Problem | gateii answer |
 |---------|---------------|
 | No visibility into token usage | Per-user, per-model counters in Grafana dashboard |
-| Sharing one API key is risky | Issue proxy keys via `admin.sh add <user>` |
+| Sharing one API key is risky | Issue per-user proxy keys that pin their own upstream provider + credential |
 | Don't want another SaaS | Self-hosted, stateless proxy, no external dependencies |
 | Claude Max plan (OAuth) | `passthrough` mode -- your token forwarded as-is, no server key |
 
@@ -100,8 +100,10 @@ ANTHROPIC_API_KEY=sk-ant-...
 ```
 
 ```bash
-# Issue a proxy key
-./scripts/admin.sh add alice
+# Issue a proxy key (each key pins one upstream provider + credential)
+./scripts/admin.sh add alice \
+    --provider anthropic \
+    --upstream-key sk-ant-api03-...
 # -> sk-proxy-4a7f...  (set as ANTHROPIC_API_KEY in client settings)
 ```
 
@@ -115,7 +117,25 @@ Client settings:
 }
 ```
 
-Keys are stored in `data/keys.json` (auto-created on first run, gitignored).
+Keys are stored in `data/keys.json` as structured entries (`{user, provider,
+upstream_key, ...}`) — see [docs/keys.md](docs/keys.md) for schema and
+migration from the old flat `{key: user}` format.
+
+### Bootstrap handshake
+
+Instead of copy-pasting `sk-proxy-...` keys over SSH/Slack, the admin issues a
+one-time code + HMAC secret; the client runs `scripts/gateii-connect.sh` and
+self-installs over a challenge → exchange → confirm protocol.
+
+```bash
+./scripts/admin.sh bootstrap create \
+    --user alice \
+    --provider anthropic \
+    --upstream-key sk-ant-api03-...
+```
+
+Auto-revokes if the client never confirms. See
+[docs/bootstrap.md](docs/bootstrap.md) for the protocol and security model.
 
 ---
 
@@ -154,8 +174,10 @@ The console plugin queries Prometheus via a reverse proxy at `/internal/promethe
 ## Proxy routing
 
 ```bash
-./scripts/admin.sh switch local    # route Claude Code through proxy (checks health first)
+./scripts/admin.sh switch local    # route Claude Code through the local proxy (checks health first)
+./scripts/admin.sh switch nutc     # route through the remote NUTC proxy (NUTC_URL in .env)
 ./scripts/admin.sh switch direct   # route directly to Anthropic (safe to stop proxy after)
+./scripts/admin.sh switch status   # show the current ANTHROPIC_BASE_URL
 ```
 
 **Important**: Always `switch direct` before stopping the proxy, or Claude Code loses its connection.
@@ -179,7 +201,7 @@ Or directly: `./scripts/rescue.sh` (no dependencies beyond python3 and Docker).
 ```bash
 ./scripts/admin.sh status          # key count, blocked users
 ./scripts/admin.sh keys            # all keys, masked
-./scripts/admin.sh add alice       # new random proxy key for alice
+./scripts/admin.sh add alice --provider anthropic --upstream-key sk-ant-...
 ./scripts/admin.sh revoke sk-proxy-...
 ./scripts/admin.sh rotate alice    # new key, revoke all old ones
 ```
@@ -331,6 +353,21 @@ providers["myprovider"] = require("providers.myprovider")
 
 ---
 
+## Admin API & Console
+
+The admin surface at `/internal/admin/*` accepts two auth mechanisms:
+
+- **Session cookie** — `POST /internal/admin/login` with `{token}` sets
+  `admin_session=<hex>; HttpOnly; Secure; SameSite=Strict` (1 h TTL). Used by
+  the `/console` web UI.
+- **Header** — `X-Admin-Token: <ADMIN_TOKEN>`. Used by `admin.sh` and curl.
+
+Set `ADMIN_TOKEN` (≥ 32 random hex bytes) in `.env` for production. Without
+it, login returns 503 and the IP allow-list (`127.0.0.1` + Docker bridge) is
+the only wall. Full endpoint reference: [docs/admin-api.md](docs/admin-api.md).
+
+---
+
 ## Security notes
 
 | Topic | Status |
@@ -338,7 +375,10 @@ providers["myprovider"] = require("providers.myprovider")
 | SSL verification | Enabled -- `ca-certificates` installed at container startup |
 | Auth cache TTL | Revoked keys work for up to 5 min -- reduce in `auth.lua` if needed |
 | Request size limit | 10 MB max body (supports vision payloads) -- set in `nginx.conf` |
-| Admin API | Internal only -- restricted to localhost and Docker network IPs |
+| Admin API | Internal only -- IP allow-list + `ADMIN_TOKEN` (cookie or header) |
+| Admin session | HttpOnly, Secure, SameSite=Strict cookie; crypto-random id; 1 h TTL |
+| Console CSP | `script-src 'self' 'nonce-<N>'` — no inline scripts without per-request nonce |
+| Bootstrap handshake | HMAC-SHA256, constant-time proof compare, one-time code, auto-revoke on failed install |
 
 ---
 

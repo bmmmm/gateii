@@ -20,8 +20,10 @@ bash scripts/docker-colima.sh logs -f gateii-proxy
 bash scripts/smoke-test.sh
 
 # Switch Claude Code routing
-./scripts/admin.sh switch local    # through proxy (checks health first)
+./scripts/admin.sh switch local    # through local proxy (checks health first)
+./scripts/admin.sh switch nutc     # through remote NUTC proxy (NUTC_URL in .env)
 ./scripts/admin.sh switch direct   # direct to Anthropic
+./scripts/admin.sh switch status   # show current ANTHROPIC_BASE_URL
 ```
 
 ## Safe dev workflow for proxy changes
@@ -57,6 +59,7 @@ Or from this repo directly:
 - `.env` is gitignored — never `git add .env`, use `.env.example` for defaults
 - Proxy routing order: start stack → switch local; switch direct → stop stack (never reverse)
 - Before editing Lua/nginx: `admin.sh switch direct` first — broken proxy cuts off Claude Code
+- `data/keys.json` must use the structured schema (`{user, provider, upstream_key}`); flat `{key: "user"}` format is rejected by `schema.validate_keys` on startup — proxy then runs with empty auth cache (all requests 401)
 
 ## Key files
 
@@ -70,7 +73,11 @@ Or from this repo directly:
 | `config/openresty/lua/providers/anthropic.lua` | Anthropic header building, token extraction |
 | `config/openresty/lua/providers.json` | Multi-provider pricing config, active provider selector |
 | `config/openresty/nginx.conf` | Env whitelist, shared dicts, routes, /internal/prometheus proxy |
-| `data/keys.json` | API key → user mapping (apikey mode, gitignored) |
+| `data/keys.json` | Proxy-key → `{user, provider, upstream_key, ...}` mapping (apikey mode, gitignored, structured entries only) |
+| `config/openresty/lua/bootstrap.lua` | HMAC challenge/exchange/confirm handshake for self-provisioning keys |
+| `config/openresty/lua/admin_login.lua` | `/internal/admin/login` — session cookie issuance, failure counter |
+| `config/openresty/lua/schema.lua` | Startup validation for `keys.json` and `limits.json` (rejects flat format) |
+| `config/openresty/lua/circuit_breaker.lua` | Per-upstream breaker for repeated failures |
 
 ## Architecture decisions
 
@@ -83,6 +90,9 @@ Or from this repo directly:
 - **OR comparison** — console fetches top-10 weekly programming models from OpenRouter (12h cache in counters dict); providers.json comparison_models is static fallback
 - **Prometheus retention** — unlimited by default (`HISTORY_RETENTION=` in .env); override with `30d`/`90d`/`180d`/`365d`
 - **Blocking** — `blocked|<user>` in shared dict with TTL; daily limits auto-block until midnight UTC
+- **Per-key upstream routing** — each `keys.json` entry pins its own `provider` + `upstream_key`; the `x-provider` request header is only a fallback/override, not the primary routing signal
+- **Bootstrap handshake** — HMAC-SHA256 challenge/exchange/confirm flow replaces copy-pasting proxy keys; secret disclosed only once on creation, auto-revoke on failed install
+- **Admin sessions** — HttpOnly cookie issued by `/internal/admin/login`; console uses it, CLI keeps `X-Admin-Token` header; both accepted on every endpoint
 
 ## Providers
 
