@@ -97,6 +97,11 @@ local stops = {}    -- { "user|provider|model|reason" = N }
 local statuses = {} -- { "user|provider|model|bucket" = N }
 local rl_wait_lines = {}
 local rl_tokens_lines = {}
+local cb_state = {}       -- { provider = "closed"|"half_open"|"open" }
+local cb_failures = {}    -- { provider = N }
+local cb_opened_at = {}   -- { provider = unix_ts }
+local effort_usage = {}   -- { "user|provider|model|effort" = { input=N, output=N, requests=N } }
+local modality_usage = {} -- { "user|provider|model|modality" = { ... } }
 
 for _, key in ipairs(keys) do
     -- Skip daily counters
@@ -119,6 +124,19 @@ for _, key in ipairs(keys) do
             rl_tokens_lines[#rl_tokens_lines+1] = string.format(
                 'gateii_rate_limit_tokens_at_hit{user="%s",model="%s",limit_type="%s"} %d',
                 escape_label(rl_user), escape_label(rl_model), escape_label(rl_ltype), val)
+        end
+    elseif key:sub(1, 3) == "cb|" then
+        -- Circuit breaker: cb|<provider>|state|failures|opened_at
+        local cb_provider, cb_field = key:match("^cb|([^|]+)|(.+)$")
+        if cb_provider and cb_field then
+            local val = counters:get(key)
+            if cb_field == "state" then
+                cb_state[cb_provider] = val
+            elseif cb_field == "failures" then
+                cb_failures[cb_provider] = tonumber(val) or 0
+            elseif cb_field == "opened_at" then
+                cb_opened_at[cb_provider] = tonumber(val) or 0
+            end
         end
     else
         -- Parse: user|provider|model|field or user|provider|model|stop|reason
@@ -145,6 +163,16 @@ for _, key in ipairs(keys) do
                 -- Status code bucket: user|provider|model|status|<bucket>
                 local status_key = upm .. "|" .. parts[5]
                 statuses[status_key] = (statuses[status_key] or 0) + (counters:get(key) or 0)
+            elseif #parts == 6 and parts[4] == "effort" then
+                -- Effort dimension: user|provider|model|effort|<value>|<field>
+                local ekey = upm .. "|" .. parts[5]
+                if not effort_usage[ekey] then effort_usage[ekey] = {} end
+                effort_usage[ekey][parts[6]] = counters:get(key) or 0
+            elseif #parts == 6 and parts[4] == "modality" then
+                -- Modality dimension: user|provider|model|modality|<text|vision>|<field>
+                local mkey = upm .. "|" .. parts[5]
+                if not modality_usage[mkey] then modality_usage[mkey] = {} end
+                modality_usage[mkey][parts[6]] = counters:get(key) or 0
             end
         end
     end
@@ -381,6 +409,99 @@ if rl_fallback_pct ~= nil then
     add(string.format("gateii_rate_limit_fallback_pct %.4f", rl_fallback_pct))
 end
 
+-- Circuit breaker state per provider
+local CB_STATE_NUM = { closed = 0, half_open = 1, open = 2 }
+add("# HELP gateii_circuit_state Circuit breaker state per provider (0=closed, 1=half_open, 2=open)")
+add("# TYPE gateii_circuit_state gauge")
+for provider, state in pairs(cb_state) do
+    add(string.format('gateii_circuit_state{provider="%s"} %d',
+        escape_label(provider), CB_STATE_NUM[state] or 0))
+end
+
+add("# HELP gateii_circuit_failures Consecutive upstream failures since last success")
+add("# TYPE gateii_circuit_failures gauge")
+for provider, n in pairs(cb_failures) do
+    add(string.format('gateii_circuit_failures{provider="%s"} %d', escape_label(provider), n))
+end
+
+add("# HELP gateii_circuit_open_seconds Seconds since circuit last opened (0 if currently closed)")
+add("# TYPE gateii_circuit_open_seconds gauge")
+for provider, ts in pairs(cb_opened_at) do
+    local seconds = 0
+    local st = cb_state[provider]
+    if (st == "open" or st == "half_open") and ts > 0 then
+        seconds = math.max(0, ngx.time() - ts)
+    end
+    add(string.format('gateii_circuit_open_seconds{provider="%s"} %d', escape_label(provider), seconds))
+end
+
+-- Effort dimension (output_config.effort: none|low|medium|high|xhigh|max)
+add("# HELP gateii_requests_by_effort_total Requests grouped by output_config.effort")
+add("# TYPE gateii_requests_by_effort_total counter")
+for key, data in pairs(effort_usage) do
+    local user, provider, model, effort = key:match("^([^|]+)|([^|]+)|([^|]+)|(.+)$")
+    if user and (data.requests or 0) > 0 then
+        add(string.format('gateii_requests_by_effort_total{user="%s",provider="%s",model="%s",effort="%s"} %d',
+            escape_label(user), escape_label(provider), escape_label(model), escape_label(effort), data.requests))
+    end
+end
+
+add("# HELP gateii_tokens_by_effort_total Tokens grouped by output_config.effort")
+add("# TYPE gateii_tokens_by_effort_total counter")
+for key, data in pairs(effort_usage) do
+    local user, provider, model, effort = key:match("^([^|]+)|([^|]+)|([^|]+)|(.+)$")
+    if user then
+        for _, typ in ipairs({"input", "output"}) do
+            local v = data[typ] or 0
+            if v > 0 then
+                add(string.format('gateii_tokens_by_effort_total{user="%s",provider="%s",model="%s",effort="%s",type="%s"} %d',
+                    escape_label(user), escape_label(provider), escape_label(model), escape_label(effort), typ, v))
+            end
+        end
+    end
+end
+
+-- Modality dimension (text|vision — vision = request had at least one image content block)
+add("# HELP gateii_requests_by_modality_total Requests grouped by modality (text|vision)")
+add("# TYPE gateii_requests_by_modality_total counter")
+for key, data in pairs(modality_usage) do
+    local user, provider, model, modality = key:match("^([^|]+)|([^|]+)|([^|]+)|(.+)$")
+    if user and (data.requests or 0) > 0 then
+        add(string.format('gateii_requests_by_modality_total{user="%s",provider="%s",model="%s",modality="%s"} %d',
+            escape_label(user), escape_label(provider), escape_label(model), escape_label(modality), data.requests))
+    end
+end
+
+add("# HELP gateii_tokens_by_modality_total Tokens grouped by modality (text|vision)")
+add("# TYPE gateii_tokens_by_modality_total counter")
+for key, data in pairs(modality_usage) do
+    local user, provider, model, modality = key:match("^([^|]+)|([^|]+)|([^|]+)|(.+)$")
+    if user then
+        for _, typ in ipairs({"input", "output"}) do
+            local v = data[typ] or 0
+            if v > 0 then
+                add(string.format('gateii_tokens_by_modality_total{user="%s",provider="%s",model="%s",modality="%s",type="%s"} %d',
+                    escape_label(user), escape_label(provider), escape_label(model), escape_label(modality), typ, v))
+            end
+        end
+    end
+end
+
+-- Admin sessions — count of active HttpOnly sessions in the admin_sessions dict
+add("# HELP gateii_admin_sessions_active Active admin HttpOnly session count")
+add("# TYPE gateii_admin_sessions_active gauge")
+local admin_sessions = ngx.shared.admin_sessions
+local admin_session_count = 0
+if admin_sessions then
+    admin_session_count = #admin_sessions:get_keys(0)
+end
+add(string.format('gateii_admin_sessions_active %d', admin_session_count))
+
+-- Admin login failures (counter) — incremented on 401 in admin_login.lua
+add("# HELP gateii_admin_login_failures_total Admin login attempts rejected with 401")
+add("# TYPE gateii_admin_login_failures_total counter")
+add(string.format('gateii_admin_login_failures_total %d', counters:get("admin_login_failures") or 0))
+
 -- Model pricing (gauge — tracks price changes over time via Prometheus)
 add("# HELP gateii_model_pricing_per_mtok Current Anthropic pricing per 1M tokens (USD)")
 add("# TYPE gateii_model_pricing_per_mtok gauge")
@@ -398,6 +519,9 @@ add(string.format('gateii_shared_dict_free_bytes{dict="counters"} %d', counters:
 local blocking_free = blocking_dict:free_space()
 if blocking_free then
     add(string.format('gateii_shared_dict_free_bytes{dict="blocking"} %d', blocking_free))
+end
+if admin_sessions then
+    add(string.format('gateii_shared_dict_free_bytes{dict="admin_sessions"} %d', admin_sessions:free_space()))
 end
 
 ngx.print(table.concat(lines, "\n") .. "\n")

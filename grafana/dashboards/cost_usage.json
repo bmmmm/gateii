@@ -1,0 +1,224 @@
+{
+  "id": null,
+  "uid": "gateii-cost",
+  "title": "gateii — Cost & Usage",
+  "tags": ["gateii", "cost"],
+  "timezone": "browser",
+  "schemaVersion": 38,
+  "refresh": "1m",
+  "time": {"from": "now-30d", "to": "now"},
+  "links": [
+    {"title": "Operations", "type": "link", "url": "/d/gateii-ops", "icon": "dashboard", "targetBlank": false},
+    {"title": "Efficiency & Health", "type": "link", "url": "/d/gateii-eff", "icon": "cloud", "targetBlank": false}
+  ],
+  "templating": {
+    "list": [
+      {
+        "name": "model",
+        "label": "Model",
+        "type": "query",
+        "datasource": {"type": "prometheus"},
+        "query": "label_values(gateii_requests_total, model)",
+        "refresh": 2,
+        "includeAll": true,
+        "multi": true,
+        "current": {"selected": true, "text": "All", "value": "$__all"}
+      }
+    ]
+  },
+  "panels": [
+    {
+      "id": 1,
+      "title": "Cost (24h)",
+      "type": "stat",
+      "gridPos": {"x": 0, "y": 0, "w": 4, "h": 4},
+      "datasource": {"type": "prometheus"},
+      "targets": [{"datasource": {"type": "prometheus"}, "expr": "sum(increase(gateii_cost_dollars_total{model=~\"$model\"}[24h]))", "legendFormat": "24h", "instant": true, "refId": "A"}],
+      "fieldConfig": {
+        "defaults": {"unit": "currencyUSD", "decimals": 2, "color": {"mode": "thresholds"}, "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "yellow", "value": 5}, {"color": "red", "value": 20}]}}
+      },
+      "options": {"reduceOptions": {"calcs": ["lastNotNull"]}, "colorMode": "value", "graphMode": "none", "orientation": "auto", "textMode": "auto"}
+    },
+    {
+      "id": 2,
+      "title": "Cost (30d)",
+      "type": "stat",
+      "gridPos": {"x": 4, "y": 0, "w": 4, "h": 4},
+      "datasource": {"type": "prometheus"},
+      "targets": [{"datasource": {"type": "prometheus"}, "expr": "sum(increase(gateii_cost_dollars_total{model=~\"$model\"}[30d]))", "legendFormat": "30d", "instant": true, "refId": "A"}],
+      "fieldConfig": {
+        "defaults": {"unit": "currencyUSD", "decimals": 2, "color": {"mode": "thresholds"}, "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "yellow", "value": 100}, {"color": "red", "value": 500}]}}
+      },
+      "options": {"reduceOptions": {"calcs": ["lastNotNull"]}, "colorMode": "value", "graphMode": "none", "orientation": "auto", "textMode": "auto"}
+    },
+    {
+      "id": 3,
+      "title": "Cost (365d)",
+      "type": "stat",
+      "gridPos": {"x": 8, "y": 0, "w": 4, "h": 4},
+      "datasource": {"type": "prometheus"},
+      "targets": [{"datasource": {"type": "prometheus"}, "expr": "sum(increase(gateii_cost_dollars_total{model=~\"$model\"}[365d]))", "legendFormat": "365d", "instant": true, "refId": "A"}],
+      "fieldConfig": {
+        "defaults": {"unit": "currencyUSD", "decimals": 2, "color": {"mode": "thresholds"}, "thresholds": {"mode": "absolute", "steps": [{"color": "blue", "value": null}]}}
+      },
+      "options": {"reduceOptions": {"calcs": ["lastNotNull"]}, "colorMode": "value", "graphMode": "none", "orientation": "auto", "textMode": "auto"}
+    },
+    {
+      "id": 4,
+      "title": "Tokens (24h)",
+      "type": "stat",
+      "gridPos": {"x": 12, "y": 0, "w": 4, "h": 4},
+      "datasource": {"type": "prometheus"},
+      "targets": [{"datasource": {"type": "prometheus"}, "expr": "sum(increase(gateii_tokens_total{type=~\"input|output\",model=~\"$model\"}[24h]))", "legendFormat": "24h", "instant": true, "refId": "A"}],
+      "fieldConfig": {
+        "defaults": {"unit": "short", "decimals": 0, "color": {"mode": "fixed", "fixedColor": "#B877D9"}}
+      },
+      "options": {"reduceOptions": {"calcs": ["lastNotNull"]}, "colorMode": "value", "graphMode": "none", "orientation": "auto", "textMode": "auto"}
+    },
+    {
+      "id": 5,
+      "title": "Tokens (30d)",
+      "type": "stat",
+      "gridPos": {"x": 16, "y": 0, "w": 4, "h": 4},
+      "datasource": {"type": "prometheus"},
+      "targets": [{"datasource": {"type": "prometheus"}, "expr": "sum(increase(gateii_tokens_total{type=~\"input|output\",model=~\"$model\"}[30d]))", "legendFormat": "30d", "instant": true, "refId": "A"}],
+      "fieldConfig": {
+        "defaults": {"unit": "short", "decimals": 0, "color": {"mode": "fixed", "fixedColor": "#B877D9"}}
+      },
+      "options": {"reduceOptions": {"calcs": ["lastNotNull"]}, "colorMode": "value", "graphMode": "none", "orientation": "auto", "textMode": "auto"}
+    },
+    {
+      "id": 6,
+      "title": "Requests (30d)",
+      "type": "stat",
+      "gridPos": {"x": 20, "y": 0, "w": 4, "h": 4},
+      "datasource": {"type": "prometheus"},
+      "targets": [{"datasource": {"type": "prometheus"}, "expr": "sum(increase(gateii_requests_total{model=~\"$model\"}[30d]))", "legendFormat": "Requests", "instant": true, "refId": "A"}],
+      "fieldConfig": {
+        "defaults": {"unit": "short", "decimals": 0, "color": {"mode": "fixed", "fixedColor": "#5794F2"}}
+      },
+      "options": {"reduceOptions": {"calcs": ["lastNotNull"]}, "colorMode": "value", "graphMode": "none", "orientation": "auto", "textMode": "auto"}
+    },
+    {
+      "id": 7,
+      "title": "Cost by Model (30d)",
+      "type": "bargauge",
+      "gridPos": {"x": 0, "y": 4, "w": 12, "h": 8},
+      "datasource": {"type": "prometheus"},
+      "targets": [{"datasource": {"type": "prometheus"}, "expr": "sum by (model) (increase(gateii_cost_dollars_total{model=~\"$model\"}[30d]))", "legendFormat": "{{model}}", "instant": true, "refId": "A"}],
+      "fieldConfig": {
+        "defaults": {"unit": "currencyUSD", "decimals": 2, "thresholds": {"mode": "absolute", "steps": [{"color": "blue", "value": null}]}},
+        "overrides": [
+          {"matcher": {"id": "byRegexp", "options": "/opus/i"},   "properties": [{"id": "color", "value": {"fixedColor": "#B877D9", "mode": "fixed"}}]},
+          {"matcher": {"id": "byRegexp", "options": "/sonnet/i"}, "properties": [{"id": "color", "value": {"fixedColor": "#5794F2", "mode": "fixed"}}]},
+          {"matcher": {"id": "byRegexp", "options": "/haiku/i"},  "properties": [{"id": "color", "value": {"fixedColor": "#56A64B", "mode": "fixed"}}]}
+        ]
+      },
+      "options": {"orientation": "horizontal", "reduceOptions": {"calcs": ["lastNotNull"]}, "displayMode": "gradient"}
+    },
+    {
+      "id": 8,
+      "title": "Daily Cost Trend (30d)",
+      "type": "timeseries",
+      "gridPos": {"x": 12, "y": 4, "w": 12, "h": 8},
+      "datasource": {"type": "prometheus"},
+      "targets": [{"datasource": {"type": "prometheus"}, "expr": "sum by (model) (increase(gateii_cost_dollars_total{model=~\"$model\"}[1d]))", "legendFormat": "{{model}}", "refId": "A"}],
+      "fieldConfig": {
+        "defaults": {"unit": "currencyUSD", "decimals": 2, "custom": {"lineWidth": 2, "fillOpacity": 20, "stacking": {"mode": "normal"}}},
+        "overrides": [
+          {"matcher": {"id": "byRegexp", "options": "/opus/i"},   "properties": [{"id": "color", "value": {"fixedColor": "#B877D9", "mode": "fixed"}}]},
+          {"matcher": {"id": "byRegexp", "options": "/sonnet/i"}, "properties": [{"id": "color", "value": {"fixedColor": "#5794F2", "mode": "fixed"}}]},
+          {"matcher": {"id": "byRegexp", "options": "/haiku/i"},  "properties": [{"id": "color", "value": {"fixedColor": "#56A64B", "mode": "fixed"}}]}
+        ]
+      },
+      "options": {"tooltip": {"mode": "multi"}, "legend": {"displayMode": "table", "placement": "bottom"}}
+    },
+    {
+      "id": 9,
+      "title": "Requests by Effort (30d)",
+      "description": "Opus reasoning effort dimension. 'none' = requests without output_config.effort set.",
+      "type": "bargauge",
+      "gridPos": {"x": 0, "y": 12, "w": 8, "h": 8},
+      "datasource": {"type": "prometheus"},
+      "targets": [{"datasource": {"type": "prometheus"}, "expr": "sum by (effort) (increase(gateii_requests_by_effort_total{model=~\"$model\"}[30d]))", "legendFormat": "{{effort}}", "instant": true, "refId": "A"}],
+      "fieldConfig": {
+        "defaults": {"unit": "short", "decimals": 0, "thresholds": {"mode": "absolute", "steps": [{"color": "purple", "value": null}]}}
+      },
+      "options": {"orientation": "horizontal", "reduceOptions": {"calcs": ["lastNotNull"]}, "displayMode": "gradient"}
+    },
+    {
+      "id": 10,
+      "title": "Tokens by Effort (30d)",
+      "description": "Output-token sum per effort level — proxy for cost, since output dominates cost.",
+      "type": "bargauge",
+      "gridPos": {"x": 8, "y": 12, "w": 8, "h": 8},
+      "datasource": {"type": "prometheus"},
+      "targets": [{"datasource": {"type": "prometheus"}, "expr": "sum by (effort) (increase(gateii_tokens_by_effort_total{type=\"output\",model=~\"$model\"}[30d]))", "legendFormat": "{{effort}}", "instant": true, "refId": "A"}],
+      "fieldConfig": {
+        "defaults": {"unit": "short", "decimals": 0, "thresholds": {"mode": "absolute", "steps": [{"color": "purple", "value": null}]}}
+      },
+      "options": {"orientation": "horizontal", "reduceOptions": {"calcs": ["lastNotNull"]}, "displayMode": "gradient"}
+    },
+    {
+      "id": 11,
+      "title": "Monthly Forecast",
+      "description": "Current 30d cost extrapolated to a full 30-day month.",
+      "type": "stat",
+      "gridPos": {"x": 16, "y": 12, "w": 8, "h": 8},
+      "datasource": {"type": "prometheus"},
+      "targets": [{"datasource": {"type": "prometheus"}, "expr": "sum(increase(gateii_cost_dollars_total{model=~\"$model\"}[30d]))", "legendFormat": "Forecast", "instant": true, "refId": "A"}],
+      "fieldConfig": {
+        "defaults": {"unit": "currencyUSD", "decimals": 2, "color": {"mode": "thresholds"}, "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "yellow", "value": 200}, {"color": "red", "value": 1000}]}}
+      },
+      "options": {"reduceOptions": {"calcs": ["lastNotNull"]}, "colorMode": "background", "graphMode": "area", "orientation": "auto", "textMode": "auto"}
+    },
+    {
+      "id": 12,
+      "title": "Top Users by Cost (30d)",
+      "type": "bargauge",
+      "gridPos": {"x": 0, "y": 20, "w": 12, "h": 8},
+      "datasource": {"type": "prometheus"},
+      "targets": [{"datasource": {"type": "prometheus"}, "expr": "topk(10, sum by (user) (increase(gateii_cost_dollars_total{model=~\"$model\"}[30d])))", "legendFormat": "{{user}}", "instant": true, "refId": "A"}],
+      "fieldConfig": {
+        "defaults": {"unit": "currencyUSD", "decimals": 2, "thresholds": {"mode": "absolute", "steps": [{"color": "blue", "value": null}]}}
+      },
+      "options": {"orientation": "horizontal", "reduceOptions": {"calcs": ["lastNotNull"]}, "displayMode": "gradient"}
+    },
+    {
+      "id": 13,
+      "title": "Top Users by Requests (30d)",
+      "type": "bargauge",
+      "gridPos": {"x": 12, "y": 20, "w": 12, "h": 8},
+      "datasource": {"type": "prometheus"},
+      "targets": [{"datasource": {"type": "prometheus"}, "expr": "topk(10, sum by (user) (increase(gateii_requests_total{model=~\"$model\"}[30d])))", "legendFormat": "{{user}}", "instant": true, "refId": "A"}],
+      "fieldConfig": {
+        "defaults": {"unit": "short", "decimals": 0, "thresholds": {"mode": "absolute", "steps": [{"color": "blue", "value": null}]}}
+      },
+      "options": {"orientation": "horizontal", "reduceOptions": {"calcs": ["lastNotNull"]}, "displayMode": "gradient"}
+    },
+    {
+      "id": 14,
+      "title": "Cost vs Subscription Break-Even (30d)",
+      "description": "Cumulative 30d spend vs. typical Anthropic subscription tiers ($20/$100/$200).",
+      "type": "timeseries",
+      "gridPos": {"x": 0, "y": 28, "w": 24, "h": 8},
+      "datasource": {"type": "prometheus"},
+      "targets": [
+        {"datasource": {"type": "prometheus"}, "expr": "sum(increase(gateii_cost_dollars_total{model=~\"$model\"}[30d]))", "legendFormat": "30d spend", "refId": "A"},
+        {"datasource": {"type": "prometheus"}, "expr": "vector(20)", "legendFormat": "Pro $20", "refId": "B"},
+        {"datasource": {"type": "prometheus"}, "expr": "vector(100)", "legendFormat": "Max 5× $100", "refId": "C"},
+        {"datasource": {"type": "prometheus"}, "expr": "vector(200)", "legendFormat": "Max 20× $200", "refId": "D"}
+      ],
+      "fieldConfig": {
+        "defaults": {"unit": "currencyUSD", "decimals": 2, "custom": {"lineWidth": 2, "fillOpacity": 10}},
+        "overrides": [
+          {"matcher": {"id": "byName", "options": "30d spend"}, "properties": [{"id": "color", "value": {"fixedColor": "#E02F44", "mode": "fixed"}}, {"id": "custom.fillOpacity", "value": 25}]},
+          {"matcher": {"id": "byName", "options": "Pro $20"},   "properties": [{"id": "color", "value": {"fixedColor": "#56A64B", "mode": "fixed"}}, {"id": "custom.lineStyle", "value": {"fill": "dash", "dash": [10, 10]}}]},
+          {"matcher": {"id": "byName", "options": "Max 5× $100"}, "properties": [{"id": "color", "value": {"fixedColor": "#FF9830", "mode": "fixed"}}, {"id": "custom.lineStyle", "value": {"fill": "dash", "dash": [10, 10]}}]},
+          {"matcher": {"id": "byName", "options": "Max 20× $200"}, "properties": [{"id": "color", "value": {"fixedColor": "#B877D9", "mode": "fixed"}}, {"id": "custom.lineStyle", "value": {"fill": "dash", "dash": [10, 10]}}]}
+        ]
+      },
+      "options": {"tooltip": {"mode": "multi"}, "legend": {"displayMode": "table", "placement": "bottom"}}
+    }
+  ]
+}
