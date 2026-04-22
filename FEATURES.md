@@ -43,7 +43,13 @@ env vars in docker-compose + nginx.conf, end-to-end tests.
 Set dollar limits directly instead of token counts. Pricing table is already
 in metrics.lua — can be imported as a shared module from auth.lua.
 
-## Multi-Key per User
+## Multi-Key per User (partial)
 
-Currently 1:1 mapping key->user in keys.json. For teams: multiple keys per user
-with different permissions (e.g., "read-only" key that only allows Haiku).
+Done: `keys.json` is structured per-key (`{user, provider, upstream_key, ...}`),
+so a user can already hold multiple proxy keys against different upstreams —
+e.g. alice → Anthropic direct and alice → OpenRouter on separate keys.
+
+Open: per-key permissions / scopes. Example: a "read-only" key that only
+allows Haiku, or rate-limit overrides on a single key. Would need a `scope`
+or `allowed_models` field in the entry and a check in `auth.lua` against the
+parsed request body model.
