@@ -51,6 +51,7 @@ if body then
 end
 
 if supplied ~= ADMIN_TOKEN then
+    ngx.shared.counters:incr("admin_login_failures", 1, 0, 86400 * 7)
     ngx.status = 401
     ngx.say('{"error":"Invalid token"}')
     return
