@@ -13,6 +13,15 @@ if [ -z "${DOCKER_HOST:-}" ]; then
   fi
 fi
 
+# Source .env for ADMIN_TOKEN / ANTHROPIC_API_KEY / port config if present
+PROJECT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
+if [ -f "$PROJECT_DIR/.env" ]; then
+  set -a; source "$PROJECT_DIR/.env"; set +a
+fi
+PROXY_HOST="${PROXY_HOST:-localhost}"
+PROXY_PORT="${PROXY_PORT:-8888}"
+PROXY="http://${PROXY_HOST}:${PROXY_PORT}"
+
 # Detect --sandbox flag
 SANDBOX_MODE=0
 for arg in "$@"; do
@@ -164,6 +173,83 @@ else
 fi
 
 echo ""
+
+# --- Bootstrap roundtrip (only when ADMIN_TOKEN set and not in sandbox) ---
+if [ -n "${ADMIN_TOKEN:-}" ] && [ "$SANDBOX_MODE" -eq 0 ] && command -v openssl >/dev/null 2>&1; then
+  echo -e "${BOLD}Bootstrap handshake${NC}"
+
+  # Need an upstream key for the issued proxy key to be usable downstream —
+  # we only exercise the handshake here, so a placeholder is fine.
+  UPSTREAM_KEY="${ANTHROPIC_API_KEY:-sk-ant-smoke-placeholder}"
+  ADMIN_URL="${PROXY}/internal/admin"
+
+  # Phase 0 — admin creates bootstrap
+  BS_CREATE=$(curl -sf --max-time 5 -X POST \
+    -H "X-Admin-Token: $ADMIN_TOKEN" \
+    -H "Content-Type: application/json" \
+    -d "{\"user\":\"smoke-test\",\"provider\":\"anthropic\",\"upstream_key\":\"$UPSTREAM_KEY\",\"ttl\":120}" \
+    "$ADMIN_URL/bootstrap" 2>/dev/null || echo "")
+  BS_CODE=$(echo "$BS_CREATE"   | jq -r '.code // empty' 2>/dev/null)
+  BS_SECRET=$(echo "$BS_CREATE" | jq -r '.secret // empty' 2>/dev/null)
+
+  if [ -z "$BS_CODE" ] || [ -z "$BS_SECRET" ]; then
+    fail "admin bootstrap create — no code/secret returned"
+    info "response: $BS_CREATE"
+  else
+    ok "admin bootstrap create — code + secret issued"
+
+    # Phase 1 — challenge
+    CHAL=$(curl -sf --max-time 5 -X POST \
+      -H "Content-Type: application/json" \
+      -d "{\"code\":\"$BS_CODE\"}" \
+      "${PROXY}/internal/bootstrap/challenge" 2>/dev/null || echo "")
+    NONCE=$(echo "$CHAL" | jq -r '.nonce // empty' 2>/dev/null)
+    if [ -n "$NONCE" ]; then
+      ok "challenge — nonce issued"
+
+      # Phase 2 — exchange
+      PROOF=$(printf '%s' "$BS_CODE:$NONCE" | openssl dgst -sha256 -mac HMAC \
+        -macopt "hexkey:$BS_SECRET" | awk '{print $NF}')
+      EXCH=$(curl -sf --max-time 5 -X POST \
+        -H "Content-Type: application/json" \
+        -d "{\"code\":\"$BS_CODE\",\"nonce\":\"$NONCE\",\"proof\":\"$PROOF\"}" \
+        "${PROXY}/internal/bootstrap/exchange" 2>/dev/null || echo "")
+      API_KEY=$(echo "$EXCH"       | jq -r '.api_key // empty' 2>/dev/null)
+      CONFIRM=$(echo "$EXCH"       | jq -r '.confirm_token // empty' 2>/dev/null)
+
+      if [ -n "$API_KEY" ] && [ -n "$CONFIRM" ]; then
+        ok "exchange — proxy key issued"
+
+        # Phase 3 — confirm with status=failed so the key is revoked (we do not
+        # want a stray sk-proxy-* from every smoke run lingering in keys.json).
+        ACK=$(printf '%s' "$CONFIRM:failed" | openssl dgst -sha256 -mac HMAC \
+          -macopt "hexkey:$BS_SECRET" | awk '{print $NF}')
+        CONF=$(curl -sf --max-time 5 -X POST \
+          -H "Content-Type: application/json" \
+          -d "{\"confirm_token\":\"$CONFIRM\",\"status\":\"failed\",\"proof\":\"$ACK\"}" \
+          "${PROXY}/internal/bootstrap/confirm" 2>/dev/null || echo "")
+        if echo "$CONF" | grep -q '"status":"revoked"'; then
+          ok "confirm — key revoked after failed status"
+        else
+          fail "confirm — expected status=revoked, got: $CONF"
+        fi
+      else
+        fail "exchange — no api_key/confirm_token"
+        info "response: $EXCH"
+      fi
+    else
+      fail "challenge — no nonce"
+      info "response: $CHAL"
+    fi
+  fi
+
+  echo ""
+else
+  if [ -z "${ADMIN_TOKEN:-}" ] && [ "$SANDBOX_MODE" -eq 0 ]; then
+    echo -e "${DIM}⊘  bootstrap roundtrip — set ADMIN_TOKEN to enable${NC}"
+    echo ""
+  fi
+fi
 
 # --- Summary ---
 TOTAL=$((PASS+FAIL))
