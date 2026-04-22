@@ -138,13 +138,18 @@ if [ "$SANDBOX_MODE" -eq 0 ]; then
     fail "API not responding"
   fi
 
-  DASHBOARD=$(curl -sf --max-time 5 http://localhost:3001/api/dashboards/uid/gateii-proxy 2>/dev/null || echo "")
-  DASH_UID=$(echo "$DASHBOARD" | jq -r '.dashboard.uid // ""' 2>/dev/null || echo "")
-  if [ "$DASH_UID" = "gateii-proxy" ]; then
-    TITLE=$(echo "$DASHBOARD" | jq -r '.dashboard.title // "?"' 2>/dev/null || echo "?")
-    ok "dashboard loaded — \"$TITLE\""
+  # Expect the three provisioned dashboards: operations, cost, efficiency
+  DASH_LIST=$(curl -sf --max-time 5 http://localhost:3001/api/search 2>/dev/null || echo "[]")
+  MISSING=""
+  for DUID in gateii-ops gateii-cost gateii-eff; do
+    if ! echo "$DASH_LIST" | jq -e --arg u "$DUID" '.[] | select(.uid==$u)' >/dev/null 2>&1; then
+      MISSING="$MISSING $DUID"
+    fi
+  done
+  if [ -z "$MISSING" ]; then
+    ok "dashboards provisioned — gateii-ops, gateii-cost, gateii-eff"
   else
-    fail "dashboard not found (uid: gateii-proxy)"
+    fail "dashboards missing:$MISSING"
     info "Grafana may still be provisioning — retry in 10s"
   fi
 

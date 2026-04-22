@@ -143,6 +143,30 @@ local user = ngx.ctx.user
 -- Trim model name (whitespace in model names would break counter keys)
 local model = (body_obj.model or "unknown"):match("^%s*(.-)%s*$")
 
+-- Opus 4.7 output_config.effort (low|medium|high|xhigh|max) — "none" if unset
+local request_effort = "none"
+if type(body_obj.output_config) == "table"
+   and type(body_obj.output_config.effort) == "string" then
+    request_effort = body_obj.output_config.effort
+end
+
+-- Vision detection: one pass over messages[].content[] looking for image blocks.
+-- Usage tokens from Anthropic aren't split by modality, so we only track the boolean.
+local request_has_vision = false
+if type(body_obj.messages) == "table" then
+    for _, msg in ipairs(body_obj.messages) do
+        if type(msg.content) == "table" then
+            for _, block in ipairs(msg.content) do
+                if type(block) == "table" and block.type == "image" then
+                    request_has_vision = true
+                    break
+                end
+            end
+        end
+        if request_has_vision then break end
+    end
+end
+
 -- Inject stream_options so OpenAI-format providers return usage in streaming responses
 if is_streaming and provider.stream_options_usage then
     body_obj.stream_options = body_obj.stream_options or {}
@@ -238,6 +262,8 @@ if not is_streaming then
     pcall(tracking.record, user, provider_name, model, input_tokens, output_tokens,
           { latency_ms = latency_ms, status = res.status, stop_reason = stop_reason,
             cache_creation = cache_creation, cache_read = cache_read })
+    pcall(tracking.record_effort,   user, provider_name, model, request_effort,     input_tokens, output_tokens)
+    pcall(tracking.record_modality, user, provider_name, model, request_has_vision, input_tokens, output_tokens)
     return
 end
 
@@ -373,3 +399,5 @@ circuit_breaker.record(provider_name, res.status, had_read_err and "read_error" 
 pcall(tracking.record, user, provider_name, model, input_tokens, output_tokens,
       { latency_ms = (ngx.now() - t0_stream) * 1000, status = res.status, stop_reason = stop_reason,
         cache_creation = cache_creation, cache_read = cache_read })
+pcall(tracking.record_effort,   user, provider_name, model, request_effort,     input_tokens, output_tokens)
+pcall(tracking.record_modality, user, provider_name, model, request_has_vision, input_tokens, output_tokens)

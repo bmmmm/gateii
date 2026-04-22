@@ -107,6 +107,38 @@ function _M.record(user, provider, model, input_tokens, output_tokens, opts)
     counters:incr(day_prefix .. "|requests", 1, 0, 90000)
 end
 
+-- Per-effort counters (effort = "none" when request has no output_config.effort).
+-- Writes: user|provider|model|effort|<value>|{requests,input,output}
+function _M.record_effort(user, provider, model, effort, input_tokens, output_tokens)
+    provider = sanitize(provider)
+    model    = sanitize(model)
+    effort   = sanitize(effort)
+    local prefix = user .. "|" .. provider .. "|" .. model .. "|effort|" .. effort
+    bump(prefix .. "|requests", 1, COUNTER_TTL)
+    if input_tokens > 0 then
+        bump(prefix .. "|input", input_tokens, COUNTER_TTL)
+    end
+    if output_tokens > 0 then
+        bump(prefix .. "|output", output_tokens, COUNTER_TTL)
+    end
+end
+
+-- Per-modality counters (modality = "text" or "vision").
+-- Writes: user|provider|model|modality|<value>|{requests,input,output}
+function _M.record_modality(user, provider, model, has_vision, input_tokens, output_tokens)
+    provider = sanitize(provider)
+    model    = sanitize(model)
+    local modality = has_vision and "vision" or "text"
+    local prefix = user .. "|" .. provider .. "|" .. model .. "|modality|" .. modality
+    bump(prefix .. "|requests", 1, COUNTER_TTL)
+    if input_tokens > 0 then
+        bump(prefix .. "|input", input_tokens, COUNTER_TTL)
+    end
+    if output_tokens > 0 then
+        bump(prefix .. "|output", output_tokens, COUNTER_TTL)
+    end
+end
+
 local function dict_set(key, value, ttl)
     local ok, err = counters:set(key, value, ttl)
     if not ok then
