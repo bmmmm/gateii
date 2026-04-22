@@ -10,7 +10,7 @@ globals = {
 allow_defined_top = true
 
 -- Configuration
-max_line_length = 120
+max_line_length = 140
 unused = false
 unused_args = false
 
