@@ -42,7 +42,12 @@ ADMIN_TOKEN=stub GRAFANA_ADMIN_PASSWORD=stub \
     || die "compose validation failed — run: ADMIN_TOKEN=x GRAFANA_ADMIN_PASSWORD=x docker compose -f servers/nutc/server/stacks/gateii/docker-compose.yml config"
 
 dim "  ensuring remote dir..."
-ssh "$SSH_HOST" "mkdir -p $REMOTE_DIR/config/prometheus $REMOTE_DIR/config/grafana $REMOTE_DIR/data"
+# data/ must be writable by the in-container nginx worker (uid 65534, nobody).
+# The host dir is usually owned by the deploying user; chmod 777 so the worker
+# can persist keys.json via the admin API. This is gitignored local runtime
+# state, not a shared volume — world-writable is acceptable here.
+ssh "$SSH_HOST" "mkdir -p $REMOTE_DIR/config/prometheus $REMOTE_DIR/config/grafana $REMOTE_DIR/data \
+                 && chmod 777 $REMOTE_DIR/data"
 
 # 1. compose + README
 dim "  [1/4] docker-compose.yml + README"
