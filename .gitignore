@@ -8,6 +8,9 @@ config/openresty/keys.json
 data/
 docker-compose.override.yml
 
+# Claude Code per-project settings
+.claude/
+
 # macOS
 .DS_Store
 
