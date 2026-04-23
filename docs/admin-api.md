@@ -17,9 +17,25 @@ Additionally, the nginx config allow-lists the admin routes to `127.0.0.1` +
 Docker bridge networks (`172.16.0.0/12`). Remote access therefore requires
 both network reachability and a valid token.
 
-Without `ADMIN_TOKEN` in the environment the proxy still starts, but login
-returns 503 and the console is effectively read-only — the IP allow-list is
-the only wall. Production: always set `ADMIN_TOKEN` (≥ 32 random hex bytes).
+Token comparisons use a constant-time equality (`bootstrap._consttime_eq`)
+to avoid timing side-channels on login and `X-Admin-Token` checks. The
+login endpoint is additionally rate-limited at **5 req/min per IP**
+(burst 3, returns 429) to make brute-force infeasible even on the local
+loopback.
+
+Without `ADMIN_TOKEN` the behaviour depends on `PROXY_MODE`:
+
+- **`PROXY_MODE=apikey`** — fail-closed. `/internal/admin/login` and the
+  admin API both return `503 {"error":"Admin API disabled — set ADMIN_TOKEN in .env"}`.
+  This is the default so that keys.json / limits.json cannot be mutated by
+  anything reaching the admin network without operator intent.
+- **`PROXY_MODE=passthrough`** — fail-open. Login returns `{"ok":true,"auth":"none"}`
+  and the admin API accepts requests from allow-listed IPs without token.
+  There is no server-side secret to protect (passthrough forwards the
+  client's own upstream credential), so a missing token is intentional.
+
+Production: always set `ADMIN_TOKEN` (≥ 32 random hex bytes) regardless
+of mode.
 
 ---
 
