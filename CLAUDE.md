@@ -21,7 +21,7 @@ bash scripts/smoke-test.sh
 
 # Switch Claude Code routing
 ./scripts/admin.sh switch local    # through local proxy (checks health first)
-./scripts/admin.sh switch nutc     # through remote NUTC proxy (NUTC_URL in .env)
+./scripts/admin.sh switch remote   # through a remote gateii instance (requires REMOTE_URL in .env)
 ./scripts/admin.sh switch direct   # direct to Anthropic
 ./scripts/admin.sh switch status   # show current ANTHROPIC_BASE_URL
 ```

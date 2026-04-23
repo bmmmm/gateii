@@ -269,7 +269,7 @@ case "$SUBCMD" in
     ;;
 
   switch)
-    TARGET="${1:?Usage: admin.sh switch <local|nutc|direct>}"
+    TARGET="${1:?Usage: admin.sh switch <local|remote|direct|status>}"
     CLAUDE_SETTINGS="$HOME/.claude/settings.json"
     if [ ! -f "$CLAUDE_SETTINGS" ]; then
       echo -e "${RED}Claude settings not found at $CLAUDE_SETTINGS${NC}" >&2; exit 1
@@ -302,10 +302,14 @@ case "$SUBCMD" in
         wait_health "$PROXY" "local" || exit 1
         set_base_url "$PROXY" "local proxy"
         ;;
-      nutc)
-        NUTC="${NUTC_URL:-http://192.168.189.4:8888}"
-        wait_health "$NUTC" "nutc" || exit 1
-        set_base_url "$NUTC" "nutc proxy"
+      remote)
+        if [ -z "${REMOTE_URL:-}" ]; then
+          echo -e "${RED}REMOTE_URL not set — add it to .env (e.g. REMOTE_URL=http://your-host:8888)${NC}" >&2
+          exit 1
+        fi
+        REMOTE_LABEL="${REMOTE_NAME:-remote}"
+        wait_health "$REMOTE_URL" "$REMOTE_LABEL" || exit 1
+        set_base_url "$REMOTE_URL" "$REMOTE_LABEL proxy"
         ;;
       direct)
         TMP="${CLAUDE_SETTINGS}.tmp"
@@ -319,7 +323,7 @@ case "$SUBCMD" in
         echo -e "Current ANTHROPIC_BASE_URL: ${BOLD}${CUR}${NC}"
         ;;
       *)
-        echo -e "${RED}Unknown target '$TARGET' — use 'local', 'nutc', 'direct', or 'status'${NC}" >&2; exit 1
+        echo -e "${RED}Unknown target '$TARGET' — use 'local', 'remote', 'direct', or 'status'${NC}" >&2; exit 1
         ;;
     esac
     ;;
@@ -594,7 +598,7 @@ YAML
     echo ""
     echo "  ${BOLD}Proxy routing${NC}"
     echo "  switch local                    Route Claude Code through the local proxy (checks health first)"
-    echo "  switch nutc                     Route Claude Code through the NUTC proxy (NUTC_URL in .env)"
+    echo "  switch remote                   Route Claude Code through a remote gateii (requires REMOTE_URL in .env)"
     echo "  switch direct                   Route Claude Code directly to Anthropic"
     echo "  switch status                   Show the current ANTHROPIC_BASE_URL"
     echo ""

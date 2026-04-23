@@ -175,7 +175,7 @@ The console plugin queries Prometheus via a reverse proxy at `/internal/promethe
 
 ```bash
 ./scripts/admin.sh switch local    # route Claude Code through the local proxy (checks health first)
-./scripts/admin.sh switch nutc     # route through the remote NUTC proxy (NUTC_URL in .env)
+./scripts/admin.sh switch remote   # route through a remote gateii instance (requires REMOTE_URL in .env)
 ./scripts/admin.sh switch direct   # route directly to Anthropic (safe to stop proxy after)
 ./scripts/admin.sh switch status   # show the current ANTHROPIC_BASE_URL
 ```
