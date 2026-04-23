@@ -3,7 +3,7 @@
 #
 # rsync flow:
 #   1. docker-compose.yml + README     → ~/docker/gateii/
-#   2. config/openresty/, prometheus.yml, config/grafana/  → ~/docker/gateii/config/...
+#   2. config/openresty/, config/prometheus/, config/grafana/ → ~/docker/gateii/config/...
 #   3. docker compose up -d
 #
 # Preserves .env and data/ on the host (never overwritten).
@@ -61,16 +61,11 @@ rsync -az --inplace --delete \
     config/openresty/ \
     "$SSH_HOST:$REMOTE_DIR/config/openresty/"
 
-# 3. prometheus.yml + alerts
+# 3. prometheus config (prometheus.yml + alerts.yml)
 dim "  [3/4] prometheus config"
-rsync -az --inplace \
-    prometheus.yml \
-    "$SSH_HOST:$REMOTE_DIR/config/prometheus.yml"
-if [ -d config/prometheus ]; then
-    rsync -az --inplace --delete \
-        config/prometheus/ \
-        "$SSH_HOST:$REMOTE_DIR/config/prometheus/"
-fi
+rsync -az --inplace --delete \
+    config/prometheus/ \
+    "$SSH_HOST:$REMOTE_DIR/config/prometheus/"
 
 # 4. grafana provisioning + dashboards
 dim "  [4/4] grafana provisioning + dashboards"
