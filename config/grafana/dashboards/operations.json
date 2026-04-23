@@ -28,11 +28,19 @@
   },
   "panels": [
     {
+      "id": 300,
+      "type": "row",
+      "title": "Circuit Breaker",
+      "collapsed": false,
+      "gridPos": {"x": 0, "y": 0, "w": 24, "h": 1},
+      "panels": []
+    },
+    {
       "id": 1,
       "title": "Circuit Breaker State (now)",
       "description": "0 = closed (OK), 1 = half_open (testing recovery), 2 = open (tripped)",
       "type": "stat",
-      "gridPos": {"x": 0, "y": 0, "w": 6, "h": 4},
+      "gridPos": {"x": 0, "y": 1, "w": 8, "h": 4},
       "datasource": {"type": "prometheus"},
       "targets": [{"datasource": {"type": "prometheus"}, "expr": "gateii_circuit_state", "legendFormat": "{{provider}}", "instant": true, "refId": "A"}],
       "fieldConfig": {
@@ -51,7 +59,7 @@
       "id": 2,
       "title": "Consecutive Failures (now)",
       "type": "stat",
-      "gridPos": {"x": 6, "y": 0, "w": 6, "h": 4},
+      "gridPos": {"x": 8, "y": 1, "w": 8, "h": 4},
       "datasource": {"type": "prometheus"},
       "targets": [{"datasource": {"type": "prometheus"}, "expr": "gateii_circuit_failures", "legendFormat": "{{provider}}", "instant": true, "refId": "A"}],
       "fieldConfig": {
@@ -68,7 +76,7 @@
       "title": "Circuit Open Seconds (now)",
       "description": "Seconds since circuit last opened. 0 when currently closed.",
       "type": "stat",
-      "gridPos": {"x": 12, "y": 0, "w": 6, "h": 4},
+      "gridPos": {"x": 16, "y": 1, "w": 8, "h": 4},
       "datasource": {"type": "prometheus"},
       "targets": [{"datasource": {"type": "prometheus"}, "expr": "gateii_circuit_open_seconds or vector(0)", "legendFormat": "{{provider}}", "instant": true, "refId": "A"}],
       "fieldConfig": {
@@ -81,10 +89,18 @@
       "options": {"reduceOptions": {"calcs": ["lastNotNull"]}, "colorMode": "value", "graphMode": "none", "orientation": "auto", "textMode": "auto"}
     },
     {
+      "id": 301,
+      "type": "row",
+      "title": "Security & Auth",
+      "collapsed": false,
+      "gridPos": {"x": 0, "y": 5, "w": 24, "h": 1},
+      "panels": []
+    },
+    {
       "id": 4,
       "title": "Blocked Users (now)",
       "type": "stat",
-      "gridPos": {"x": 18, "y": 0, "w": 6, "h": 4},
+      "gridPos": {"x": 0, "y": 6, "w": 8, "h": 4},
       "datasource": {"type": "prometheus"},
       "targets": [{"datasource": {"type": "prometheus"}, "expr": "sum(gateii_user_blocked) or vector(0)", "legendFormat": "Blocked", "instant": true, "refId": "A"}],
       "fieldConfig": {
@@ -101,7 +117,7 @@
       "title": "Admin Sessions Active (now)",
       "description": "Current HttpOnly admin sessions. Each session expires after 1h.",
       "type": "stat",
-      "gridPos": {"x": 0, "y": 4, "w": 6, "h": 4},
+      "gridPos": {"x": 8, "y": 6, "w": 8, "h": 4},
       "datasource": {"type": "prometheus"},
       "targets": [{"datasource": {"type": "prometheus"}, "expr": "gateii_admin_sessions_active", "legendFormat": "Sessions", "instant": true, "refId": "A"}],
       "fieldConfig": {
@@ -118,7 +134,7 @@
       "title": "Admin Login Failures (24h)",
       "description": "Rejected admin logins with wrong token. Sudden spikes = potential brute-force attempt.",
       "type": "stat",
-      "gridPos": {"x": 6, "y": 4, "w": 6, "h": 4},
+      "gridPos": {"x": 16, "y": 6, "w": 8, "h": 4},
       "datasource": {"type": "prometheus"},
       "targets": [{"datasource": {"type": "prometheus"}, "expr": "increase(gateii_admin_login_failures_total[24h])", "legendFormat": "Failures 24h", "instant": true, "refId": "A"}],
       "fieldConfig": {
@@ -131,11 +147,19 @@
       "options": {"reduceOptions": {"calcs": ["lastNotNull"]}, "colorMode": "value", "graphMode": "none", "orientation": "auto", "textMode": "auto"}
     },
     {
+      "id": 302,
+      "type": "row",
+      "title": "Rate Limits (Live)",
+      "collapsed": false,
+      "gridPos": {"x": 0, "y": 10, "w": 24, "h": 1},
+      "panels": []
+    },
+    {
       "id": 7,
       "title": "Rate Limit 5h Window Used (now)",
       "description": "Fraction of the primary 5-hour Anthropic token window consumed.",
       "type": "gauge",
-      "gridPos": {"x": 12, "y": 4, "w": 12, "h": 4},
+      "gridPos": {"x": 0, "y": 11, "w": 8, "h": 4},
       "datasource": {"type": "prometheus"},
       "targets": [{"datasource": {"type": "prometheus"}, "expr": "gateii_rate_limit_5h_utilization", "legendFormat": "5h used", "instant": true, "refId": "A"}],
       "fieldConfig": {
@@ -148,10 +172,69 @@
       "options": {"reduceOptions": {"calcs": ["lastNotNull"]}, "orientation": "auto", "showThresholdLabels": false, "showThresholdMarkers": true}
     },
     {
+      "id": 30,
+      "title": "Tokens Remaining (5h)",
+      "description": "Absolute tokens left in the current 5h Anthropic window.",
+      "type": "stat",
+      "gridPos": {"x": 8, "y": 11, "w": 8, "h": 4},
+      "datasource": {"type": "prometheus"},
+      "targets": [{"datasource": {"type": "prometheus"}, "expr": "gateii_rate_limit_tokens_remaining", "legendFormat": "remaining", "instant": true, "refId": "A"}],
+      "fieldConfig": {
+        "defaults": {"unit": "short", "decimals": 0, "color": {"mode": "thresholds"}, "thresholds": {"mode": "absolute", "steps": [{"color": "red", "value": null}, {"color": "orange", "value": 100000}, {"color": "green", "value": 500000}]}}
+      },
+      "options": {"reduceOptions": {"calcs": ["lastNotNull"]}, "colorMode": "value", "graphMode": "area", "orientation": "auto", "textMode": "auto"}
+    },
+    {
+      "id": 31,
+      "title": "5h Window resets in",
+      "description": "Countdown until the current 5h Anthropic rate-limit window resets.",
+      "type": "stat",
+      "gridPos": {"x": 16, "y": 11, "w": 8, "h": 4},
+      "datasource": {"type": "prometheus"},
+      "targets": [{"datasource": {"type": "prometheus"}, "expr": "gateii_rate_limit_seconds_until_reset", "legendFormat": "5h reset", "instant": true, "refId": "A"}],
+      "fieldConfig": {
+        "defaults": {"unit": "s", "decimals": 0, "color": {"mode": "thresholds"}, "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "yellow", "value": 1800}, {"color": "red", "value": 7200}]}}
+      },
+      "options": {"reduceOptions": {"calcs": ["lastNotNull"]}, "colorMode": "value", "graphMode": "none", "orientation": "auto", "textMode": "auto"}
+    },
+    {
+      "id": 32,
+      "title": "429 Hit Events (30d)",
+      "description": "Per-user rate-limit hits. Empty = no 429s tripped in the retention window.",
+      "type": "table",
+      "gridPos": {"x": 0, "y": 15, "w": 24, "h": 8},
+      "datasource": {"type": "prometheus"},
+      "targets": [
+        {"datasource": {"type": "prometheus"}, "expr": "gateii_rate_limit_tokens_at_hit", "format": "table", "instant": true, "refId": "A"},
+        {"datasource": {"type": "prometheus"}, "expr": "gateii_rate_limit_wait_seconds", "format": "table", "instant": true, "refId": "B"}
+      ],
+      "transformations": [
+        {"id": "merge", "options": {}},
+        {"id": "organize", "options": {"excludeByName": {"Time": true, "__name__": true, "job": true, "instance": true}, "renameByName": {"Value #A": "Tokens at Hit", "Value #B": "Wait (s)"}}},
+        {"id": "sortBy", "options": {"fields": {}, "sort": [{"field": "Wait (s)", "desc": true}]}}
+      ],
+      "fieldConfig": {
+        "defaults": {"unit": "short", "decimals": 0},
+        "overrides": [
+          {"matcher": {"id": "byName", "options": "Wait (s)"}, "properties": [{"id": "unit", "value": "s"}, {"id": "custom.cellOptions", "value": {"type": "color-text"}}, {"id": "color", "value": {"mode": "continuous-GrYlRd"}}]},
+          {"matcher": {"id": "byName", "options": "Tokens at Hit"}, "properties": [{"id": "custom.cellOptions", "value": {"type": "color-text"}}, {"id": "color", "value": {"mode": "continuous-BlPu"}}]}
+        ]
+      },
+      "options": {"showHeader": true, "cellHeight": "sm"}
+    },
+    {
+      "id": 303,
+      "type": "row",
+      "title": "Traffic",
+      "collapsed": false,
+      "gridPos": {"x": 0, "y": 23, "w": 24, "h": 1},
+      "panels": []
+    },
+    {
       "id": 8,
       "title": "Requests per Minute (1h)",
       "type": "timeseries",
-      "gridPos": {"x": 0, "y": 8, "w": 24, "h": 8},
+      "gridPos": {"x": 0, "y": 24, "w": 12, "h": 8},
       "datasource": {"type": "prometheus"},
       "targets": [{"datasource": {"type": "prometheus"}, "expr": "sum by (model) (rate(gateii_requests_total{model=~\"$model\"}[1m])) * 60", "legendFormat": "{{model}}", "refId": "A"}],
       "fieldConfig": {
@@ -169,7 +252,7 @@
       "title": "Avg Latency by Model (1h)",
       "description": "Average upstream latency per request, computed from cumulative duration / request count.",
       "type": "timeseries",
-      "gridPos": {"x": 0, "y": 16, "w": 12, "h": 8},
+      "gridPos": {"x": 12, "y": 24, "w": 12, "h": 8},
       "datasource": {"type": "prometheus"},
       "targets": [{"datasource": {"type": "prometheus"}, "expr": "sum by (model) (rate(gateii_request_duration_ms_total{model=~\"$model\"}[5m])) / clamp_min(sum by (model) (rate(gateii_requests_total{model=~\"$model\"}[5m])), 1)", "legendFormat": "{{model}}", "refId": "A"}],
       "fieldConfig": {
@@ -183,11 +266,19 @@
       "options": {"tooltip": {"mode": "multi"}, "legend": {"displayMode": "table", "placement": "bottom"}}
     },
     {
+      "id": 304,
+      "type": "row",
+      "title": "Errors & Stop Reasons",
+      "collapsed": false,
+      "gridPos": {"x": 0, "y": 32, "w": 24, "h": 1},
+      "panels": []
+    },
+    {
       "id": 10,
       "title": "Error Rate (1h)",
       "description": "Fraction of requests with non-2xx upstream response.",
       "type": "timeseries",
-      "gridPos": {"x": 12, "y": 16, "w": 12, "h": 8},
+      "gridPos": {"x": 0, "y": 33, "w": 12, "h": 8},
       "datasource": {"type": "prometheus"},
       "targets": [{"datasource": {"type": "prometheus"}, "expr": "sum(rate(gateii_upstream_errors_total{model=~\"$model\"}[5m])) / clamp_min(sum(rate(gateii_requests_total{model=~\"$model\"}[5m])), 1)", "legendFormat": "error rate", "refId": "A"}],
       "fieldConfig": {
@@ -200,7 +291,7 @@
       "title": "Status Code Breakdown (1h)",
       "description": "Upstream response classes (2xx = OK, 429 = rate-limited, 4xx/5xx = errors).",
       "type": "timeseries",
-      "gridPos": {"x": 0, "y": 24, "w": 24, "h": 8},
+      "gridPos": {"x": 12, "y": 33, "w": 12, "h": 8},
       "datasource": {"type": "prometheus"},
       "targets": [{"datasource": {"type": "prometheus"}, "expr": "sum by (status_class) (rate(gateii_upstream_status_code_total{model=~\"$model\"}[1m]))", "legendFormat": "{{status_class}}", "refId": "A"}],
       "fieldConfig": {
@@ -220,7 +311,7 @@
       "title": "Stop Reason Distribution (1h)",
       "description": "end_turn = completed | tool_use = tools called | max_tokens = truncated",
       "type": "bargauge",
-      "gridPos": {"x": 0, "y": 32, "w": 12, "h": 8},
+      "gridPos": {"x": 0, "y": 41, "w": 24, "h": 8},
       "datasource": {"type": "prometheus"},
       "targets": [{"datasource": {"type": "prometheus"}, "expr": "sum by (reason) (increase(gateii_stop_reason_total{model=~\"$model\"}[1h]))", "legendFormat": "{{reason}}", "instant": true, "refId": "A"}],
       "fieldConfig": {
@@ -234,11 +325,19 @@
       "options": {"orientation": "horizontal", "reduceOptions": {"calcs": ["lastNotNull"]}, "displayMode": "gradient"}
     },
     {
+      "id": 305,
+      "type": "row",
+      "title": "System Health",
+      "collapsed": false,
+      "gridPos": {"x": 0, "y": 49, "w": 24, "h": 1},
+      "panels": []
+    },
+    {
       "id": 13,
       "title": "Shared Dict Free Bytes (now)",
       "description": "Remaining space in each nginx shared dictionary. Low values = risk of eviction.",
       "type": "bargauge",
-      "gridPos": {"x": 12, "y": 32, "w": 12, "h": 8},
+      "gridPos": {"x": 0, "y": 50, "w": 24, "h": 6},
       "datasource": {"type": "prometheus"},
       "targets": [{"datasource": {"type": "prometheus"}, "expr": "gateii_shared_dict_free_bytes", "legendFormat": "{{dict}}", "instant": true, "refId": "A"}],
       "fieldConfig": {
