@@ -362,9 +362,12 @@ The admin surface at `/internal/admin/*` accepts two auth mechanisms:
   the `/console` web UI.
 - **Header** — `X-Admin-Token: <ADMIN_TOKEN>`. Used by `admin.sh` and curl.
 
-Set `ADMIN_TOKEN` (≥ 32 random hex bytes) in `.env` for production. Without
-it, login returns 503 and the IP allow-list (`127.0.0.1` + Docker bridge) is
-the only wall. Full endpoint reference: [docs/admin-api.md](docs/admin-api.md).
+Set `ADMIN_TOKEN` (≥ 32 random hex bytes) in `.env` for production. In
+`PROXY_MODE=apikey` (default) a missing token fail-closes the admin API
+with 503; in `PROXY_MODE=passthrough` it stays open behind the IP
+allow-list only (no server-side secrets to protect). Token compares are
+constant-time and `/internal/admin/login` is rate-limited at 5 req/min
+per IP. Full endpoint reference: [docs/admin-api.md](docs/admin-api.md).
 
 ---
 
@@ -375,10 +378,13 @@ the only wall. Full endpoint reference: [docs/admin-api.md](docs/admin-api.md).
 | SSL verification | Enabled -- `ca-certificates` installed at container startup |
 | Auth cache TTL | Revoked keys work for up to 5 min -- reduce in `auth.lua` if needed |
 | Request size limit | 10 MB max body (supports vision payloads) -- set in `nginx.conf` |
-| Admin API | Internal only -- IP allow-list + `ADMIN_TOKEN` (cookie or header) |
+| Admin API | Internal only -- IP allow-list + `ADMIN_TOKEN` (cookie or header), constant-time compare |
+| Admin login brute-force | `limit_req_zone adminauth 5r/m` with burst 3 on `/internal/admin/login` (429 on exhaustion) |
+| Admin fail-closed | `apikey` mode without `ADMIN_TOKEN` returns 503 on `/internal/admin/*` (passthrough stays open) |
 | Admin session | HttpOnly, Secure, SameSite=Strict cookie; crypto-random id; 1 h TTL |
 | Console CSP | `script-src 'self' 'nonce-<N>'` — no inline scripts without per-request nonce |
 | Bootstrap handshake | HMAC-SHA256, constant-time proof compare, one-time code, auto-revoke on failed install |
+| Port bindings | `PROXY_BIND`, `GRAFANA_BIND`, `PROMETHEUS_BIND` default to `127.0.0.1` — set to `0.0.0.0` only for explicit LAN exposure |
 
 ---
 
