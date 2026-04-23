@@ -11,9 +11,10 @@
 --   half_open → open:   on any failure during probe
 local _M = {}
 
-local FAILURE_THRESHOLD = 5       -- open after 5 consecutive failures
-local COOLDOWN_SECONDS  = 30      -- 30s before allowing probe
-local STATE_TTL         = 3600    -- 1h TTL on state keys (auto-cleanup)
+-- Tuning (override via env, see .env.example).
+local FAILURE_THRESHOLD = tonumber(os.getenv("CB_FAILURE_THRESHOLD")) or 5
+local COOLDOWN_SECONDS  = tonumber(os.getenv("CB_COOLDOWN_SECONDS")) or 30
+local STATE_TTL         = 3600    -- 1h TTL on state keys (auto-cleanup, not tuning-worthy)
 
 local function key(provider, field)
     return "cb|" .. provider .. "|" .. field
