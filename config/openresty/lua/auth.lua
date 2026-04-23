@@ -7,6 +7,14 @@ local auth_cache    = ngx.shared.auth_cache
 local blocking_dict = ngx.shared.blocking
 local counters      = ngx.shared.counters
 
+-- Tuning (override via env, see .env.example).
+local AUTH_CACHE_NEG_TTL = tonumber(os.getenv("AUTH_CACHE_NEG_TTL")) or 60
+local AUTH_CACHE_POS_TTL = tonumber(os.getenv("AUTH_CACHE_POS_TTL")) or 300
+local RATE_LIMIT_RPS     = tonumber(os.getenv("RATE_LIMIT_RPS"))    or 1
+local RATE_LIMIT_BURST   = tonumber(os.getenv("RATE_LIMIT_BURST"))  or 10
+-- Console URL surfaced in 429 error bodies so clients know where to manage their key.
+local CONSOLE_URL        = os.getenv("CONSOLE_URL") or "http://localhost:8888/console"
+
 -- Seed RNG once per worker (module-level, runs on first require per worker process)
 math.randomseed(ngx.now() * 1000 + ngx.worker.pid())
 
@@ -25,8 +33,9 @@ local rid = (#incoming_rid > 0 and #incoming_rid <= 128 and incoming_rid:match("
 ngx.ctx.request_id = rid
 ngx.header["X-Request-Id"] = rid
 
--- Rate limiter: 1 req/s average (= 60/min), burst of 10
-local lim, lim_err = limit_req.new("limit_req", 1, 10)
+-- Rate limiter: default 1 req/s average (= 60/min), burst of 10.
+-- Override via RATE_LIMIT_RPS / RATE_LIMIT_BURST in .env.
+local lim, lim_err = limit_req.new("limit_req", RATE_LIMIT_RPS, RATE_LIMIT_BURST)
 if not lim then
     ngx.log(ngx.ERR, "failed to init rate limiter: ", lim_err)
 end
@@ -95,7 +104,7 @@ else
         local keys = proxy_config.load_keys()
         local val = keys[api_key]
         if type(val) ~= "table" or not val.user or not val.provider or not val.upstream_key then
-            auth_cache:set(api_key, false, 60)  -- negative cache: 60s
+            auth_cache:set(api_key, false, AUTH_CACHE_NEG_TTL)
             return reject(401, "Invalid API key — check your key or run admin.sh add <user>")
         end
         entry = val
@@ -104,7 +113,7 @@ else
             provider     = entry.provider,
             upstream_key = entry.upstream_key,
         })
-        if encoded then auth_cache:set(api_key, encoded, 300) end
+        if encoded then auth_cache:set(api_key, encoded, AUTH_CACHE_POS_TTL) end
     end
     user = entry.user
     ngx.ctx.upstream_key       = entry.upstream_key
@@ -158,7 +167,7 @@ do
                         error = "Daily token limit reached — resets at midnight UTC",
                         usage = { used = used_total, limit = limits.tokens_per_day },
                         retry_after = ttl,
-                        console = "http://localhost:8888/console"
+                        console = CONSOLE_URL
                     }))
                     return ngx.exit(429)
                 end
@@ -176,7 +185,7 @@ do
                         error = "Daily request limit reached — resets at midnight UTC",
                         usage = { used = used_reqs, limit = limits.requests_per_day },
                         retry_after = ttl,
-                        console = "http://localhost:8888/console"
+                        console = CONSOLE_URL
                     }))
                     return ngx.exit(429)
                 end

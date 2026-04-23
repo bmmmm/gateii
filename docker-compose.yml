@@ -19,6 +19,22 @@ services:
       - PASSTHROUGH_USER=${PASSTHROUGH_USER:-}
       - CONSOLE_ENABLED=${CONSOLE_ENABLED:-0}
       - ADMIN_TOKEN=${ADMIN_TOKEN:-}
+      # Tuning (all optional, Lua falls back to sensible defaults)
+      - CB_FAILURE_THRESHOLD=${CB_FAILURE_THRESHOLD:-}
+      - CB_COOLDOWN_SECONDS=${CB_COOLDOWN_SECONDS:-}
+      - BOOTSTRAP_CONFIRM_TTL=${BOOTSTRAP_CONFIRM_TTL:-}
+      - BOOTSTRAP_PENDING_TTL=${BOOTSTRAP_PENDING_TTL:-}
+      - BOOTSTRAP_PENDING_MAX=${BOOTSTRAP_PENDING_MAX:-}
+      - BOOTSTRAP_NONCE_TTL=${BOOTSTRAP_NONCE_TTL:-}
+      - AUTH_CACHE_NEG_TTL=${AUTH_CACHE_NEG_TTL:-}
+      - AUTH_CACHE_POS_TTL=${AUTH_CACHE_POS_TTL:-}
+      - RATE_LIMIT_RPS=${RATE_LIMIT_RPS:-}
+      - RATE_LIMIT_BURST=${RATE_LIMIT_BURST:-}
+      - CONSOLE_URL=${CONSOLE_URL:-}
+      - COUNTER_RETENTION_DAYS=${COUNTER_RETENTION_DAYS:-}
+      - HEALTH_CHECK_CONNECT_MS=${HEALTH_CHECK_CONNECT_MS:-}
+      - HEALTH_CHECK_SEND_MS=${HEALTH_CHECK_SEND_MS:-}
+      - HEALTH_CHECK_READ_MS=${HEALTH_CHECK_READ_MS:-}
     volumes:
       - ./config/openresty/nginx.conf:/usr/local/openresty/nginx/conf/nginx.conf:ro
       - ./config/openresty/lua:/etc/nginx/lua:ro
