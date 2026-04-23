@@ -3,7 +3,7 @@
 #
 # rsync flow:
 #   1. docker-compose.yml + README     → ~/docker/gateii/
-#   2. config/openresty/, prometheus.yml, grafana/  → ~/docker/gateii/config/...
+#   2. config/openresty/, prometheus.yml, config/grafana/  → ~/docker/gateii/config/...
 #   3. docker compose up -d
 #
 # Preserves .env and data/ on the host (never overwritten).
@@ -43,11 +43,12 @@ ADMIN_TOKEN=stub GRAFANA_ADMIN_PASSWORD=stub \
 
 dim "  ensuring remote dir..."
 # data/ must be writable by the in-container nginx worker (uid 65534, nobody).
-# The host dir is usually owned by the deploying user; chmod 777 so the worker
-# can persist keys.json via the admin API. This is gitignored local runtime
-# state, not a shared volume — world-writable is acceptable here.
+# Owner = 65534 (nginx worker), group = 1000 (deploying user) so the admin
+# can still read/edit keys.json locally without sudo. 775 keeps world-read off.
+# Requires passwordless sudo on the remote for chown.
 ssh "$SSH_HOST" "mkdir -p $REMOTE_DIR/config/prometheus $REMOTE_DIR/config/grafana $REMOTE_DIR/data \
-                 && chmod 777 $REMOTE_DIR/data"
+                 && sudo chown -R 65534:1000 $REMOTE_DIR/data \
+                 && sudo chmod 775 $REMOTE_DIR/data"
 
 # 1. compose + README
 dim "  [1/4] docker-compose.yml + README"
@@ -76,7 +77,7 @@ fi
 # 4. grafana provisioning + dashboards
 dim "  [4/4] grafana provisioning + dashboards"
 rsync -az --inplace --delete \
-    grafana/ \
+    config/grafana/ \
     "$SSH_HOST:$REMOTE_DIR/config/grafana/"
 
 # Check .env exists on the remote
