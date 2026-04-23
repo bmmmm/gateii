@@ -59,6 +59,18 @@ ${DIM}Full reference: README.md${NC}
 EOF
 }
 
+# Map container names (gateii-proxy, gateii-prometheus, gateii-grafana) to the
+# compose service names they back, so users can use either. Unknown names pass
+# through unchanged, which lets compose surface its own error.
+resolve_service() {
+    case "$1" in
+        gateii-proxy)      echo "openresty" ;;
+        gateii-prometheus) echo "prometheus" ;;
+        gateii-grafana)    echo "grafana" ;;
+        *)                 echo "$1" ;;
+    esac
+}
+
 cmd="${1:-help}"
 shift 2>/dev/null || true
 
@@ -74,7 +86,9 @@ case "$cmd" in
         if [ $# -eq 0 ]; then
             exec $COMPOSE restart
         else
-            exec $COMPOSE restart "$@"
+            svc="$(resolve_service "$1")"
+            shift
+            exec $COMPOSE restart "$svc" "$@"
         fi
         ;;
     reload)
@@ -87,7 +101,7 @@ case "$cmd" in
         fi
         ;;
     logs)
-        service="${1:-gateii-proxy}"
+        service="$(resolve_service "${1:-gateii-proxy}")"
         exec $COMPOSE logs -f "$service"
         ;;
     smoke)
