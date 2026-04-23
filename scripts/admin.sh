@@ -269,7 +269,7 @@ case "$SUBCMD" in
     ;;
 
   switch)
-    TARGET="${1:?Usage: admin.sh switch <local|remote|direct|status>}"
+    TARGET="${1:?Usage: admin.sh switch <local-proxy|remote-proxy|direct|status>}"
     CLAUDE_SETTINGS="$HOME/.claude/settings.json"
     if [ ! -f "$CLAUDE_SETTINGS" ]; then
       echo -e "${RED}Claude settings not found at $CLAUDE_SETTINGS${NC}" >&2; exit 1
@@ -298,18 +298,18 @@ case "$SUBCMD" in
     }
 
     case "$TARGET" in
-      local)
-        wait_health "$PROXY" "local" || exit 1
+      local-proxy)
+        wait_health "$PROXY" "local-proxy" || exit 1
         set_base_url "$PROXY" "local proxy"
         ;;
-      remote)
+      remote-proxy)
         if [ -z "${REMOTE_URL:-}" ]; then
           echo -e "${RED}REMOTE_URL not set — add it to .env (e.g. REMOTE_URL=http://your-host:8888)${NC}" >&2
           exit 1
         fi
-        REMOTE_LABEL="${REMOTE_NAME:-remote}"
+        REMOTE_LABEL="${REMOTE_NAME:-remote-proxy}"
         wait_health "$REMOTE_URL" "$REMOTE_LABEL" || exit 1
-        set_base_url "$REMOTE_URL" "$REMOTE_LABEL proxy"
+        set_base_url "$REMOTE_URL" "$REMOTE_LABEL"
         ;;
       direct)
         TMP="${CLAUDE_SETTINGS}.tmp"
@@ -323,7 +323,7 @@ case "$SUBCMD" in
         echo -e "Current ANTHROPIC_BASE_URL: ${BOLD}${CUR}${NC}"
         ;;
       *)
-        echo -e "${RED}Unknown target '$TARGET' — use 'local', 'remote', 'direct', or 'status'${NC}" >&2; exit 1
+        echo -e "${RED}Unknown target '$TARGET' — use 'local-proxy', 'remote-proxy', 'direct', or 'status'${NC}" >&2; exit 1
         ;;
     esac
     ;;
@@ -597,9 +597,9 @@ YAML
     echo -e "${BOLD}gateii admin${NC}"
     echo ""
     echo "  ${BOLD}Proxy routing${NC}"
-    echo "  switch local                    Route Claude Code through the local proxy (checks health first)"
-    echo "  switch remote                   Route Claude Code through a remote gateii (requires REMOTE_URL in .env)"
-    echo "  switch direct                   Route Claude Code directly to Anthropic"
+    echo "  switch local-proxy              Route Claude Code through the local proxy (checks health first)"
+    echo "  switch remote-proxy             Route Claude Code through a remote gateii (requires REMOTE_URL in .env)"
+    echo "  switch direct                   Route Claude Code directly to Anthropic (no proxy)"
     echo "  switch status                   Show the current ANTHROPIC_BASE_URL"
     echo ""
     echo "  ${BOLD}Key management${NC} (apikey mode — structured per-user upstream routing)"

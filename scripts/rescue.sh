@@ -10,7 +10,7 @@
 #   ./scripts/rescue.sh --no-restart  — only switch direct (if Docker is also broken)
 #
 # After running: restart Claude Code, then test the fix, then:
-#   ./scripts/admin.sh switch local
+#   ./scripts/admin.sh switch local-proxy
 
 set -euo pipefail
 
@@ -90,5 +90,5 @@ fi
 echo -e "  ${BOLD}Next steps:${NC}"
 echo -e "  ${DIM}1. Restart Claude Code (picks up direct Anthropic connection)${NC}"
 echo -e "  ${DIM}2. Fix the proxy issue, then reload: docker exec gateii-proxy openresty -s reload${NC}"
-echo -e "  ${DIM}3. Switch back: $SCRIPT_DIR/admin.sh switch local${NC}"
+echo -e "  ${DIM}3. Switch back: gateii switch local-proxy${NC}"
 echo ""
