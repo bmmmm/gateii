@@ -48,7 +48,7 @@ services:
       - /usr/local/openresty/nginx/uwsgi_temp
       - /usr/local/openresty/nginx/logs:mode=1777
     ports:
-      - "${PROXY_PORT:-8888}:8080"
+      - "${PROXY_BIND:-127.0.0.1}:${PROXY_PORT:-8888}:8080"
     entrypoint:
       - /bin/sh
       - -c
@@ -108,6 +108,10 @@ services:
       - GF_AUTH_ANONYMOUS_ENABLED=true
       - GF_AUTH_ANONYMOUS_ORG_ROLE=Viewer
       - GF_AUTH_DISABLE_LOGIN_FORM=true
+      # Silence the k8s-style dashboard-service polling loop — 78% of log noise.
+      # The "kubernetes" in the name refers to Grafana's internal unified-storage
+      # API style, not a real k8s cluster.
+      - GF_FEATURE_TOGGLES_DISABLE=kubernetesDashboards
     volumes:
       - ./config/grafana/provisioning:/etc/grafana/provisioning:ro
       - ./config/grafana/dashboards:/var/lib/grafana/dashboards:ro
