@@ -3,8 +3,9 @@ local _M = {}
 
 local counters = ngx.shared.counters
 
--- TTL for lifetime (per-user/provider/model) counters: 60 days
-local COUNTER_TTL = 60 * 86400
+-- TTL for lifetime (per-user/provider/model) counters. Default: 60 days.
+-- Override via COUNTER_RETENTION_DAYS in .env.
+local COUNTER_TTL = (tonumber(os.getenv("COUNTER_RETENTION_DAYS")) or 60) * 86400
 
 -- Sanitize key components: pipes are the separator
 local function sanitize(s)
