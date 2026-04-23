@@ -38,7 +38,7 @@
     {
       "id": 1,
       "title": "Circuit Breaker State (now)",
-      "description": "0 = closed (OK), 1 = half_open (testing recovery), 2 = open (tripped)",
+      "description": "Auto-protects upstream APIs from repeated failures. CLOSED = normal, requests pass through. OPEN = 5 consecutive 5xx/timeouts tripped the breaker; new requests fail fast (503) instead of hammering a broken upstream. HALF_OPEN = cooldown elapsed, one probe request is sent to test recovery — success reverts to CLOSED, failure reopens.",
       "type": "stat",
       "gridPos": {"x": 0, "y": 1, "w": 8, "h": 4},
       "datasource": {"type": "prometheus"},
@@ -233,6 +233,7 @@
     {
       "id": 8,
       "title": "Requests per Minute (1h)",
+      "description": "Traffic indicator — request volume per model over the last hour. Pairs with the latency panel: high req/min + high latency = upstream stressed.",
       "type": "timeseries",
       "gridPos": {"x": 0, "y": 24, "w": 12, "h": 8},
       "datasource": {"type": "prometheus"},
@@ -250,7 +251,7 @@
     {
       "id": 9,
       "title": "Avg Latency by Model (1h)",
-      "description": "Average upstream latency per request, computed from cumulative duration / request count.",
+      "description": "Performance indicator — average upstream latency per model over the last hour (computed from cumulative duration / request count). Pairs with requests/min.",
       "type": "timeseries",
       "gridPos": {"x": 12, "y": 24, "w": 12, "h": 8},
       "datasource": {"type": "prometheus"},
