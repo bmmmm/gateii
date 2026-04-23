@@ -94,7 +94,7 @@ services:
       retries: 5
 
   grafana:
-    image: grafana/grafana:12.4.2
+    image: grafana/grafana:12.4.3
     container_name: gateii-grafana
     restart: unless-stopped
     security_opt:
