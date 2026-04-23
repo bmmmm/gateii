@@ -173,9 +173,19 @@ if uri == "/internal/admin/limit" and method == "POST" then
         ngx.say('{"error":"tokens_per_day must be a positive integer"}')
         return
     end
+    if limits.tokens_per_day ~= nil and limits.tokens_per_day > 10000000 then
+        ngx.status = 400
+        ngx.say('{"error":"tokens_per_day exceeds maximum (10000000)"}')
+        return
+    end
     if limits.requests_per_day ~= nil and not is_pos_int(limits.requests_per_day) then
         ngx.status = 400
         ngx.say('{"error":"requests_per_day must be a positive integer"}')
+        return
+    end
+    if limits.requests_per_day ~= nil and limits.requests_per_day > 100000 then
+        ngx.status = 400
+        ngx.say('{"error":"requests_per_day exceeds maximum (100000)"}')
         return
     end
     if limits.tokens_per_day == nil and limits.requests_per_day == nil then
