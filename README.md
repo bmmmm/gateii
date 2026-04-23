@@ -174,19 +174,19 @@ The console plugin queries Prometheus via a reverse proxy at `/internal/promethe
 ## Proxy routing
 
 ```bash
-./scripts/admin.sh switch local    # route Claude Code through the local proxy (checks health first)
-./scripts/admin.sh switch remote   # route through a remote gateii instance (requires REMOTE_URL in .env)
-./scripts/admin.sh switch direct   # route directly to Anthropic (safe to stop proxy after)
-./scripts/admin.sh switch status   # show the current ANTHROPIC_BASE_URL
+./scripts/admin.sh switch local-proxy    # route Claude Code through this machine's gateii (checks health first)
+./scripts/admin.sh switch remote-proxy   # route through a remote gateii instance (requires REMOTE_URL in .env)
+./scripts/admin.sh switch direct         # bypass the proxy, go straight to Anthropic (safe to stop proxy after)
+./scripts/admin.sh switch status         # show the current ANTHROPIC_BASE_URL
 ```
 
 **Important**: Always `switch direct` before stopping the proxy, or Claude Code loses its connection.
 
 **Safe dev workflow** — when editing Lua or nginx config, switch to direct first:
 ```bash
-./scripts/admin.sh switch direct   # 1. go direct — Claude Code stays connected
+./scripts/admin.sh switch direct         # 1. go direct — Claude Code stays connected
 # edit, reload: docker exec gateii-proxy openresty -s reload
-./scripts/admin.sh switch local    # 2. back to proxy when done
+./scripts/admin.sh switch local-proxy    # 2. back to proxy when done
 ```
 
 **Emergency recovery** — if the proxy breaks and Claude Code is cut off:

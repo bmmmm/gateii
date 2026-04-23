@@ -1,0 +1,134 @@
+#!/bin/bash
+# gateii — user-facing CLI dispatcher
+#
+# Install:
+#   alias gateii='~/offline_coding/gateii/scripts/gateii'
+# or:
+#   ln -s "$(pwd)/scripts/gateii" ~/.local/bin/gateii
+#
+# Usage:
+#   gateii <subcommand> [args...]
+# Run `gateii help` for the list of subcommands.
+
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+PROJECT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+
+# $'...' expands escape sequences so heredocs render colors correctly
+RED=$'\033[0;31m'; GRN=$'\033[0;32m'; YEL=$'\033[1;33m'; CYN=$'\033[0;36m'
+BOLD=$'\033[1m'; DIM=$'\033[2m'; NC=$'\033[0m'
+
+# Auto-detect Colima socket so `docker` calls work after Claude Code restart
+# (same contract as scripts/docker-colima.sh).
+if [ -z "${DOCKER_HOST:-}" ]; then
+    COLIMA_SOCK="$HOME/.colima/default/docker.sock"
+    [ -S "$COLIMA_SOCK" ] && export DOCKER_HOST="unix://$COLIMA_SOCK"
+fi
+
+COMPOSE="docker compose -f $PROJECT_DIR/docker-compose.yml"
+
+show_help() {
+    cat <<EOF
+
+${BOLD}gateii${NC} — self-hosted Anthropic proxy
+
+${BOLD}Stack${NC}
+  ${CYN}up${NC}                      Start the stack (runs pre-up hook if configured)
+  ${CYN}down${NC}                    Stop and remove containers (volumes kept)
+  ${CYN}restart${NC} [service]       Restart all containers or one service
+  ${CYN}reload${NC}                  Reload nginx config without container restart
+  ${CYN}logs${NC} [service]          Tail logs (default: gateii-proxy)
+  ${CYN}smoke${NC}                   Run the smoke test
+
+${BOLD}Claude Code routing${NC}
+  ${CYN}switch${NC} <target>         local-proxy | remote-proxy | direct | status
+  ${CYN}sessions${NC}                Show active Claude Code sessions (needs claudii)
+
+${BOLD}Admin${NC}
+  ${CYN}status${NC}                  Key count, blocked users, current route
+  ${CYN}admin${NC} ...               Passthrough to scripts/admin.sh
+  ${CYN}rescue${NC}                  Emergency: switch direct + restart proxy
+
+${BOLD}Misc${NC}
+  ${CYN}help${NC} (-h, --help)       This message
+  ${CYN}version${NC}                 Show gateii repo version info
+
+${DIM}Full reference: README.md${NC}
+
+EOF
+}
+
+cmd="${1:-help}"
+shift 2>/dev/null || true
+
+case "$cmd" in
+    up)
+        exec "$SCRIPT_DIR/up.sh" "$@"
+        ;;
+    down)
+        echo -e "${DIM}Running docker compose down...${NC}"
+        exec $COMPOSE down "$@"
+        ;;
+    restart)
+        if [ $# -eq 0 ]; then
+            exec $COMPOSE restart
+        else
+            exec $COMPOSE restart "$@"
+        fi
+        ;;
+    reload)
+        echo -e "${DIM}Reloading openresty config...${NC}"
+        if docker exec gateii-proxy openresty -s reload 2>&1; then
+            echo -e "${GRN}✓${NC} nginx reloaded"
+        else
+            echo -e "${RED}✗${NC} reload failed — proxy container may be down" >&2
+            exit 1
+        fi
+        ;;
+    logs)
+        service="${1:-gateii-proxy}"
+        exec $COMPOSE logs -f "$service"
+        ;;
+    smoke)
+        exec bash "$SCRIPT_DIR/smoke-test.sh" "$@"
+        ;;
+    switch)
+        exec "$SCRIPT_DIR/admin.sh" switch "$@"
+        ;;
+    sessions)
+        if command -v claudii >/dev/null 2>&1; then
+            exec claudii sessions "$@"
+        else
+            echo -e "${RED}✗${NC} claudii not installed" >&2
+            echo -e "${DIM}  See: https://github.com/bmmmm/claudii${NC}" >&2
+            exit 1
+        fi
+        ;;
+    status)
+        "$SCRIPT_DIR/admin.sh" status
+        echo ""
+        "$SCRIPT_DIR/admin.sh" switch status
+        ;;
+    admin)
+        exec "$SCRIPT_DIR/admin.sh" "$@"
+        ;;
+    rescue)
+        exec "$SCRIPT_DIR/rescue.sh" "$@"
+        ;;
+    version)
+        if [ -d "$PROJECT_DIR/.git" ]; then
+            cd "$PROJECT_DIR" && git describe --tags --always --dirty 2>/dev/null || git rev-parse --short HEAD
+        else
+            echo "unknown (not a git checkout)"
+        fi
+        ;;
+    help|-h|--help|"")
+        show_help
+        ;;
+    *)
+        echo -e "${RED}Unknown subcommand: ${cmd}${NC}" >&2
+        echo -e "${DIM}Run 'gateii help' for the list of subcommands.${NC}" >&2
+        exit 1
+        ;;
+esac

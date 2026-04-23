@@ -6,24 +6,35 @@ No Redis, no external dependencies, no application framework.
 
 ## Local development
 
+The user-facing CLI is `scripts/gateii` (aliased as `gateii` in `~/.zshrc`).
+It dispatches to the underlying scripts — prefer it over direct script calls in
+user-facing docs.
+
 ```bash
-# Start stack
-bash scripts/docker-colima.sh compose up -d
+# Stack
+gateii up                 # start stack (runs GATEII_PREUP_HOOK first if set)
+gateii down               # stop containers
+gateii reload             # openresty -s reload (no container restart)
+gateii logs [service]     # tail logs (default: gateii-proxy)
+gateii smoke              # run smoke test
+gateii restart [service]  # restart all or one service
 
-# Reload nginx after Lua changes (no restart needed)
-bash scripts/docker-colima.sh exec gateii-proxy openresty -s reload
+# Claude Code routing
+gateii switch local-proxy    # through this machine's gateii (checks health first)
+gateii switch remote-proxy   # through a remote gateii (needs REMOTE_URL)
+gateii switch direct         # bypass proxy, straight to Anthropic
+gateii switch status         # show current ANTHROPIC_BASE_URL
+gateii sessions              # claudii se — active Claude Code sessions
 
-# Tail proxy logs
-bash scripts/docker-colima.sh logs -f gateii-proxy
+# Admin / misc
+gateii status             # key count, blocked users, current route
+gateii admin ...          # passthrough to scripts/admin.sh
+gateii rescue             # emergency: switch direct + restart proxy
+gateii help               # full subcommand list
 
-# Smoke test
-bash scripts/smoke-test.sh
-
-# Switch Claude Code routing
-./scripts/admin.sh switch local    # through local proxy (checks health first)
-./scripts/admin.sh switch remote   # through a remote gateii instance (requires REMOTE_URL in .env)
-./scripts/admin.sh switch direct   # direct to Anthropic
-./scripts/admin.sh switch status   # show current ANTHROPIC_BASE_URL
+# Low-level alternatives (bypass gateii CLI):
+#   bash scripts/docker-colima.sh compose up -d   (no hook, no health wait)
+#   bash scripts/docker-colima.sh exec gateii-proxy openresty -s reload
 ```
 
 ## Safe dev workflow for proxy changes
@@ -31,10 +42,10 @@ bash scripts/smoke-test.sh
 When editing Lua or nginx config, switch to direct first so a broken proxy doesn't cut off Claude Code:
 
 ```bash
-./scripts/admin.sh switch direct   # 1. go direct — Claude Code stays connected
+./scripts/admin.sh switch direct         # 1. go direct — Claude Code stays connected
 # ... edit Lua/nginx, test changes ...
 docker exec gateii-proxy openresty -s reload   # 2. reload to test
-./scripts/admin.sh switch local    # 3. back to proxy when satisfied
+./scripts/admin.sh switch local-proxy    # 3. back to proxy when satisfied
 ```
 
 ## Emergency recovery (proxy broken, Claude Code cut off)
@@ -57,7 +68,7 @@ Or from this repo directly:
 - Shared dict key separator is `|` not `:` — colons break key parsing (sanitize replaces `:|` with `_`)
 - Rate limiter only active in `apikey` mode — passthrough has no rate limit
 - `.env` is gitignored — never `git add .env`, use `.env.example` for defaults
-- Proxy routing order: start stack → switch local; switch direct → stop stack (never reverse)
+- Proxy routing order: start stack → switch local-proxy; switch direct → stop stack (never reverse)
 - Before editing Lua/nginx: `admin.sh switch direct` first — broken proxy cuts off Claude Code
 - `data/keys.json` must use the structured schema (`{user, provider, upstream_key}`); flat `{key: "user"}` format is rejected by `schema.validate_keys` on startup — proxy then runs with empty auth cache (all requests 401)
 
