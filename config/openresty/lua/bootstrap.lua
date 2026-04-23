@@ -26,10 +26,11 @@ local bit           = require "bit"
 local _M = {}
 
 local KEYS_FILE            = "/etc/nginx/data/keys.json"
-local CONFIRM_TTL_DEFAULT  = 300   -- 5min confirm window
-local PENDING_TTL_DEFAULT  = 600   -- 10min bootstrap-code lifetime
-local PENDING_TTL_MAX      = 3600  -- 1h hard cap
-local NONCE_TTL            = 60    -- nonce window inside pending
+-- Bootstrap handshake tuning (override via env, see .env.example).
+local CONFIRM_TTL_DEFAULT  = tonumber(os.getenv("BOOTSTRAP_CONFIRM_TTL"))  or 300   -- 5min confirm window
+local PENDING_TTL_DEFAULT  = tonumber(os.getenv("BOOTSTRAP_PENDING_TTL"))  or 600   -- 10min bootstrap-code lifetime
+local PENDING_TTL_MAX      = tonumber(os.getenv("BOOTSTRAP_PENDING_MAX"))  or 3600  -- 1h hard cap
+local NONCE_TTL            = tonumber(os.getenv("BOOTSTRAP_NONCE_TTL"))    or 60    -- nonce window inside pending
 local SWEEP_INTERVAL       = 30
 local MAX_ITER_KEYS        = 1000
 

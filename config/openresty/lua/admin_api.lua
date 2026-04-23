@@ -12,6 +12,12 @@ ngx.header["Content-Type"] = "application/json"
 -- ADMIN_TOKEN env is set. Protects against lateral movement from a compromised container
 -- on the Docker network; the IP allow-list in nginx.conf alone trusts every sidecar.
 local ADMIN_TOKEN = os.getenv("ADMIN_TOKEN") or ""
+
+-- Per-component health-check timeouts (ms). Defaults tuned for LAN-local services.
+-- Override via env when hitting slower backends.
+local HEALTH_CHECK_CONNECT_MS = tonumber(os.getenv("HEALTH_CHECK_CONNECT_MS")) or 1500
+local HEALTH_CHECK_SEND_MS    = tonumber(os.getenv("HEALTH_CHECK_SEND_MS"))    or 1500
+local HEALTH_CHECK_READ_MS    = tonumber(os.getenv("HEALTH_CHECK_READ_MS"))    or 3000
 if ADMIN_TOKEN ~= "" then
     local supplied_header = ngx.var.http_x_admin_token or ""
     local authed = false
@@ -560,7 +566,7 @@ if uri == "/internal/admin/health" and method == "GET" then
     local function check(url)
         local t0 = ngx.now()
         local httpc = http.new()
-        httpc:set_timeouts(1500, 1500, 3000)
+        httpc:set_timeouts(HEALTH_CHECK_CONNECT_MS, HEALTH_CHECK_SEND_MS, HEALTH_CHECK_READ_MS)
         local res, err = httpc:request_uri(url)
         local ms = math.floor((ngx.now() - t0) * 1000)
         if res and res.status < 500 then
