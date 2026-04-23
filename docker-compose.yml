@@ -12,6 +12,7 @@ services:
     image: openresty/openresty:1.27.1.2-0-alpine
     container_name: gateii-proxy
     restart: unless-stopped
+    user: "65534:65534"
     environment:
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
       - PROXY_MODE=${PROXY_MODE:-passthrough}
@@ -23,13 +24,19 @@ services:
       - ./config/openresty/lua:/etc/nginx/lua:ro
       - ./config/openresty/html:/etc/nginx/html:ro
       - ./data:/etc/nginx/data
+    tmpfs:
+      - /usr/local/openresty/nginx/client_body_temp
+      - /usr/local/openresty/nginx/proxy_temp
+      - /usr/local/openresty/nginx/fastcgi_temp
+      - /usr/local/openresty/nginx/scgi_temp
+      - /usr/local/openresty/nginx/uwsgi_temp
+      - /usr/local/openresty/nginx/logs:mode=1777
     ports:
       - "${PROXY_PORT:-8888}:8080"
     entrypoint:
       - /bin/sh
       - -c
       - |
-        apk add --no-cache ca-certificates >/dev/null 2>&1
         test -f /etc/nginx/data/keys.json || echo '{}' > /etc/nginx/data/keys.json
         exec /usr/local/openresty/bin/openresty -g 'daemon off;'
     networks:
@@ -38,10 +45,6 @@ services:
       - no-new-privileges:true
     cap_drop:
       - ALL
-    cap_add:
-      - CHOWN
-      - SETUID
-      - SETGID
     healthcheck:
       test: ["CMD", "wget", "-qO/dev/null", "http://127.0.0.1:8080/health"]
       interval: 10s
