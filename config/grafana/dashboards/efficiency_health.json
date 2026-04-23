@@ -28,11 +28,19 @@
   },
   "panels": [
     {
+      "id": 100,
+      "type": "row",
+      "title": "Cache",
+      "collapsed": false,
+      "gridPos": {"x": 0, "y": 0, "w": 24, "h": 1},
+      "panels": []
+    },
+    {
       "id": 1,
       "title": "Cache Hit Rate (24h)",
       "description": "cache_read / (cache_read + cache_creation) — share of cacheable tokens served from cache.",
       "type": "stat",
-      "gridPos": {"x": 0, "y": 0, "w": 6, "h": 4},
+      "gridPos": {"x": 0, "y": 1, "w": 6, "h": 4},
       "datasource": {"type": "prometheus"},
       "targets": [{"datasource": {"type": "prometheus"}, "expr": "sum(increase(gateii_tokens_total{type=\"cache_read\",model=~\"$model\"}[24h])) / clamp_min(sum(increase(gateii_tokens_total{type=~\"cache_read|cache_creation\",model=~\"$model\"}[24h])), 1)", "legendFormat": "Hit rate", "instant": true, "refId": "A"}],
       "fieldConfig": {
@@ -41,24 +49,11 @@
       "options": {"reduceOptions": {"calcs": ["lastNotNull"]}, "colorMode": "value", "graphMode": "none", "orientation": "auto", "textMode": "auto"}
     },
     {
-      "id": 2,
-      "title": "Vision Requests Share (7d)",
-      "description": "Fraction of requests with image content-blocks.",
-      "type": "stat",
-      "gridPos": {"x": 6, "y": 0, "w": 6, "h": 4},
-      "datasource": {"type": "prometheus"},
-      "targets": [{"datasource": {"type": "prometheus"}, "expr": "sum(increase(gateii_requests_by_modality_total{modality=\"vision\",model=~\"$model\"}[7d])) / clamp_min(sum(increase(gateii_requests_by_modality_total{model=~\"$model\"}[7d])), 1)", "legendFormat": "Vision", "instant": true, "refId": "A"}],
-      "fieldConfig": {
-        "defaults": {"unit": "percentunit", "decimals": 1, "min": 0, "max": 1, "color": {"mode": "fixed", "fixedColor": "#B877D9"}}
-      },
-      "options": {"reduceOptions": {"calcs": ["lastNotNull"]}, "colorMode": "value", "graphMode": "none", "orientation": "auto", "textMode": "auto"}
-    },
-    {
       "id": 3,
       "title": "Cache Savings (30d)",
       "description": "Estimated savings from cache hits vs. paying full input price. Uses avg input price $3/Mtok × 0.9 multiplier.",
       "type": "stat",
-      "gridPos": {"x": 12, "y": 0, "w": 6, "h": 4},
+      "gridPos": {"x": 6, "y": 1, "w": 6, "h": 4},
       "datasource": {"type": "prometheus"},
       "targets": [{"datasource": {"type": "prometheus"}, "expr": "sum(increase(gateii_tokens_total{type=\"cache_read\",model=~\"$model\"}[30d])) * 3 * 0.9 / 1e6", "legendFormat": "Savings", "instant": true, "refId": "A"}],
       "fieldConfig": {
@@ -67,23 +62,10 @@
       "options": {"reduceOptions": {"calcs": ["lastNotNull"]}, "colorMode": "value", "graphMode": "none", "orientation": "auto", "textMode": "auto"}
     },
     {
-      "id": 4,
-      "title": "Rate Limit 7d Used (now)",
-      "description": "Fraction of the 7-day Anthropic token window consumed.",
-      "type": "gauge",
-      "gridPos": {"x": 18, "y": 0, "w": 6, "h": 4},
-      "datasource": {"type": "prometheus"},
-      "targets": [{"datasource": {"type": "prometheus"}, "expr": "gateii_rate_limit_7d_utilization", "legendFormat": "7d used", "instant": true, "refId": "A"}],
-      "fieldConfig": {
-        "defaults": {"unit": "percentunit", "decimals": 2, "min": 0, "max": 1, "color": {"mode": "thresholds"}, "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "yellow", "value": 0.6}, {"color": "red", "value": 0.85}]}}
-      },
-      "options": {"reduceOptions": {"calcs": ["lastNotNull"]}, "orientation": "auto", "showThresholdLabels": false, "showThresholdMarkers": true}
-    },
-    {
       "id": 5,
       "title": "Cache Hit Rate Trend (7d)",
       "type": "timeseries",
-      "gridPos": {"x": 0, "y": 4, "w": 12, "h": 8},
+      "gridPos": {"x": 12, "y": 1, "w": 12, "h": 8},
       "datasource": {"type": "prometheus"},
       "targets": [{"datasource": {"type": "prometheus"}, "expr": "sum(rate(gateii_tokens_total{type=\"cache_read\",model=~\"$model\"}[1h])) / clamp_min(sum(rate(gateii_tokens_total{type=~\"cache_read|cache_creation\",model=~\"$model\"}[1h])), 1)", "legendFormat": "hit rate", "refId": "A"}],
       "fieldConfig": {
@@ -92,10 +74,96 @@
       "options": {"tooltip": {"mode": "multi"}, "legend": {"displayMode": "list", "placement": "bottom"}}
     },
     {
+      "id": 101,
+      "type": "row",
+      "title": "Rate Limits",
+      "collapsed": false,
+      "gridPos": {"x": 0, "y": 9, "w": 24, "h": 1},
+      "panels": []
+    },
+    {
+      "id": 4,
+      "title": "Rate Limit 7d Used (now)",
+      "description": "Fraction of the 7-day Anthropic token window consumed.",
+      "type": "gauge",
+      "gridPos": {"x": 0, "y": 10, "w": 6, "h": 4},
+      "datasource": {"type": "prometheus"},
+      "targets": [{"datasource": {"type": "prometheus"}, "expr": "gateii_rate_limit_7d_utilization", "legendFormat": "7d used", "instant": true, "refId": "A"}],
+      "fieldConfig": {
+        "defaults": {"unit": "percentunit", "decimals": 2, "min": 0, "max": 1, "color": {"mode": "thresholds"}, "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "yellow", "value": 0.6}, {"color": "red", "value": 0.85}]}}
+      },
+      "options": {"reduceOptions": {"calcs": ["lastNotNull"]}, "orientation": "auto", "showThresholdLabels": false, "showThresholdMarkers": true}
+    },
+    {
+      "id": 11,
+      "title": "Tokens Remaining (5h)",
+      "description": "Absolute tokens left in the current 5h Anthropic window. Derived from max × (1 − utilization).",
+      "type": "stat",
+      "gridPos": {"x": 6, "y": 10, "w": 6, "h": 4},
+      "datasource": {"type": "prometheus"},
+      "targets": [{"datasource": {"type": "prometheus"}, "expr": "gateii_rate_limit_tokens_remaining", "legendFormat": "remaining", "instant": true, "refId": "A"}],
+      "fieldConfig": {
+        "defaults": {"unit": "short", "decimals": 0, "color": {"mode": "thresholds"}, "thresholds": {"mode": "absolute", "steps": [{"color": "red", "value": null}, {"color": "orange", "value": 100000}, {"color": "green", "value": 500000}]}}
+      },
+      "options": {"reduceOptions": {"calcs": ["lastNotNull"]}, "colorMode": "value", "graphMode": "area", "orientation": "auto", "textMode": "auto"}
+    },
+    {
+      "id": 12,
+      "title": "5h Window resets in",
+      "description": "Countdown until the current 5h Anthropic rate-limit window resets.",
+      "type": "stat",
+      "gridPos": {"x": 12, "y": 10, "w": 6, "h": 4},
+      "datasource": {"type": "prometheus"},
+      "targets": [{"datasource": {"type": "prometheus"}, "expr": "gateii_rate_limit_seconds_until_reset", "legendFormat": "5h reset", "instant": true, "refId": "A"}],
+      "fieldConfig": {
+        "defaults": {"unit": "s", "decimals": 0, "color": {"mode": "thresholds"}, "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "yellow", "value": 1800}, {"color": "red", "value": 7200}]}}
+      },
+      "options": {"reduceOptions": {"calcs": ["lastNotNull"]}, "colorMode": "value", "graphMode": "none", "orientation": "auto", "textMode": "auto"}
+    },
+    {
+      "id": 13,
+      "title": "7d Window resets in",
+      "description": "Countdown until the current 7-day Anthropic rate-limit window resets.",
+      "type": "stat",
+      "gridPos": {"x": 18, "y": 10, "w": 6, "h": 4},
+      "datasource": {"type": "prometheus"},
+      "targets": [{"datasource": {"type": "prometheus"}, "expr": "gateii_rate_limit_7d_seconds_until_reset", "legendFormat": "7d reset", "instant": true, "refId": "A"}],
+      "fieldConfig": {
+        "defaults": {"unit": "s", "decimals": 0, "color": {"mode": "fixed", "fixedColor": "#5794F2"}}
+      },
+      "options": {"reduceOptions": {"calcs": ["lastNotNull"]}, "colorMode": "value", "graphMode": "none", "orientation": "auto", "textMode": "auto"}
+    },
+    {
+      "id": 14,
+      "title": "Fallback Capacity",
+      "description": "Extra token capacity available beyond the primary 5h limit (typical: 50%).",
+      "type": "stat",
+      "gridPos": {"x": 0, "y": 14, "w": 6, "h": 4},
+      "datasource": {"type": "prometheus"},
+      "targets": [{"datasource": {"type": "prometheus"}, "expr": "gateii_rate_limit_fallback_pct * 100", "legendFormat": "fallback", "instant": true, "refId": "A"}],
+      "fieldConfig": {
+        "defaults": {"unit": "percent", "decimals": 0, "color": {"mode": "fixed", "fixedColor": "#B877D9"}}
+      },
+      "options": {"reduceOptions": {"calcs": ["lastNotNull"]}, "colorMode": "value", "graphMode": "none", "orientation": "auto", "textMode": "auto"}
+    },
+    {
+      "id": 15,
+      "title": "Unused Quota at last Reset",
+      "description": "Tokens left unused when the previous 5h window expired. Zero means the window was fully consumed.",
+      "type": "stat",
+      "gridPos": {"x": 6, "y": 14, "w": 6, "h": 4},
+      "datasource": {"type": "prometheus"},
+      "targets": [{"datasource": {"type": "prometheus"}, "expr": "gateii_rate_limit_tokens_expired", "legendFormat": "expired", "instant": true, "refId": "A"}],
+      "fieldConfig": {
+        "defaults": {"unit": "short", "decimals": 0, "color": {"mode": "fixed", "fixedColor": "#FF9830"}}
+      },
+      "options": {"reduceOptions": {"calcs": ["lastNotNull"]}, "colorMode": "value", "graphMode": "none", "orientation": "auto", "textMode": "auto"}
+    },
+    {
       "id": 6,
       "title": "Rate Limit 5h Utilization Trend (7d)",
       "type": "timeseries",
-      "gridPos": {"x": 12, "y": 4, "w": 12, "h": 8},
+      "gridPos": {"x": 12, "y": 14, "w": 12, "h": 8},
       "datasource": {"type": "prometheus"},
       "targets": [{"datasource": {"type": "prometheus"}, "expr": "gateii_rate_limit_5h_utilization", "legendFormat": "5h used", "refId": "A"}],
       "fieldConfig": {
@@ -104,11 +172,19 @@
       "options": {"tooltip": {"mode": "multi"}, "legend": {"displayMode": "list", "placement": "bottom"}}
     },
     {
+      "id": 102,
+      "type": "row",
+      "title": "Quality & Tokens per Prompt",
+      "collapsed": false,
+      "gridPos": {"x": 0, "y": 22, "w": 24, "h": 1},
+      "panels": []
+    },
+    {
       "id": 7,
       "title": "Tokens per Prompt (7d trend)",
       "description": "Avg input+output tokens per request, per model.",
       "type": "timeseries",
-      "gridPos": {"x": 0, "y": 12, "w": 12, "h": 8},
+      "gridPos": {"x": 0, "y": 23, "w": 12, "h": 8},
       "datasource": {"type": "prometheus"},
       "targets": [{"datasource": {"type": "prometheus"}, "expr": "sum by (model) (rate(gateii_tokens_total{type=~\"input|output\",model=~\"$model\"}[1h])) / clamp_min(sum by (model) (rate(gateii_requests_total{model=~\"$model\"}[1h])), 1)", "legendFormat": "{{model}}", "refId": "A"}],
       "fieldConfig": {
@@ -126,7 +202,7 @@
       "title": "Output/Input Ratio (7d trend)",
       "description": "Ratio of output tokens to input tokens. Higher = more generative work per prompt.",
       "type": "timeseries",
-      "gridPos": {"x": 12, "y": 12, "w": 12, "h": 8},
+      "gridPos": {"x": 12, "y": 23, "w": 12, "h": 8},
       "datasource": {"type": "prometheus"},
       "targets": [{"datasource": {"type": "prometheus"}, "expr": "sum by (model) (rate(gateii_tokens_total{type=\"output\",model=~\"$model\"}[1h])) / clamp_min(sum by (model) (rate(gateii_tokens_total{type=\"input\",model=~\"$model\"}[1h])), 1)", "legendFormat": "{{model}}", "refId": "A"}],
       "fieldConfig": {
@@ -140,11 +216,36 @@
       "options": {"tooltip": {"mode": "multi"}, "legend": {"displayMode": "table", "placement": "bottom"}}
     },
     {
+      "id": 103,
+      "type": "row",
+      "title": "Latency & Modality",
+      "collapsed": false,
+      "gridPos": {"x": 0, "y": 31, "w": 24, "h": 1},
+      "panels": []
+    },
+    {
+      "id": 10,
+      "title": "Avg Latency by Model (7d trend)",
+      "type": "timeseries",
+      "gridPos": {"x": 0, "y": 32, "w": 12, "h": 8},
+      "datasource": {"type": "prometheus"},
+      "targets": [{"datasource": {"type": "prometheus"}, "expr": "sum by (model) (rate(gateii_request_duration_ms_total{model=~\"$model\"}[5m])) / clamp_min(sum by (model) (rate(gateii_requests_total{model=~\"$model\"}[5m])), 1)", "legendFormat": "{{model}}", "refId": "A"}],
+      "fieldConfig": {
+        "defaults": {"unit": "ms", "custom": {"lineWidth": 2, "fillOpacity": 5}},
+        "overrides": [
+          {"matcher": {"id": "byRegexp", "options": "/opus/i"},   "properties": [{"id": "color", "value": {"fixedColor": "#B877D9", "mode": "fixed"}}]},
+          {"matcher": {"id": "byRegexp", "options": "/sonnet/i"}, "properties": [{"id": "color", "value": {"fixedColor": "#5794F2", "mode": "fixed"}}]},
+          {"matcher": {"id": "byRegexp", "options": "/haiku/i"},  "properties": [{"id": "color", "value": {"fixedColor": "#56A64B", "mode": "fixed"}}]}
+        ]
+      },
+      "options": {"tooltip": {"mode": "multi"}, "legend": {"displayMode": "table", "placement": "bottom"}}
+    },
+    {
       "id": 9,
       "title": "Tokens by Modality (7d)",
       "description": "Text vs. vision token split over the last 7 days.",
       "type": "bargauge",
-      "gridPos": {"x": 0, "y": 20, "w": 12, "h": 8},
+      "gridPos": {"x": 12, "y": 32, "w": 12, "h": 4},
       "datasource": {"type": "prometheus"},
       "targets": [{"datasource": {"type": "prometheus"}, "expr": "sum by (modality) (increase(gateii_tokens_by_modality_total{type=~\"input|output\",model=~\"$model\"}[7d]))", "legendFormat": "{{modality}}", "instant": true, "refId": "A"}],
       "fieldConfig": {
@@ -157,21 +258,17 @@
       "options": {"orientation": "horizontal", "reduceOptions": {"calcs": ["lastNotNull"]}, "displayMode": "gradient"}
     },
     {
-      "id": 10,
-      "title": "Avg Latency by Model (7d trend)",
-      "type": "timeseries",
-      "gridPos": {"x": 12, "y": 20, "w": 12, "h": 8},
+      "id": 2,
+      "title": "Vision Requests Share (7d)",
+      "description": "Fraction of requests with image content-blocks.",
+      "type": "stat",
+      "gridPos": {"x": 12, "y": 36, "w": 12, "h": 4},
       "datasource": {"type": "prometheus"},
-      "targets": [{"datasource": {"type": "prometheus"}, "expr": "sum by (model) (rate(gateii_request_duration_ms_total{model=~\"$model\"}[5m])) / clamp_min(sum by (model) (rate(gateii_requests_total{model=~\"$model\"}[5m])), 1)", "legendFormat": "{{model}}", "refId": "A"}],
+      "targets": [{"datasource": {"type": "prometheus"}, "expr": "sum(increase(gateii_requests_by_modality_total{modality=\"vision\",model=~\"$model\"}[7d])) / clamp_min(sum(increase(gateii_requests_by_modality_total{model=~\"$model\"}[7d])), 1)", "legendFormat": "Vision", "instant": true, "refId": "A"}],
       "fieldConfig": {
-        "defaults": {"unit": "ms", "custom": {"lineWidth": 2, "fillOpacity": 5}},
-        "overrides": [
-          {"matcher": {"id": "byRegexp", "options": "/opus/i"},   "properties": [{"id": "color", "value": {"fixedColor": "#B877D9", "mode": "fixed"}}]},
-          {"matcher": {"id": "byRegexp", "options": "/sonnet/i"}, "properties": [{"id": "color", "value": {"fixedColor": "#5794F2", "mode": "fixed"}}]},
-          {"matcher": {"id": "byRegexp", "options": "/haiku/i"},  "properties": [{"id": "color", "value": {"fixedColor": "#56A64B", "mode": "fixed"}}]}
-        ]
+        "defaults": {"unit": "percentunit", "decimals": 1, "min": 0, "max": 1, "color": {"mode": "fixed", "fixedColor": "#B877D9"}}
       },
-      "options": {"tooltip": {"mode": "multi"}, "legend": {"displayMode": "table", "placement": "bottom"}}
+      "options": {"reduceOptions": {"calcs": ["lastNotNull"]}, "colorMode": "value", "graphMode": "none", "orientation": "auto", "textMode": "auto"}
     }
   ]
 }
