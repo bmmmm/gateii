@@ -3,6 +3,10 @@ local cjson = require "cjson.safe"
 local counters = ngx.shared.counters
 local blocking_dict = ngx.shared.blocking
 
+-- Cap dict scans so a runaway counter dict can't stall the /metrics endpoint.
+-- Matches admin_api.lua for consistency.
+local MAX_ITER_KEYS = 5000
+
 local STOP_REASON_ALLOWED = { end_turn=true, max_tokens=true, stop_sequence=true, tool_use=true, refusal=true, pause_turn=true }
 local _price_cache = {}
 local _price_warn_logged = false
@@ -91,7 +95,7 @@ local function escape_label(s)
 end
 
 -- Collect all counter keys and group by user|provider|model
-local keys = counters:get_keys(0) or {}
+local keys = counters:get_keys(MAX_ITER_KEYS) or {}
 local usage = {}    -- { "user|provider|model" = { input=N, output=N, ... } }
 local stops = {}    -- { "user|provider|model|reason" = N }
 local statuses = {} -- { "user|provider|model|bucket" = N }
@@ -300,7 +304,7 @@ end
 -- Blocked users
 add("# HELP gateii_user_blocked 1 if user is currently blocked")
 add("# TYPE gateii_user_blocked gauge")
-local block_keys = blocking_dict:get_keys(0) or {}
+local block_keys = blocking_dict:get_keys(MAX_ITER_KEYS) or {}
 for _, key in ipairs(block_keys) do
     if key:sub(1, 8) == "blocked|" then
         local buser = key:sub(9)
@@ -493,7 +497,7 @@ add("# TYPE gateii_admin_sessions_active gauge")
 local admin_sessions = ngx.shared.admin_sessions
 local admin_session_count = 0
 if admin_sessions then
-    admin_session_count = #admin_sessions:get_keys(0)
+    admin_session_count = #admin_sessions:get_keys(MAX_ITER_KEYS)
 end
 add(string.format('gateii_admin_sessions_active %d', admin_session_count))
 
