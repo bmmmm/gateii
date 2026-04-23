@@ -12,17 +12,28 @@ ngx.header["Content-Type"] = "application/json"
 -- ADMIN_TOKEN env is set. Protects against lateral movement from a compromised container
 -- on the Docker network; the IP allow-list in nginx.conf alone trusts every sidecar.
 local ADMIN_TOKEN = os.getenv("ADMIN_TOKEN") or ""
+local PROXY_MODE = os.getenv("PROXY_MODE") or "apikey"
 
 -- Per-component health-check timeouts (ms). Defaults tuned for LAN-local services.
 -- Override via env when hitting slower backends.
 local HEALTH_CHECK_CONNECT_MS = tonumber(os.getenv("HEALTH_CHECK_CONNECT_MS")) or 1500
 local HEALTH_CHECK_SEND_MS    = tonumber(os.getenv("HEALTH_CHECK_SEND_MS"))    or 1500
 local HEALTH_CHECK_READ_MS    = tonumber(os.getenv("HEALTH_CHECK_READ_MS"))    or 3000
+
+if ADMIN_TOKEN == "" and PROXY_MODE == "apikey" then
+    -- Fail-closed: apikey mode without token exposes keys.json/limits.json
+    -- mutations to anyone on the admin network. Require a token.
+    ngx.status = 503
+    ngx.say('{"error":"Admin API disabled — set ADMIN_TOKEN in .env"}')
+    return ngx.exit(503)
+end
+
 if ADMIN_TOKEN ~= "" then
     local supplied_header = ngx.var.http_x_admin_token or ""
     local authed = false
 
-    if supplied_header == ADMIN_TOKEN then
+    local bootstrap = require "bootstrap"
+    if bootstrap._consttime_eq(supplied_header, ADMIN_TOKEN) then
         authed = true
     else
         -- Check session cookie
