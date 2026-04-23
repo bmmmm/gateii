@@ -51,7 +51,7 @@ docker exec gateii-proxy openresty -s reload   # 2. reload to test
 ## Emergency recovery (proxy broken, Claude Code cut off)
 
 ```bash
-gateii-rescue          # alias: switch direct + restart proxy container
+gateii rescue          # switch direct + restart proxy container
 # then restart Claude Code to reconnect
 ```
 
