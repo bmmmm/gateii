@@ -42,13 +42,11 @@ ADMIN_TOKEN=stub GRAFANA_ADMIN_PASSWORD=stub \
     || die "compose validation failed — run: ADMIN_TOKEN=x GRAFANA_ADMIN_PASSWORD=x docker compose -f servers/nutc/server/stacks/gateii/docker-compose.yml config"
 
 dim "  ensuring remote dir..."
-# data/ must be writable by the in-container nginx worker (uid 65534, nobody).
-# Owner = 65534 (nginx worker), group = 1000 (deploying user) so the admin
-# can still read/edit keys.json locally without sudo. 775 keeps world-read off.
-# Requires passwordless sudo on the remote for chown.
-ssh "$SSH_HOST" "mkdir -p $REMOTE_DIR/config/prometheus $REMOTE_DIR/config/grafana $REMOTE_DIR/data \
-                 && sudo chown -R 65534:1000 $REMOTE_DIR/data \
-                 && sudo chmod 775 $REMOTE_DIR/data"
+# data/ is written by the openresty container which runs as user 65534:65534.
+# Docker creates host-side bind-mount dirs as root by default; if data/ is
+# empty we pre-create it so the initial owner is the deploying user, not root.
+# Container writes then land as 65534:65534 and are group-readable (775).
+ssh "$SSH_HOST" "mkdir -p $REMOTE_DIR/config/prometheus $REMOTE_DIR/config/grafana $REMOTE_DIR/data"
 
 # 1. compose + README
 dim "  [1/4] docker-compose.yml + README"
