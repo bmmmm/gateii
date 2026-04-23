@@ -274,8 +274,8 @@ if not is_streaming then
     ngx.status = res.status
     for k, v in pairs(res.headers) do
         local lk = k:lower()
-        -- Strip hop-by-hop headers and content-length (nginx recalculates from actual body)
-        if lk ~= "transfer-encoding" and lk ~= "connection" and lk ~= "content-length" then
+        if lk:sub(1, 10) == "anthropic-" or lk == "content-type"
+           or lk == "content-encoding" or lk == "x-request-id" then
             ngx.header[k] = v
         end
     end
@@ -370,7 +370,8 @@ end
 ngx.status = res.status
 for k, v in pairs(res.headers) do
     local lk = k:lower()
-    if lk ~= "transfer-encoding" and lk ~= "connection" and lk ~= "content-length" then
+    if lk:sub(1, 10) == "anthropic-" or lk == "content-type"
+       or lk == "content-encoding" or lk == "x-request-id" then
         ngx.header[k] = v
     end
 end
@@ -409,7 +410,7 @@ until not chunk
 if had_read_err then
     httpc:close()
 else
-    httpc:set_keepalive()
+    httpc:set_keepalive(60000, 32)
 end
 
 -- Parse SSE events for token tracking — delegate to provider-specific parser.
