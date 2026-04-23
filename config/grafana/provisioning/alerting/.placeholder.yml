@@ -1,0 +1,2 @@
+# gateii provisions no alerts. This empty YAML keeps the directory
+# tracked in git so Grafana 12.x doesn't error on a missing path.
