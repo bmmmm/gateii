@@ -36,9 +36,17 @@ end
 ngx.req.read_body()
 local body = ngx.req.get_body_data()
 local ADMIN_TOKEN = os.getenv("ADMIN_TOKEN") or ""
+local PROXY_MODE = os.getenv("PROXY_MODE") or "apikey"
 
 if ADMIN_TOKEN == "" then
-    -- No token configured — console works without auth
+    if PROXY_MODE == "apikey" then
+        -- Fail-closed: apikey mode without ADMIN_TOKEN leaves keys.json mutable
+        -- by anyone reaching the admin port. Require a token.
+        ngx.status = 503
+        ngx.say('{"error":"Admin API disabled — set ADMIN_TOKEN in .env"}')
+        return
+    end
+    -- passthrough: console works without auth (no server-side secrets at risk)
     ngx.status = 200
     ngx.say('{"ok":true,"auth":"none"}')
     return
@@ -50,7 +58,8 @@ if body then
     if obj then supplied = tostring(obj.token or "") end
 end
 
-if supplied ~= ADMIN_TOKEN then
+local bootstrap = require "bootstrap"
+if not bootstrap._consttime_eq(supplied, ADMIN_TOKEN) then
     ngx.shared.counters:incr("admin_login_failures", 1, 0, 86400 * 7)
     ngx.status = 401
     ngx.say('{"error":"Invalid token"}')
