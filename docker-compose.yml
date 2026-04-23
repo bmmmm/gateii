@@ -41,11 +41,16 @@ services:
       - ./config/openresty/html:/etc/nginx/html:ro
       - ./data:/etc/nginx/data
     tmpfs:
-      - /usr/local/openresty/nginx/client_body_temp
-      - /usr/local/openresty/nginx/proxy_temp
-      - /usr/local/openresty/nginx/fastcgi_temp
-      - /usr/local/openresty/nginx/scgi_temp
-      - /usr/local/openresty/nginx/uwsgi_temp
+      # All mounts need mode=1777 because the container runs as uid 65534
+      # (see `user:` above). Default tmpfs mode is 755 owned by root,
+      # which blocks the unprivileged user from writing request bodies,
+      # upstream bodies, and PID files. Symptom: every POST /v1/messages
+      # returns 500 with [crit] "Permission denied" in the proxy log.
+      - /usr/local/openresty/nginx/client_body_temp:mode=1777
+      - /usr/local/openresty/nginx/proxy_temp:mode=1777
+      - /usr/local/openresty/nginx/fastcgi_temp:mode=1777
+      - /usr/local/openresty/nginx/scgi_temp:mode=1777
+      - /usr/local/openresty/nginx/uwsgi_temp:mode=1777
       - /usr/local/openresty/nginx/logs:mode=1777
     ports:
       - "${PROXY_BIND:-127.0.0.1}:${PROXY_PORT:-8888}:8080"
