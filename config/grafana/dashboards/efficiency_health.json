@@ -6,7 +6,7 @@
   "timezone": "browser",
   "schemaVersion": 38,
   "refresh": "1m",
-  "time": {"from": "now-7d", "to": "now"},
+  "time": {"from": "now-30d", "to": "now"},
   "links": [
     {"title": "Operations", "type": "link", "url": "/d/gateii-ops", "icon": "dashboard", "targetBlank": false},
     {"title": "Cost & Usage", "type": "link", "url": "/d/gateii-cost", "icon": "dollar", "targetBlank": false}
@@ -63,7 +63,7 @@
     },
     {
       "id": 5,
-      "title": "Cache Hit Rate Trend (7d)",
+      "title": "Cache Hit Rate Trend (30d)",
       "type": "timeseries",
       "gridPos": {"x": 12, "y": 1, "w": 12, "h": 8},
       "datasource": {"type": "prometheus"},
@@ -161,15 +161,23 @@
     },
     {
       "id": 6,
-      "title": "Rate Limit 5h Utilization Trend (7d)",
+      "title": "Rate Limit Utilization Trend (5h + 7d)",
+      "description": "Both Anthropic rate-limit windows overlaid. 5h is the short-burst limit, 7d is the long-rolling limit. When either approaches 100%, requests start getting 429'd.",
       "type": "timeseries",
       "gridPos": {"x": 12, "y": 14, "w": 12, "h": 8},
       "datasource": {"type": "prometheus"},
-      "targets": [{"datasource": {"type": "prometheus"}, "expr": "gateii_rate_limit_5h_utilization", "legendFormat": "5h used", "refId": "A"}],
+      "targets": [
+        {"datasource": {"type": "prometheus"}, "expr": "gateii_rate_limit_5h_utilization", "legendFormat": "5h window", "refId": "A"},
+        {"datasource": {"type": "prometheus"}, "expr": "gateii_rate_limit_7d_utilization", "legendFormat": "7d window", "refId": "B"}
+      ],
       "fieldConfig": {
-        "defaults": {"unit": "percentunit", "decimals": 2, "min": 0, "max": 1, "custom": {"lineWidth": 2, "fillOpacity": 15}, "color": {"mode": "fixed", "fixedColor": "#FF9830"}}
+        "defaults": {"unit": "percentunit", "decimals": 2, "min": 0, "max": 1, "custom": {"lineWidth": 2, "fillOpacity": 15}},
+        "overrides": [
+          {"matcher": {"id": "byName", "options": "5h window"}, "properties": [{"id": "color", "value": {"fixedColor": "#FF9830", "mode": "fixed"}}]},
+          {"matcher": {"id": "byName", "options": "7d window"}, "properties": [{"id": "color", "value": {"fixedColor": "#5794F2", "mode": "fixed"}}]}
+        ]
       },
-      "options": {"tooltip": {"mode": "multi"}, "legend": {"displayMode": "list", "placement": "bottom"}}
+      "options": {"tooltip": {"mode": "multi"}, "legend": {"displayMode": "table", "placement": "bottom"}}
     },
     {
       "id": 102,
@@ -181,7 +189,7 @@
     },
     {
       "id": 7,
-      "title": "Tokens per Prompt (7d trend)",
+      "title": "Tokens per Prompt (30d trend)",
       "description": "Avg input+output tokens per request, per model.",
       "type": "timeseries",
       "gridPos": {"x": 0, "y": 23, "w": 12, "h": 8},
@@ -199,7 +207,7 @@
     },
     {
       "id": 8,
-      "title": "Output/Input Ratio (7d trend)",
+      "title": "Output/Input Ratio (30d trend)",
       "description": "Ratio of output tokens to input tokens. Higher = more generative work per prompt.",
       "type": "timeseries",
       "gridPos": {"x": 12, "y": 23, "w": 12, "h": 8},
@@ -225,7 +233,7 @@
     },
     {
       "id": 10,
-      "title": "Avg Latency by Model (7d trend)",
+      "title": "Avg Latency by Model (30d trend)",
       "type": "timeseries",
       "gridPos": {"x": 0, "y": 32, "w": 12, "h": 8},
       "datasource": {"type": "prometheus"},
@@ -242,12 +250,12 @@
     },
     {
       "id": 9,
-      "title": "Tokens by Modality (7d)",
-      "description": "Text vs. vision token split over the last 7 days.",
+      "title": "Tokens by Modality (30d)",
+      "description": "Text vs. vision token split over the last 30 days.",
       "type": "bargauge",
       "gridPos": {"x": 12, "y": 32, "w": 12, "h": 4},
       "datasource": {"type": "prometheus"},
-      "targets": [{"datasource": {"type": "prometheus"}, "expr": "sum by (modality) (increase(gateii_tokens_by_modality_total{type=~\"input|output\",model=~\"$model\"}[7d]))", "legendFormat": "{{modality}}", "instant": true, "refId": "A"}],
+      "targets": [{"datasource": {"type": "prometheus"}, "expr": "sum by (modality) (increase(gateii_tokens_by_modality_total{type=~\"input|output\",model=~\"$model\"}[30d]))", "legendFormat": "{{modality}}", "instant": true, "refId": "A"}],
       "fieldConfig": {
         "defaults": {"unit": "short", "decimals": 0, "thresholds": {"mode": "absolute", "steps": [{"color": "blue", "value": null}]}},
         "overrides": [
@@ -259,12 +267,12 @@
     },
     {
       "id": 2,
-      "title": "Vision Requests Share (7d)",
+      "title": "Vision Requests Share (30d)",
       "description": "Fraction of requests with image content-blocks.",
       "type": "stat",
       "gridPos": {"x": 12, "y": 36, "w": 12, "h": 4},
       "datasource": {"type": "prometheus"},
-      "targets": [{"datasource": {"type": "prometheus"}, "expr": "sum(increase(gateii_requests_by_modality_total{modality=\"vision\",model=~\"$model\"}[7d])) / clamp_min(sum(increase(gateii_requests_by_modality_total{model=~\"$model\"}[7d])), 1)", "legendFormat": "Vision", "instant": true, "refId": "A"}],
+      "targets": [{"datasource": {"type": "prometheus"}, "expr": "sum(increase(gateii_requests_by_modality_total{modality=\"vision\",model=~\"$model\"}[30d])) / clamp_min(sum(increase(gateii_requests_by_modality_total{model=~\"$model\"}[30d])), 1)", "legendFormat": "Vision", "instant": true, "refId": "A"}],
       "fieldConfig": {
         "defaults": {"unit": "percentunit", "decimals": 1, "min": 0, "max": 1, "color": {"mode": "fixed", "fixedColor": "#B877D9"}}
       },
