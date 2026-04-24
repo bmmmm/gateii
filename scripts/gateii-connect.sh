@@ -1,10 +1,13 @@
 #!/bin/bash
 # gateii-connect — provision a proxy key via bootstrap handshake.
 #
-# Required env:
-#   GATEII_URL              base URL of the proxy, e.g. https://gateii.example.com
-#   GATEII_BOOTSTRAP_CODE   one-time code from `admin.sh bootstrap create`
-#   GATEII_BOOTSTRAP_SECRET 32-byte hex HMAC secret from the same invocation
+# Required env (one of):
+#   GATEII_CONNECT          single connection string: CODE:SECRET@URL
+#     Example: export GATEII_CONNECT="btp_xxx:deadbeef...@https://gateii.example.com"
+#   OR all three of:
+#     GATEII_URL              base URL of the proxy, e.g. https://gateii.example.com
+#     GATEII_BOOTSTRAP_CODE   one-time code from `admin.sh bootstrap create`
+#     GATEII_BOOTSTRAP_SECRET 32-byte hex HMAC secret from the same invocation
 #
 # Optional env:
 #   GATEII_SETTINGS         Claude settings path (default: ~/.claude/settings.json)
@@ -13,7 +16,7 @@
 # Flow: challenge → exchange (receive api_key + confirm_token) → install into
 # settings.json (with backup) → verify via /health → confirm install-or-revoke.
 #
-# Requires: curl, jq, openssl.
+# Requires: jq, openssl. curl or wget for health check (optional).
 
 set -euo pipefail
 
@@ -26,13 +29,46 @@ bold()  { printf '\033[1m%s\033[0m\n' "$*"; }
 die() { red "✗ $*" >&2; exit 1; }
 
 need() { command -v "$1" >/dev/null 2>&1 || die "$1 not installed — install it and retry"; }
-need curl; need jq; need openssl
+need jq; need openssl
 
-URL="${GATEII_URL:?Set GATEII_URL=https://gateii.example.com}"
-CODE="${GATEII_BOOTSTRAP_CODE:?Set GATEII_BOOTSTRAP_CODE=btp_...}"
-SECRET="${GATEII_BOOTSTRAP_SECRET:?Set GATEII_BOOTSTRAP_SECRET=<hex>}"
+# Parse GATEII_CONNECT or use individual env vars
+if [ -n "${GATEII_CONNECT:-}" ]; then
+    # Parse: CODE:SECRET@URL format
+    # Code = everything before the first :
+    _connect="${GATEII_CONNECT}"
+    CODE="${_connect%%:*}"
+    _rest="${_connect#*:}"
+
+    # URL starts at http:// or https://; SECRET is everything before @http or @https
+    if [[ "$_rest" =~ @https:// ]]; then
+        SECRET="${_rest%%@https*}"
+        URL="https${_rest##*@https}"
+    elif [[ "$_rest" =~ @http:// ]]; then
+        SECRET="${_rest%%@http*}"
+        URL="http${_rest##*@http}"
+    else
+        die "GATEII_CONNECT format invalid — expected CODE:SECRET@http(s)://url"
+    fi
+else
+    URL="${GATEII_URL:?Set GATEII_CONNECT=CODE:SECRET@URL or GATEII_URL=https://gateii.example.com}"
+    CODE="${GATEII_BOOTSTRAP_CODE:?Set GATEII_BOOTSTRAP_CODE=btp_...}"
+    SECRET="${GATEII_BOOTSTRAP_SECRET:?Set GATEII_BOOTSTRAP_SECRET=<hex>}"
+fi
+
 SETTINGS="${GATEII_SETTINGS:-$HOME/.claude/settings.json}"
 DRY_RUN="${GATEII_DRY_RUN:-0}"
+
+# HTTP GET helper: try curl, fall back to wget, succeed silently if neither available
+http_get_ok() {
+    local url="$1"
+    if command -v curl >/dev/null 2>&1; then
+        curl -sf --max-time 5 "$url" >/dev/null 2>&1
+    elif command -v wget >/dev/null 2>&1; then
+        wget -q --timeout=5 -O /dev/null "$url" 2>/dev/null
+    else
+        return 0  # neither available — assume ok, confirm will validate
+    fi
+}
 
 # HMAC-SHA256(hex-secret, message) → hex digest.
 hmac_hex() {
@@ -46,6 +82,9 @@ post_json() {
     local body="$1"; shift
     local tmp; tmp="$(mktemp)"
     local code
+    if ! command -v curl >/dev/null 2>&1; then
+        die "curl required for handshake (not just health checks)"
+    fi
     code=$(curl -sS -o "$tmp" -w '%{http_code}' \
                 -H 'Content-Type: application/json' \
                 -X POST "$URL$path" \
@@ -124,7 +163,7 @@ fi
 
 # Health check via the new key (only if install succeeded)
 if [ "$install_status" = "installed" ]; then
-    if ! curl -sf --max-time 5 "$URL/health" >/dev/null 2>&1; then
+    if ! http_get_ok "$URL/health"; then
         # Proxy didn't respond — key install may still be fine, but we cannot verify.
         # Report failed so the key is revoked and the admin can retry.
         rollback_settings
