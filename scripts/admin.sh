@@ -395,8 +395,7 @@ git-tracking:Track git activity (commits, lines) alongside token usage"
               echo -e "${RED}Path not found: $rpath${NC}" >&2; exit 1
             }
             rname="$(basename "$abs")"
-            VOLUMES="${VOLUMES}      - ${abs}:/repos/${rname}:ro
-"
+            VOLUMES="${VOLUMES}      - \"${abs}:/repos/${rname}:ro\""$'\n'
             echo -e "  ${DIM}+ ${abs}${NC}"
           done
 

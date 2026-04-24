@@ -291,7 +291,7 @@ end
 -- GET /internal/admin/overview — combined status for console
 if uri == "/internal/admin/overview" and method == "GET" then
     -- Proxy mode
-    local mode = os.getenv("PROXY_MODE") or "passthrough"
+    local mode = os.getenv("PROXY_MODE") or "apikey"
     local passthrough_user = os.getenv("PASSTHROUGH_USER") or ""
 
     -- Key count
