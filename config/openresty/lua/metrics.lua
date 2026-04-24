@@ -345,11 +345,10 @@ if rl_reset_ts ~= nil then
     if y then
         mo, d, h, mi, s = tonumber(mo), tonumber(d), tonumber(h), tonumber(mi), tonumber(s)
         if mo >= 1 and mo <= 12 and d >= 1 and d <= 31 and h <= 23 and mi <= 59 and s <= 60 then
-            local mdays = {0,31,59,90,120,151,181,212,243,273,304,334}
-            local days_epoch = (tonumber(y) - 1970) * 365
-                + math.floor((tonumber(y) - 1969) / 4)
-                + (mdays[mo] or 0) + d - 1
-            local reset_unix = days_epoch * 86400 + h * 3600 + mi * 60 + s
+            local reset_unix = os.time({
+                year=tonumber(y), month=mo, day=d,
+                hour=h, min=mi, sec=s
+            })
             local seconds_remaining = math.max(0, reset_unix - ngx.time())
             add(string.format("gateii_rate_limit_seconds_until_reset %d", seconds_remaining))
         else
@@ -392,11 +391,10 @@ if rl_7d_reset_ts ~= nil then
         -- Same bounds guard as the 5h block above: prevents mdays7[0]/nil crash
         if mo7n >= 1 and mo7n <= 12 and d7n >= 1 and d7n <= 31
            and h7n <= 23 and mi7n <= 59 and s7n <= 60 then
-            local mdays7 = {0,31,59,90,120,151,181,212,243,273,304,334}
-            local days7 = (y7n - 1970) * 365
-                + math.floor((y7n - 1969) / 4)
-                + mdays7[mo7n] + d7n - 1
-            local reset7_unix = days7 * 86400 + h7n * 3600 + mi7n * 60 + s7n
+            local reset7_unix = os.time({
+                year=y7n, month=mo7n, day=d7n,
+                hour=h7n, min=mi7n, sec=s7n
+            })
             add(string.format("gateii_rate_limit_7d_seconds_until_reset %d",
                 math.max(0, reset7_unix - ngx.time())))
         else

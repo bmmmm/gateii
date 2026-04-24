@@ -33,9 +33,11 @@ function _M.allow_request(provider)
     if state == "open" then
         local opened_at = cd:get(key(provider, "opened_at")) or 0
         if ngx.time() - opened_at >= COOLDOWN_SECONDS then
-            -- Transition to half_open — allow one probe
-            cd:set(key(provider, "state"), "half_open", STATE_TTL)
-            ngx.log(ngx.NOTICE, "circuit_breaker: ", provider, " transitioning to half_open")
+            -- Only worker 0 drives the transition to avoid simultaneous probes
+            if ngx.worker.id() == 0 then
+                cd:set(key(provider, "state"), "half_open", STATE_TTL)
+                ngx.log(ngx.NOTICE, "circuit_breaker: ", provider, " transitioning to half_open")
+            end
             return true, nil
         end
         return false, "circuit_open"
@@ -59,8 +61,7 @@ function _M.record(provider, status, transport_err)
     local state = cd:get(key(provider, "state")) or "closed"
 
     if is_failure then
-        local failures = (cd:get(key(provider, "failures")) or 0) + 1
-        cd:set(key(provider, "failures"), failures, STATE_TTL)
+        local failures = cd:incr(key(provider, "failures"), 1, 0, STATE_TTL)
 
         if state == "half_open" then
             -- Probe failed — back to open, reset cooldown timer
