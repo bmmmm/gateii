@@ -514,7 +514,7 @@ YAML
     #   admin.sh bootstrap create --user <u> --provider <p> --upstream-key <k> [--ttl 600]
     #   admin.sh bootstrap list
     #   admin.sh bootstrap revoke <code>
-    ACTION="${1:?Usage: admin.sh bootstrap {create|list|revoke}}"
+    ACTION="${1:?Usage: admin.sh bootstrap (create|list|revoke)}"
     shift
     case "$ACTION" in
       create)
