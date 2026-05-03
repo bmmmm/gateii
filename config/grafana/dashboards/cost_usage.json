@@ -6,14 +6,30 @@
   "timezone": "browser",
   "schemaVersion": 38,
   "refresh": "1m",
-  "time": {"from": "now/M+13d", "to": "now"},
-  "description": "Billing cycle starts on the 14th of each month. Default time range = current cycle. For previous cycle, set range to `now/M+13d-1M` → `now/M+13d`.",
+  "time": {"from": "now-31d", "to": "now"},
+  "description": "Aggregation window controlled by the Window dropdown. For exact billing-cycle dates (14th → 13th), set the time picker manually; the window dropdown still drives the per-panel aggregation interval.",
   "links": [
     {"title": "Operations", "type": "link", "url": "/d/gateii-ops", "icon": "dashboard", "targetBlank": false},
     {"title": "Efficiency & Health", "type": "link", "url": "/d/gateii-eff", "icon": "cloud", "targetBlank": false}
   ],
   "templating": {
     "list": [
+      {
+        "name": "window",
+        "label": "Window",
+        "type": "custom",
+        "query": "24h,7d,30d,60d,90d",
+        "current": {"selected": true, "text": "30d", "value": "30d"},
+        "options": [
+          {"selected": false, "text": "24h", "value": "24h"},
+          {"selected": false, "text": "7d", "value": "7d"},
+          {"selected": true,  "text": "30d", "value": "30d"},
+          {"selected": false, "text": "60d", "value": "60d"},
+          {"selected": false, "text": "90d", "value": "90d"}
+        ],
+        "includeAll": false,
+        "multi": false
+      },
       {
         "name": "model",
         "label": "Model",
@@ -40,7 +56,7 @@
       "id": 1,
       "title": "Cost (24h)",
       "type": "stat",
-      "gridPos": {"x": 0, "y": 1, "w": 4, "h": 4},
+      "gridPos": {"x": 0, "y": 1, "w": 5, "h": 4},
       "datasource": {"type": "prometheus"},
       "targets": [{"datasource": {"type": "prometheus"}, "expr": "sum(increase(gateii_cost_dollars_total{model=~\"$model\"}[24h]))", "legendFormat": "24h", "instant": true, "refId": "A"}],
       "fieldConfig": {
@@ -50,47 +66,23 @@
     },
     {
       "id": 2,
-      "title": "Cost (this cycle)",
+      "title": "Cost ($window)",
       "type": "stat",
-      "gridPos": {"x": 4, "y": 1, "w": 4, "h": 4},
+      "gridPos": {"x": 5, "y": 1, "w": 5, "h": 4},
       "datasource": {"type": "prometheus"},
-      "targets": [{"datasource": {"type": "prometheus"}, "expr": "sum(increase(gateii_cost_dollars_total{model=~\"$model\"}[$__range]))", "legendFormat": "cycle", "instant": true, "refId": "A"}],
+      "targets": [{"datasource": {"type": "prometheus"}, "expr": "sum(increase(gateii_cost_dollars_total{model=~\"$model\"}[$window]))", "legendFormat": "window", "instant": true, "refId": "A"}],
       "fieldConfig": {
         "defaults": {"unit": "currencyUSD", "decimals": 2, "color": {"mode": "thresholds"}, "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "yellow", "value": 100}, {"color": "red", "value": 500}]}}
       },
       "options": {"reduceOptions": {"calcs": ["lastNotNull"]}, "colorMode": "value", "graphMode": "none", "orientation": "auto", "textMode": "auto"}
     },
     {
-      "id": 3,
-      "title": "Cost (365d)",
-      "type": "stat",
-      "gridPos": {"x": 8, "y": 1, "w": 4, "h": 4},
-      "datasource": {"type": "prometheus"},
-      "targets": [{"datasource": {"type": "prometheus"}, "expr": "sum(increase(gateii_cost_dollars_total{model=~\"$model\"}[365d]))", "legendFormat": "365d", "instant": true, "refId": "A"}],
-      "fieldConfig": {
-        "defaults": {"unit": "currencyUSD", "decimals": 2, "color": {"mode": "thresholds"}, "thresholds": {"mode": "absolute", "steps": [{"color": "blue", "value": null}]}}
-      },
-      "options": {"reduceOptions": {"calcs": ["lastNotNull"]}, "colorMode": "value", "graphMode": "none", "orientation": "auto", "textMode": "auto"}
-    },
-    {
-      "id": 4,
-      "title": "Tokens (24h)",
-      "type": "stat",
-      "gridPos": {"x": 12, "y": 1, "w": 4, "h": 4},
-      "datasource": {"type": "prometheus"},
-      "targets": [{"datasource": {"type": "prometheus"}, "expr": "sum(increase(gateii_tokens_total{type=~\"input|output\",model=~\"$model\"}[24h]))", "legendFormat": "24h", "instant": true, "refId": "A"}],
-      "fieldConfig": {
-        "defaults": {"unit": "short", "decimals": 0, "color": {"mode": "fixed", "fixedColor": "#B877D9"}}
-      },
-      "options": {"reduceOptions": {"calcs": ["lastNotNull"]}, "colorMode": "value", "graphMode": "none", "orientation": "auto", "textMode": "auto"}
-    },
-    {
       "id": 5,
-      "title": "Tokens (this cycle)",
+      "title": "Tokens ($window)",
       "type": "stat",
-      "gridPos": {"x": 16, "y": 1, "w": 4, "h": 4},
+      "gridPos": {"x": 10, "y": 1, "w": 5, "h": 4},
       "datasource": {"type": "prometheus"},
-      "targets": [{"datasource": {"type": "prometheus"}, "expr": "sum(increase(gateii_tokens_total{type=~\"input|output\",model=~\"$model\"}[$__range]))", "legendFormat": "cycle", "instant": true, "refId": "A"}],
+      "targets": [{"datasource": {"type": "prometheus"}, "expr": "sum(increase(gateii_tokens_total{type=~\"input|output\",model=~\"$model\"}[$window]))", "legendFormat": "window", "instant": true, "refId": "A"}],
       "fieldConfig": {
         "defaults": {"unit": "short", "decimals": 0, "color": {"mode": "fixed", "fixedColor": "#B877D9"}}
       },
@@ -98,31 +90,44 @@
     },
     {
       "id": 6,
-      "title": "Requests (this cycle)",
+      "title": "Requests ($window)",
       "type": "stat",
-      "gridPos": {"x": 20, "y": 1, "w": 4, "h": 4},
+      "gridPos": {"x": 15, "y": 1, "w": 5, "h": 4},
       "datasource": {"type": "prometheus"},
-      "targets": [{"datasource": {"type": "prometheus"}, "expr": "sum(increase(gateii_requests_total{model=~\"$model\"}[$__range]))", "legendFormat": "Requests", "instant": true, "refId": "A"}],
+      "targets": [{"datasource": {"type": "prometheus"}, "expr": "sum(increase(gateii_requests_total{model=~\"$model\"}[$window]))", "legendFormat": "Requests", "instant": true, "refId": "A"}],
       "fieldConfig": {
         "defaults": {"unit": "short", "decimals": 0, "color": {"mode": "fixed", "fixedColor": "#5794F2"}}
       },
       "options": {"reduceOptions": {"calcs": ["lastNotNull"]}, "colorMode": "value", "graphMode": "none", "orientation": "auto", "textMode": "auto"}
     },
     {
+      "id": 11,
+      "title": "Monthly Forecast",
+      "description": "Last 7 days cost rate × 30 days. Linear extrapolation of the current pace.",
+      "type": "stat",
+      "gridPos": {"x": 20, "y": 1, "w": 4, "h": 4},
+      "datasource": {"type": "prometheus"},
+      "targets": [{"datasource": {"type": "prometheus"}, "expr": "sum(rate(gateii_cost_dollars_total{model=~\"$model\"}[7d])) * 86400 * 30", "legendFormat": "Forecast", "instant": true, "refId": "A"}],
+      "fieldConfig": {
+        "defaults": {"unit": "currencyUSD", "decimals": 2, "color": {"mode": "thresholds"}, "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "yellow", "value": 200}, {"color": "red", "value": 1000}]}}
+      },
+      "options": {"reduceOptions": {"calcs": ["lastNotNull"]}, "colorMode": "background", "graphMode": "area", "orientation": "auto", "textMode": "auto"}
+    },
+    {
       "id": 201,
       "type": "row",
-      "title": "Breakdown",
+      "title": "Cost Breakdown",
       "collapsed": false,
       "gridPos": {"x": 0, "y": 5, "w": 24, "h": 1},
       "panels": []
     },
     {
       "id": 7,
-      "title": "Cost by Model (this cycle)",
+      "title": "Cost by Model ($window)",
       "type": "bargauge",
-      "gridPos": {"x": 0, "y": 6, "w": 12, "h": 8},
+      "gridPos": {"x": 0, "y": 6, "w": 8, "h": 8},
       "datasource": {"type": "prometheus"},
-      "targets": [{"datasource": {"type": "prometheus"}, "expr": "sum by (model) (increase(gateii_cost_dollars_total{model=~\"$model\"}[$__range]))", "legendFormat": "{{model}}", "instant": true, "refId": "A"}],
+      "targets": [{"datasource": {"type": "prometheus"}, "expr": "sum by (model) (increase(gateii_cost_dollars_total{model=~\"$model\"}[$window]))", "legendFormat": "{{model}}", "instant": true, "refId": "A"}],
       "fieldConfig": {
         "defaults": {"unit": "currencyUSD", "decimals": 2, "thresholds": {"mode": "absolute", "steps": [{"color": "blue", "value": null}]}},
         "overrides": [
@@ -135,106 +140,85 @@
     },
     {
       "id": 8,
-      "title": "Daily Cost Trend (this cycle)",
-      "type": "timeseries",
-      "gridPos": {"x": 12, "y": 6, "w": 12, "h": 8},
+      "title": "Daily Cost Trend (last 31d)",
+      "description": "Per-day cost stacked by model. Fixed 31-day window so the chart always has data regardless of the Window dropdown.",
+      "type": "barchart",
+      "gridPos": {"x": 8, "y": 6, "w": 16, "h": 8},
       "datasource": {"type": "prometheus"},
-      "targets": [{"datasource": {"type": "prometheus"}, "expr": "sum by (model) (increase(gateii_cost_dollars_total{model=~\"$model\"}[1d]))", "legendFormat": "{{model}}", "refId": "A"}],
+      "targets": [{"datasource": {"type": "prometheus"}, "expr": "sum by (model) (increase(gateii_cost_dollars_total{model=~\"$model\"}[1d]))", "legendFormat": "{{model}}", "refId": "A", "interval": "1d"}],
       "fieldConfig": {
-        "defaults": {"unit": "currencyUSD", "decimals": 2, "custom": {"lineWidth": 2, "fillOpacity": 20, "stacking": {"mode": "normal"}}},
+        "defaults": {"unit": "currencyUSD", "decimals": 2, "custom": {"lineWidth": 1, "fillOpacity": 80, "stacking": {"mode": "normal"}, "axisLabel": ""}},
         "overrides": [
           {"matcher": {"id": "byRegexp", "options": "/opus/i"},   "properties": [{"id": "color", "value": {"fixedColor": "#B877D9", "mode": "fixed"}}]},
           {"matcher": {"id": "byRegexp", "options": "/sonnet/i"}, "properties": [{"id": "color", "value": {"fixedColor": "#5794F2", "mode": "fixed"}}]},
           {"matcher": {"id": "byRegexp", "options": "/haiku/i"},  "properties": [{"id": "color", "value": {"fixedColor": "#56A64B", "mode": "fixed"}}]}
         ]
       },
-      "options": {"tooltip": {"mode": "multi"}, "legend": {"displayMode": "table", "placement": "bottom"}}
-    },
-    {
-      "id": 9,
-      "title": "Requests by Effort (this cycle)",
-      "description": "Opus reasoning effort dimension. 'none' = requests without output_config.effort set.",
-      "type": "bargauge",
-      "gridPos": {"x": 0, "y": 14, "w": 12, "h": 8},
-      "datasource": {"type": "prometheus"},
-      "targets": [{"datasource": {"type": "prometheus"}, "expr": "sum by (effort) (increase(gateii_requests_by_effort_total{model=~\"$model\"}[$__range]))", "legendFormat": "{{effort}}", "instant": true, "refId": "A"}],
-      "fieldConfig": {
-        "defaults": {"unit": "short", "decimals": 0, "thresholds": {"mode": "absolute", "steps": [{"color": "purple", "value": null}]}}
-      },
-      "options": {"orientation": "horizontal", "reduceOptions": {"calcs": ["lastNotNull"]}, "displayMode": "gradient"}
-    },
-    {
-      "id": 10,
-      "title": "Tokens by Effort (this cycle)",
-      "description": "Output-token sum per effort level — proxy for cost, since output dominates cost.",
-      "type": "bargauge",
-      "gridPos": {"x": 12, "y": 14, "w": 12, "h": 8},
-      "datasource": {"type": "prometheus"},
-      "targets": [{"datasource": {"type": "prometheus"}, "expr": "sum by (effort) (increase(gateii_tokens_by_effort_total{type=\"output\",model=~\"$model\"}[$__range]))", "legendFormat": "{{effort}}", "instant": true, "refId": "A"}],
-      "fieldConfig": {
-        "defaults": {"unit": "short", "decimals": 0, "thresholds": {"mode": "absolute", "steps": [{"color": "purple", "value": null}]}}
-      },
-      "options": {"orientation": "horizontal", "reduceOptions": {"calcs": ["lastNotNull"]}, "displayMode": "gradient"}
-    },
-    {
-      "id": 202,
-      "type": "row",
-      "title": "Top Users",
-      "collapsed": false,
-      "gridPos": {"x": 0, "y": 22, "w": 24, "h": 1},
-      "panels": []
+      "options": {"tooltip": {"mode": "multi"}, "legend": {"displayMode": "table", "placement": "bottom"}, "orientation": "auto", "stacking": "normal", "showValue": "auto", "xTickLabelRotation": -45}
     },
     {
       "id": 12,
-      "title": "Top Users by Cost (this cycle)",
+      "title": "Cost by User ($window)",
       "type": "bargauge",
-      "gridPos": {"x": 0, "y": 23, "w": 12, "h": 8},
+      "gridPos": {"x": 0, "y": 14, "w": 8, "h": 6},
       "datasource": {"type": "prometheus"},
-      "targets": [{"datasource": {"type": "prometheus"}, "expr": "topk(10, sum by (user) (increase(gateii_cost_dollars_total{model=~\"$model\"}[$__range])))", "legendFormat": "{{user}}", "instant": true, "refId": "A"}],
+      "targets": [{"datasource": {"type": "prometheus"}, "expr": "topk(10, sum by (user) (increase(gateii_cost_dollars_total{model=~\"$model\"}[$window])))", "legendFormat": "{{user}}", "instant": true, "refId": "A"}],
       "fieldConfig": {
         "defaults": {"unit": "currencyUSD", "decimals": 2, "thresholds": {"mode": "absolute", "steps": [{"color": "blue", "value": null}]}}
       },
       "options": {"orientation": "horizontal", "reduceOptions": {"calcs": ["lastNotNull"]}, "displayMode": "gradient"}
     },
     {
-      "id": 13,
-      "title": "Top Users by Requests (this cycle)",
+      "id": 10,
+      "title": "Tokens by Effort ($window)",
+      "description": "Output-token sum per Opus reasoning effort level — proxy for cost since output dominates spend. 'none' = requests without output_config.effort set.",
       "type": "bargauge",
-      "gridPos": {"x": 12, "y": 23, "w": 12, "h": 8},
+      "gridPos": {"x": 8, "y": 14, "w": 16, "h": 6},
       "datasource": {"type": "prometheus"},
-      "targets": [{"datasource": {"type": "prometheus"}, "expr": "topk(10, sum by (user) (increase(gateii_requests_total{model=~\"$model\"}[$__range])))", "legendFormat": "{{user}}", "instant": true, "refId": "A"}],
+      "targets": [{"datasource": {"type": "prometheus"}, "expr": "sum by (effort) (increase(gateii_tokens_by_effort_total{type=\"output\",model=~\"$model\"}[$window]))", "legendFormat": "{{effort}}", "instant": true, "refId": "A"}],
       "fieldConfig": {
-        "defaults": {"unit": "short", "decimals": 0, "thresholds": {"mode": "absolute", "steps": [{"color": "blue", "value": null}]}}
+        "defaults": {"unit": "short", "decimals": 0, "thresholds": {"mode": "absolute", "steps": [{"color": "purple", "value": null}]}}
       },
       "options": {"orientation": "horizontal", "reduceOptions": {"calcs": ["lastNotNull"]}, "displayMode": "gradient"}
     },
     {
       "id": 203,
       "type": "row",
-      "title": "Forecast & Pricing",
+      "title": "Pricing & Subscription",
       "collapsed": false,
-      "gridPos": {"x": 0, "y": 31, "w": 24, "h": 1},
+      "gridPos": {"x": 0, "y": 20, "w": 24, "h": 1},
       "panels": []
     },
     {
-      "id": 11,
-      "title": "Monthly Forecast (linear)",
-      "description": "Last 7 days cost rate extrapolated over 30 days. Simple linear projection — current pace × month.",
-      "type": "stat",
-      "gridPos": {"x": 0, "y": 32, "w": 8, "h": 8},
+      "id": 14,
+      "title": "Cost vs Subscription Break-Even ($window)",
+      "description": "Cumulative spend in the selected window vs. typical Anthropic subscription tiers ($20/$100/$200).",
+      "type": "timeseries",
+      "gridPos": {"x": 0, "y": 21, "w": 16, "h": 8},
       "datasource": {"type": "prometheus"},
-      "targets": [{"datasource": {"type": "prometheus"}, "expr": "sum(rate(gateii_cost_dollars_total{model=~\"$model\"}[7d])) * 86400 * 30", "legendFormat": "Forecast", "instant": true, "refId": "A"}],
+      "targets": [
+        {"datasource": {"type": "prometheus"}, "expr": "sum(increase(gateii_cost_dollars_total{model=~\"$model\"}[$window]))", "legendFormat": "window spend", "refId": "A"},
+        {"datasource": {"type": "prometheus"}, "expr": "vector(20)", "legendFormat": "Pro $20", "refId": "B"},
+        {"datasource": {"type": "prometheus"}, "expr": "vector(100)", "legendFormat": "Max 5× $100", "refId": "C"},
+        {"datasource": {"type": "prometheus"}, "expr": "vector(200)", "legendFormat": "Max 20× $200", "refId": "D"}
+      ],
       "fieldConfig": {
-        "defaults": {"unit": "currencyUSD", "decimals": 2, "color": {"mode": "thresholds"}, "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "yellow", "value": 200}, {"color": "red", "value": 1000}]}}
+        "defaults": {"unit": "currencyUSD", "decimals": 2, "custom": {"lineWidth": 2, "fillOpacity": 10}},
+        "overrides": [
+          {"matcher": {"id": "byName", "options": "window spend"}, "properties": [{"id": "color", "value": {"fixedColor": "#E02F44", "mode": "fixed"}}, {"id": "custom.fillOpacity", "value": 25}]},
+          {"matcher": {"id": "byName", "options": "Pro $20"},   "properties": [{"id": "color", "value": {"fixedColor": "#56A64B", "mode": "fixed"}}, {"id": "custom.lineStyle", "value": {"fill": "dash", "dash": [10, 10]}}]},
+          {"matcher": {"id": "byName", "options": "Max 5× $100"}, "properties": [{"id": "color", "value": {"fixedColor": "#FF9830", "mode": "fixed"}}, {"id": "custom.lineStyle", "value": {"fill": "dash", "dash": [10, 10]}}]},
+          {"matcher": {"id": "byName", "options": "Max 20× $200"}, "properties": [{"id": "color", "value": {"fixedColor": "#B877D9", "mode": "fixed"}}, {"id": "custom.lineStyle", "value": {"fill": "dash", "dash": [10, 10]}}]}
+        ]
       },
-      "options": {"reduceOptions": {"calcs": ["lastNotNull"]}, "colorMode": "background", "graphMode": "area", "orientation": "auto", "textMode": "auto"}
+      "options": {"tooltip": {"mode": "multi"}, "legend": {"displayMode": "table", "placement": "bottom"}}
     },
     {
       "id": 20,
       "title": "Active Pricing per 1M Tokens",
       "description": "Current pricing loaded from providers.json, per model + type (input/output/cache_write/cache_read).",
       "type": "table",
-      "gridPos": {"x": 8, "y": 32, "w": 16, "h": 8},
+      "gridPos": {"x": 16, "y": 21, "w": 8, "h": 8},
       "datasource": {"type": "prometheus"},
       "targets": [{"datasource": {"type": "prometheus"}, "expr": "gateii_model_pricing_per_mtok", "format": "table", "instant": true, "refId": "A"}],
       "transformations": [
@@ -248,30 +232,6 @@
         ]
       },
       "options": {"showHeader": true, "cellHeight": "sm"}
-    },
-    {
-      "id": 14,
-      "title": "Cost vs Subscription Break-Even (this cycle)",
-      "description": "Cumulative billing-cycle spend vs. typical Anthropic subscription tiers ($20/$100/$200).",
-      "type": "timeseries",
-      "gridPos": {"x": 0, "y": 40, "w": 24, "h": 8},
-      "datasource": {"type": "prometheus"},
-      "targets": [
-        {"datasource": {"type": "prometheus"}, "expr": "sum(increase(gateii_cost_dollars_total{model=~\"$model\"}[$__range]))", "legendFormat": "cycle spend", "refId": "A"},
-        {"datasource": {"type": "prometheus"}, "expr": "vector(20)", "legendFormat": "Pro $20", "refId": "B"},
-        {"datasource": {"type": "prometheus"}, "expr": "vector(100)", "legendFormat": "Max 5× $100", "refId": "C"},
-        {"datasource": {"type": "prometheus"}, "expr": "vector(200)", "legendFormat": "Max 20× $200", "refId": "D"}
-      ],
-      "fieldConfig": {
-        "defaults": {"unit": "currencyUSD", "decimals": 2, "custom": {"lineWidth": 2, "fillOpacity": 10}},
-        "overrides": [
-          {"matcher": {"id": "byName", "options": "cycle spend"}, "properties": [{"id": "color", "value": {"fixedColor": "#E02F44", "mode": "fixed"}}, {"id": "custom.fillOpacity", "value": 25}]},
-          {"matcher": {"id": "byName", "options": "Pro $20"},   "properties": [{"id": "color", "value": {"fixedColor": "#56A64B", "mode": "fixed"}}, {"id": "custom.lineStyle", "value": {"fill": "dash", "dash": [10, 10]}}]},
-          {"matcher": {"id": "byName", "options": "Max 5× $100"}, "properties": [{"id": "color", "value": {"fixedColor": "#FF9830", "mode": "fixed"}}, {"id": "custom.lineStyle", "value": {"fill": "dash", "dash": [10, 10]}}]},
-          {"matcher": {"id": "byName", "options": "Max 20× $200"}, "properties": [{"id": "color", "value": {"fixedColor": "#B877D9", "mode": "fixed"}}, {"id": "custom.lineStyle", "value": {"fill": "dash", "dash": [10, 10]}}]}
-        ]
-      },
-      "options": {"tooltip": {"mode": "multi"}, "legend": {"displayMode": "table", "placement": "bottom"}}
     }
   ]
 }
