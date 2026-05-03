@@ -89,6 +89,7 @@ Or from this repo directly:
 | `config/openresty/lua/admin_login.lua` | `/internal/admin/login` — session cookie issuance, failure counter |
 | `config/openresty/lua/schema.lua` | Startup validation for `keys.json` and `limits.json` (rejects flat format) |
 | `config/openresty/lua/circuit_breaker.lua` | Per-upstream breaker for repeated failures |
+| `config/openresty/lua/rl_persist.lua` | Persist rate-limit gauges to `data/ratelimit_state.json` (loaded on worker-0 startup, flushed every 30s) — survives container restarts |
 
 ## Architecture decisions
 

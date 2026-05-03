@@ -94,6 +94,18 @@ local function escape_label(s)
     return s:gsub("\\", "\\\\"):gsub('"', '\\"'):gsub("\n", "\\n")
 end
 
+-- Parse RFC3339 timestamp to unix seconds. Returns nil on invalid input.
+local function parse_rfc3339(ts)
+    if type(ts) ~= "string" then return nil end
+    local y, mo, d, h, mi, s = ts:match("^(%d+)-(%d+)-(%d+)T(%d+):(%d+):(%d+)")
+    if not y then return nil end
+    mo, d, h, mi, s = tonumber(mo), tonumber(d), tonumber(h), tonumber(mi), tonumber(s)
+    if not (mo >= 1 and mo <= 12 and d >= 1 and d <= 31 and h <= 23 and mi <= 59 and s <= 60) then
+        return nil
+    end
+    return os.time({year=tonumber(y), month=mo, day=d, hour=h, min=mi, sec=s})
+end
+
 -- Collect all counter keys and group by user|provider|model
 local keys = counters:get_keys(MAX_ITER_KEYS) or {}
 local usage = {}    -- { "user|provider|model" = { input=N, output=N, ... } }
@@ -324,6 +336,27 @@ for _, l in ipairs(rl_tokens_lines) do add(l) end
 local rl_win_remaining = counters:get("ratelimit_remaining")
 local rl_win_expired   = counters:get("ratelimit_tokens_expired")
 local rl_reset_ts      = counters:get("ratelimit_reset_ts")
+local rl_7d_reset_ts   = counters:get("ratelimit_7d_reset_ts")
+local rl_5h_util       = counters:get("ratelimit_5h_utilization")
+local rl_7d_util       = counters:get("ratelimit_7d_utilization")
+
+local now_unix       = ngx.time()
+local reset_5h_unix  = parse_rfc3339(rl_reset_ts)
+local reset_7d_unix  = parse_rfc3339(rl_7d_reset_ts)
+local rl_5h_expired  = reset_5h_unix and reset_5h_unix <= now_unix or false
+local rl_7d_expired  = reset_7d_unix and reset_7d_unix <= now_unix or false
+
+-- When a window is past its reset, the gauges in the shared dict are stale —
+-- no traffic since reset means handler.lua hasn't refreshed them. Treat the
+-- window as fresh: utilization 0, remaining = window limit. Prevents the
+-- dashboard from showing yesterday's utilization indefinitely.
+if rl_5h_expired then
+    rl_5h_util = 0
+    if tokens_window_limit then rl_win_remaining = tokens_window_limit end
+end
+if rl_7d_expired then
+    rl_7d_util = 0
+end
 
 add("# HELP gateii_rate_limit_tokens_remaining Tokens remaining in current Anthropic rate limit window")
 add("# TYPE gateii_rate_limit_tokens_remaining gauge")
@@ -339,22 +372,11 @@ end
 
 add("# HELP gateii_rate_limit_seconds_until_reset Seconds until current Anthropic rate limit window resets")
 add("# TYPE gateii_rate_limit_seconds_until_reset gauge")
-if rl_reset_ts ~= nil then
-    -- Parse RFC3339 timestamp (e.g. "2024-01-15T10:30:00Z" or "...+00:00")
-    local y, mo, d, h, mi, s = rl_reset_ts:match("^(%d+)-(%d+)-(%d+)T(%d+):(%d+):(%d+)")
-    if y then
-        mo, d, h, mi, s = tonumber(mo), tonumber(d), tonumber(h), tonumber(mi), tonumber(s)
-        if mo >= 1 and mo <= 12 and d >= 1 and d <= 31 and h <= 23 and mi <= 59 and s <= 60 then
-            local reset_unix = os.time({
-                year=tonumber(y), month=mo, day=d,
-                hour=h, min=mi, sec=s
-            })
-            local seconds_remaining = math.max(0, reset_unix - ngx.time())
-            add(string.format("gateii_rate_limit_seconds_until_reset %d", seconds_remaining))
-        else
-            ngx.log(ngx.WARN, "metrics: invalid RFC3339 timestamp, skipping: ", rl_reset_ts)
-        end
-    end
+if reset_5h_unix then
+    add(string.format("gateii_rate_limit_seconds_until_reset %d",
+        math.max(0, reset_5h_unix - now_unix)))
+elseif rl_reset_ts ~= nil then
+    ngx.log(ngx.WARN, "metrics: invalid RFC3339 timestamp, skipping: ", rl_reset_ts)
 end
 
 add("# HELP gateii_rate_limit_tokens_max Configured max tokens per rate limit window (from providers.json)")
@@ -362,10 +384,6 @@ add("# TYPE gateii_rate_limit_tokens_max gauge")
 if tokens_window_limit ~= nil then
     add(string.format("gateii_rate_limit_tokens_max %d", tokens_window_limit))
 end
-
--- Utilization fractions from anthropic-ratelimit-unified-* headers
-local rl_5h_util = counters:get("ratelimit_5h_utilization")
-local rl_7d_util = counters:get("ratelimit_7d_utilization")
 
 add("# HELP gateii_rate_limit_5h_utilization Fraction of 5h token window consumed (0.0-1.0, from unified headers)")
 add("# TYPE gateii_rate_limit_5h_utilization gauge")
@@ -379,28 +397,13 @@ if rl_7d_util ~= nil then
     add(string.format("gateii_rate_limit_7d_utilization %.4f", rl_7d_util))
 end
 
--- 7d reset countdown
-local rl_7d_reset_ts = counters:get("ratelimit_7d_reset_ts")
 add("# HELP gateii_rate_limit_7d_seconds_until_reset Seconds until the 7-day token window resets")
 add("# TYPE gateii_rate_limit_7d_seconds_until_reset gauge")
-if rl_7d_reset_ts ~= nil then
-    local y7, mo7, d7, h7, mi7, s7 = rl_7d_reset_ts:match("^(%d+)-(%d+)-(%d+)T(%d+):(%d+):(%d+)")
-    if y7 then
-        local y7n, mo7n, d7n = tonumber(y7), tonumber(mo7), tonumber(d7)
-        local h7n, mi7n, s7n = tonumber(h7), tonumber(mi7), tonumber(s7)
-        -- Same bounds guard as the 5h block above: prevents mdays7[0]/nil crash
-        if mo7n >= 1 and mo7n <= 12 and d7n >= 1 and d7n <= 31
-           and h7n <= 23 and mi7n <= 59 and s7n <= 60 then
-            local reset7_unix = os.time({
-                year=y7n, month=mo7n, day=d7n,
-                hour=h7n, min=mi7n, sec=s7n
-            })
-            add(string.format("gateii_rate_limit_7d_seconds_until_reset %d",
-                math.max(0, reset7_unix - ngx.time())))
-        else
-            ngx.log(ngx.WARN, "metrics: invalid 7d RFC3339 timestamp, skipping: ", rl_7d_reset_ts)
-        end
-    end
+if reset_7d_unix then
+    add(string.format("gateii_rate_limit_7d_seconds_until_reset %d",
+        math.max(0, reset_7d_unix - now_unix)))
+elseif rl_7d_reset_ts ~= nil then
+    ngx.log(ngx.WARN, "metrics: invalid 7d RFC3339 timestamp, skipping: ", rl_7d_reset_ts)
 end
 
 -- Fallback capacity fraction (extra tokens available after primary 5h window is exhausted)
