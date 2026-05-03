@@ -208,12 +208,10 @@ async function serviceAction(service, action) {
 }
 
 // --- Plugins, Keys, Users / Limits / Block ---
-async function loadOverview() {
-  const ov = await fetch('/internal/admin/overview').then(r => r.json());
-  $('mode-display').textContent = ov.proxy_mode.toUpperCase()
-    + (ov.passthrough_user ? ' (' + ov.passthrough_user + ')' : '');
-
-  // Plugins
+// Render plugins config + keys table from a pre-fetched overview payload.
+// Caller (refresh) gets `ov` from refreshHeader so we don't hit /overview twice.
+async function renderPluginsAndKeys(ov) {
+  if (!ov) return;
   const plugs = ov.plugins || {};
   const pluginEntries = [
     { name: 'console', desc: 'Admin web console', active: plugs.console },
@@ -246,27 +244,24 @@ async function loadOverview() {
       $('keys-body').innerHTML = '<div class="empty">load failed</div>';
     }
   }
-
-  return ov;
 }
 
 async function loadUsers() {
-  // Active usage per user (with progress bars where limits are set)
-  const usageList = await fetch('/internal/admin/usage-all').then(r => r.json()).catch(() => []);
-  const status = await fetch('/internal/admin/status').then(r => r.json()).catch(() => ({ blocked: [], limits: [] }));
+  const [usageList, status] = await Promise.all([
+    fetch('/internal/admin/usage-all').then(r => r.json()).catch(() => []),
+    fetch('/internal/admin/status').then(r => r.json()).catch(() => ({ blocked: [], limits: [] })),
+  ]);
 
   const blockedList = Array.isArray(status.blocked) ? status.blocked : [];
   const limitsList = Array.isArray(status.limits) ? status.limits : [];
 
-  const totalManaged = (usageList?.length || 0) + blockedList.length + limitsList.length;
-  $('users-count').textContent = totalManaged;
-
-  // Repopulate user-pickers — union of traffic users + already-blocked + already-limited.
-  // Lets admin manage anyone they've already encountered without re-typing the name.
+  // Distinct usernames across all three sources (a user can appear in
+  // multiple — e.g. limited AND active — naive sum would double-count).
   const known = new Set();
   (usageList || []).forEach(u => u?.user && known.add(u.user));
   blockedList.forEach(b => b?.user && known.add(b.user));
   limitsList.forEach(l => l?.user && known.add(l.user));
+  $('users-count').textContent = known.size;
   refreshUserPickers([...known].sort());
 
   const barsEl = $('usage-bars');
@@ -479,16 +474,15 @@ async function addKey() {
 // --- Master refresh ---
 async function refresh() {
   try {
-    const h = await fetch('/health').then(r => r.ok);
-    $('status-pill').className = h ? 'status-pill online' : 'status-pill offline';
-    $('status-text').textContent = h ? 'online' : 'offline';
-
-    const metricsResult = await fetch('/metrics').then(r => r.text()).catch(() => '');
-    const metrics = parseMetrics(metricsResult);
+    const [ov, metricsText] = await Promise.all([
+      refreshHeader(),
+      fetch('/metrics').then(r => r.text()).catch(() => ''),
+    ]);
+    const metrics = parseMetrics(metricsText);
 
     await Promise.allSettled([
       loadHealth(),
-      loadOverview(),
+      renderPluginsAndKeys(ov),
       loadStats(metrics),
       loadUsers(),
       loadServices(),
@@ -497,8 +491,7 @@ async function refresh() {
 
     $('last-refresh').textContent = new Date().toLocaleTimeString();
   } catch (e) {
-    $('status-pill').className = 'status-pill offline';
-    $('status-text').textContent = 'error: ' + e.message;
+    toast('refresh failed: ' + e.message, true);
   }
 }
 

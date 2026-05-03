@@ -178,24 +178,15 @@ function renderComparison() {
 }
 
 async function refreshCompare() {
+  await refreshHeader();
   try {
-    const h = await fetch('/health').then(r => r.ok);
-    $('status-pill').className = h ? 'status-pill online' : 'status-pill offline';
-    $('status-text').textContent = h ? 'online' : 'offline';
-
-    const ov = await fetch('/internal/admin/overview').then(r => r.json()).catch(() => ({ proxy_mode: '?' }));
-    $('mode-display').textContent = (ov.proxy_mode || '?').toUpperCase()
-      + (ov.passthrough_user ? ' (' + ov.passthrough_user + ')' : '');
-
     if (!providersData) await loadProviders();
     await Promise.allSettled([loadOpenRouterModels(), loadLlmPrices()]);
     monthlyTokensByPattern = await fetchMonthlyProjection();
     renderComparison();
-
     $('last-refresh').textContent = new Date().toLocaleTimeString();
   } catch (e) {
-    $('status-pill').className = 'status-pill offline';
-    $('status-text').textContent = 'error: ' + e.message;
+    toast('refresh failed: ' + e.message, true);
   }
 }
 

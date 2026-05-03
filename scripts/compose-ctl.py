@@ -91,12 +91,24 @@ def list_services():
     return {"project": PROJECT, "services": containers}
 
 
+_services_cache = {"value": None, "expires_at": 0.0}
+SERVICES_CACHE_TTL_SECONDS = 30
+
+
 def configured_services():
-    """Service names declared in the compose YAMLs — the action whitelist."""
+    """Service names declared in the compose YAMLs — the action whitelist.
+    Cached for 30s to avoid forking `docker compose config --services` on
+    every poll + every action (it parses YAML, ~100ms per call)."""
+    now = time.monotonic()
+    if _services_cache["value"] is not None and now < _services_cache["expires_at"]:
+        return _services_cache["value"]
     out = _run(COMPOSE_CMD + ["config", "--services"])
     if out.returncode != 0:
         return []
-    return [s.strip() for s in out.stdout.splitlines() if s.strip()]
+    services = [s.strip() for s in out.stdout.splitlines() if s.strip()]
+    _services_cache["value"] = services
+    _services_cache["expires_at"] = now + SERVICES_CACHE_TTL_SECONDS
+    return services
 
 
 def do_action(service, action):

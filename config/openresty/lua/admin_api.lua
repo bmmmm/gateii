@@ -1,6 +1,7 @@
 -- admin_api.lua: internal admin endpoints for blocking/unblocking
 local cjson = require "cjson.safe"
 local schema = require "schema"
+local util = require "util"
 local blocking_dict = ngx.shared.blocking
 local counters = ngx.shared.counters
 
@@ -108,17 +109,9 @@ local function save_limits()
         ngx.log(ngx.ERR, "save_limits: cjson.encode failed")
         return
     end
-    local tmp = LIMITS_FILE .. ".tmp"
-    local f = io.open(tmp, "w")
-    if not f then
-        ngx.log(ngx.ERR, "save_limits: cannot open ", tmp, " for writing — limits not persisted to disk")
-        return
-    end
-    f:write(encoded)
-    f:close()
-    local ok, err = os.rename(tmp, LIMITS_FILE)
+    local ok, err = util.atomic_write(LIMITS_FILE, encoded)
     if not ok then
-        ngx.log(ngx.ERR, "save_limits: rename failed: ", err)
+        ngx.log(ngx.ERR, "save_limits: ", err)
     end
 end
 
@@ -446,15 +439,9 @@ if uri == "/internal/admin/addkey" and method == "POST" then
     if not encoded then
         ngx.status = 500; ngx.say('{"error":"Failed to encode keys"}'); return
     end
-    local tmp = "/etc/nginx/data/keys.json.tmp"
-    local wf = io.open(tmp, "w")
-    if not wf then
-        ngx.status = 500; ngx.say('{"error":"Cannot write keys.json"}'); return
-    end
-    wf:write(encoded); wf:close()
-    local rok, rerr = os.rename(tmp, "/etc/nginx/data/keys.json")
+    local rok, rerr = util.atomic_write("/etc/nginx/data/keys.json", encoded)
     if not rok then
-        ngx.log(ngx.ERR, "addkey: rename failed: ", rerr)
+        ngx.log(ngx.ERR, "addkey: ", rerr)
         ngx.status = 500; ngx.say('{"error":"Failed to persist keys.json — check server logs"}'); return
     end
     -- Clear any negative cache entry so the new key is usable immediately
@@ -722,7 +709,6 @@ end
 -- after schema validation. The file lives in the data bind mount and is also
 -- read by scripts/git-tracking.sh in the git-tracking container.
 local GIT_TRACKING_PATH = "/etc/nginx/data/git-tracking.json"
-local GIT_TRACKING_PATH_TMP = GIT_TRACKING_PATH .. ".tmp"
 
 if uri == "/internal/admin/git-tracking" and method == "GET" then
     local f = io.open(GIT_TRACKING_PATH, "r")
@@ -772,20 +758,10 @@ if uri == "/internal/admin/git-tracking" and method == "PUT" then
         ngx.say(cjson.encode({error = err}))
         return
     end
-    -- Atomic write: tmp + rename
-    local f, open_err = io.open(GIT_TRACKING_PATH_TMP, "w")
-    if not f then
+    local ok2, write_err = util.atomic_write(GIT_TRACKING_PATH, cjson.encode(data))
+    if not ok2 then
         ngx.status = 500
-        ngx.say(cjson.encode({error = "tmp open failed: " .. tostring(open_err)}))
-        return
-    end
-    f:write(cjson.encode(data))
-    f:close()
-    local rename_ok, rename_err = os.rename(GIT_TRACKING_PATH_TMP, GIT_TRACKING_PATH)
-    if not rename_ok then
-        os.remove(GIT_TRACKING_PATH_TMP)
-        ngx.status = 500
-        ngx.say(cjson.encode({error = "rename failed: " .. tostring(rename_err)}))
+        ngx.say(cjson.encode({error = write_err}))
         return
     end
     ngx.say(cjson.encode({ok = true, repos = #(data.repos or {})}))
