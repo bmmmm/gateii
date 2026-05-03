@@ -22,6 +22,8 @@ if uri == "/console/" or uri == "/console/index.html" then
     html_file = "/etc/nginx/html/console/index.html"
 elseif uri == "/console/compare" or uri == "/console/compare.html" then
     html_file = "/etc/nginx/html/console/compare.html"
+elseif uri == "/console/git" or uri == "/console/git.html" then
+    html_file = "/etc/nginx/html/console/git.html"
 else
     ngx.status = 404
     ngx.header["Content-Type"] = "application/json"

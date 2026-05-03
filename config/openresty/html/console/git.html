@@ -1,0 +1,109 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>gateii console — Git Tracking</title>
+<link rel="stylesheet" href="/console/static/console.css">
+</head>
+<body>
+<div class="shell">
+
+  <header class="header">
+    <div class="brand">
+      <span class="brand-name">gateii</span>
+      <span class="brand-tag">Git Tracking</span>
+    </div>
+    <div id="status-pill" class="status-pill offline">
+      <span class="status-dot"></span>
+      <span id="status-text">connecting...</span>
+    </div>
+  </header>
+
+  <nav class="tabs">
+    <a href="/console/" class="tab">Overview</a>
+    <a href="/console/compare" class="tab">Compare</a>
+    <a href="/console/git" class="tab active">Git</a>
+    <span class="ext">
+      <a href="http://localhost:3001/d/gateii-cost" target="_blank">Cost</a>
+      <a href="http://localhost:3001/d/gateii-eff" target="_blank">Efficiency</a>
+      <a href="http://localhost:3001/d/gateii-ops" target="_blank">Ops</a>
+      <span class="mode-tag">Mode: <b id="mode-display">-</b></span>
+    </span>
+  </nav>
+
+  <div class="sec-head">
+    <h2>Settings</h2>
+  </div>
+  <div class="panel">
+    <div class="panel-body">
+      <div class="form-row">
+        <span class="form-label">Author</span>
+        <input class="input" id="default-author" type="text" placeholder="default git author (used when repo doesn't override)" style="width:340px" maxlength="128">
+      </div>
+      <div class="form-row">
+        <span class="form-label">Interval</span>
+        <input class="input input-sm" id="interval" type="number" min="30" step="30" value="300" style="width:100px">
+        <span style="color:var(--dim);font-size:11px">seconds between scans (≥30)</span>
+      </div>
+      <div class="form-row">
+        <button class="btn btn-primary" id="btn-save-settings">Save Settings</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="sec-head">
+    <h2>Tracked Repositories</h2>
+    <div class="controls">
+      <span class="count" id="repos-count" style="background:var(--accent-subtle);color:var(--accent);padding:2px 10px;border-radius:10px;font-size:11px;font-weight:600">0</span>
+    </div>
+  </div>
+
+  <div class="panel">
+    <div class="panel-body">
+      <div id="repos-list"><div class="empty">no repos tracked yet</div></div>
+
+      <div style="margin-top:18px;padding-top:14px;border-top:1px solid var(--border)">
+        <div style="font-size:11px;color:var(--dim);text-transform:uppercase;letter-spacing:.06em;font-weight:500;margin-bottom:8px">Add repository</div>
+        <div class="form-row">
+          <span class="form-label">Path</span>
+          <input class="input" id="new-path" type="text" placeholder="/repos/myrepo (must be mounted in compose)" style="width:380px" maxlength="512">
+        </div>
+        <div class="form-row">
+          <span class="form-label">Alias</span>
+          <input class="input" id="new-alias" type="text" placeholder="optional (defaults to basename of path)" style="width:200px" maxlength="64">
+          <span class="form-label" style="margin-left:14px">Author</span>
+          <input class="input" id="new-author" type="text" placeholder="optional override" style="width:160px" maxlength="128">
+        </div>
+        <div class="form-row">
+          <span class="form-label">Platform</span>
+          <select class="input" id="new-platform">
+            <option value="">-- detect from remote URL --</option>
+            <option value="forgejo">Forgejo</option>
+            <option value="github">GitHub</option>
+            <option value="gitlab">GitLab</option>
+            <option value="gitea">Gitea</option>
+            <option value="codeberg">Codeberg</option>
+            <option value="bitbucket">Bitbucket</option>
+            <option value="local">Local only (no remote)</option>
+            <option value="other">Other</option>
+          </select>
+          <button class="btn btn-primary" id="btn-add-repo" style="margin-left:auto">Add</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="footer">
+    Last refresh <span id="last-refresh">-</span> &middot; auto-refresh 30s
+    &middot; Changes apply on next scan cycle
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script src="/console/static/console.js"></script>
+<script src="/console/static/git.js"></script>
+<script>document.addEventListener('DOMContentLoaded', initGit);</script>
+</body>
+</html>

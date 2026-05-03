@@ -126,6 +126,53 @@ function _M.validate_keys(data)
     return true, nil
 end
 
+-- git-tracking.json: { "default_author": "bma", "interval": 300, "repos": [
+--   { "path": "/repos/gateii", "author": "bma", "platform": "forgejo", "alias": "gateii" }, … ]
+-- }
+-- All fields except path are optional. Platform is free-text but the UI offers
+-- a known set (github / gitlab / forgejo / gitea / codeberg / bitbucket / local).
+local PLATFORM_PATTERN = "^[a-z0-9_-]+$"
+
+function _M.validate_git_tracking(data)
+    if not is_table(data) then
+        return false, "git-tracking.json: root must be an object"
+    end
+    -- Optional fields: empty string is valid (means "not set"), but if non-empty
+    -- it must be a real string. The local is_string helper rejects empty strings,
+    -- which would break the UI's default-state PUT (all fields empty until typed).
+    if data.default_author ~= nil and type(data.default_author) ~= "string" then
+        return false, "git-tracking.json: default_author must be a string"
+    end
+    if data.interval ~= nil and (type(data.interval) ~= "number" or data.interval < 30) then
+        return false, "git-tracking.json: interval must be a number ≥ 30 (seconds)"
+    end
+    if data.repos == nil then return true, nil end  -- empty config valid
+    if type(data.repos) ~= "table" then
+        return false, "git-tracking.json: repos must be an array"
+    end
+    for i, r in ipairs(data.repos) do
+        if type(r) ~= "table" then
+            return false, "git-tracking.json: repos[" .. i .. "] must be an object"
+        end
+        if not is_string(r.path) then
+            return false, "git-tracking.json: repos[" .. i .. "].path required (non-empty string)"
+        end
+        if r.author ~= nil and type(r.author) ~= "string" then
+            return false, "git-tracking.json: repos[" .. i .. "].author must be a string"
+        end
+        if r.platform ~= nil and r.platform ~= "" then
+            if type(r.platform) ~= "string" or not r.platform:match(PLATFORM_PATTERN) then
+                return false, "git-tracking.json: repos[" .. i ..
+                    "].platform must match [a-z0-9_-]+ (e.g. forgejo, github, gitlab)"
+            end
+        end
+        if r.alias ~= nil and type(r.alias) ~= "string" then
+            return false, "git-tracking.json: repos[" .. i .. "].alias must be a string"
+        end
+    end
+    return true, nil
+end
+
 -- Load + parse + validate a JSON file.
 -- Returns (data, err). On validation failure, err contains the reason.
 -- Missing file is NOT an error -- returns (nil, nil).

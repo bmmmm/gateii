@@ -420,7 +420,7 @@ ${VOLUMES}    environment:
       - /bin/sh
       - -c
       - |
-        apk add --no-cache git >/dev/null 2>&1
+        apk add --no-cache git jq >/dev/null 2>&1
         exec /bin/sh /app/git-tracking.sh --container
     networks:
       - gateii
