@@ -683,6 +683,40 @@ do
     end
 end
 
+-- /internal/admin/services — proxy to compose-ctl sidecar for stack control.
+-- GET  /internal/admin/services                    → list+state of all services
+-- POST /internal/admin/services/<name>/<action>    → start|stop|restart|recreate
+-- The sidecar runs at compose-ctl:8090 inside the gateii Docker network and
+-- holds the docker-socket mount; the proxy never talks to Docker directly.
+if uri:sub(1, 25) == "/internal/admin/services" or uri == "/internal/admin/services" then
+    local http = require "resty.http"
+    local httpc = http.new()
+    httpc:set_timeouts(2000, 2000, 30000)  -- connect/send/read
+
+    local sub_path = uri:sub(#"/internal/admin/services" + 1)  -- "" or "/<name>/<action>"
+    local target = "http://compose-ctl:8090/services" .. sub_path
+    local body
+    if method == "POST" then
+        ngx.req.read_body()
+        body = ngx.req.get_body_data() or ""
+    end
+
+    local res, err = httpc:request_uri(target, {
+        method = method,
+        body = body,
+        headers = { ["Content-Type"] = "application/json" },
+    })
+    if not res then
+        ngx.status = 502
+        ngx.say(cjson.encode({error = "compose-ctl unreachable: " .. (err or "unknown"),
+                              hint = "check that the gateii-compose-ctl container is running"}))
+        return
+    end
+    ngx.status = res.status
+    ngx.say(res.body or "")
+    return
+end
+
 -- /internal/admin/git-tracking — read/write per-repo tracking config
 -- GET returns the current config (empty object if no file), PUT writes it back
 -- after schema validation. The file lives in the data bind mount and is also
@@ -760,4 +794,4 @@ end
 
 ngx.status = 404
 ngx.say('{"error":"Unknown admin endpoint — available: /internal/admin/{block,unblock,limit,status,'
-    .. 'usage,keys,addkey,overview,providers,llm-prices,openrouter-models,health,git-tracking,bootstrap}"}')
+    .. 'usage,keys,addkey,overview,providers,llm-prices,openrouter-models,health,git-tracking,services,bootstrap}"}')
