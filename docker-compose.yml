@@ -137,6 +137,46 @@ services:
       timeout: 5s
       retries: 5
 
+  # Compose-control sidecar: gives the admin console real start/stop/restart
+  # buttons over the gateii services. Mounts the docker socket → has
+  # equivalent power to "anyone with docker CLI access on the host". The
+  # network attack surface is minimal: bound to the gateii Docker network,
+  # not exposed to the host, accessed only via the proxy under ADMIN_TOKEN.
+  # Whitelist: only services in this compose project, only start/stop/
+  # restart/recreate (no exec, no image manipulation).
+  compose-ctl:
+    image: python:3.12-alpine
+    container_name: gateii-compose-ctl
+    restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      # Whole project dir read-only so optional override.yml + .env work without
+      # bind-mount magic (single-file mounts of files that may not exist would
+      # silently create them as empty dirs).
+      - .:/workspace:ro
+      - ./scripts/compose-ctl.py:/app/compose-ctl.py:ro
+    working_dir: /workspace
+    environment:
+      - COMPOSE_PROJECT_NAME=${COMPOSE_PROJECT_NAME:-gateii}
+      - COMPOSE_FILE=/workspace/docker-compose.yml:/workspace/docker-compose.override.yml
+      - PROXY_SERVICE_NAME=openresty
+      - CTL_PORT=8090
+    networks:
+      - gateii
+    entrypoint:
+      - /bin/sh
+      - -c
+      - |
+        apk add --no-cache docker-cli docker-cli-compose >/dev/null 2>&1
+        exec python3 /app/compose-ctl.py
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8090/health',timeout=2)"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+
   # --- Plugins ---
   # git-tracking: defined in docker-compose.override.yml (created by admin.sh plugin enable git-tracking)
   # console: controlled via CONSOLE_ENABLED env var (no extra container)

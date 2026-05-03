@@ -128,6 +128,85 @@ async function loadStats(metrics) {
   threshold($('s-latency'), lat, 5000, 15000);
 }
 
+// --- Services panel (live container status + actions) ---
+function serviceStateClass(state) {
+  if (state === 'running')      return 'ok';
+  if (state === 'restarting')   return 'warn';
+  if (state === 'paused')       return 'warn';
+  if (state === 'not_created')  return 'muted';
+  return 'danger';  // exited / dead / created (=stopped)
+}
+
+async function loadServices() {
+  const body = $('services-body');
+  let data;
+  try {
+    const r = await fetch('/internal/admin/services');
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    data = await r.json();
+  } catch (e) {
+    body.innerHTML = `<div class="empty">services unavailable — compose-ctl sidecar not reachable (${esc(e.message)})</div>`;
+    $('services-count').textContent = '-';
+    return;
+  }
+  const services = data.services || [];
+  $('services-count').textContent = services.length;
+  if (services.length === 0) {
+    body.innerHTML = '<div class="empty">no services found in compose project</div>';
+    return;
+  }
+  body.innerHTML = services.map(s => {
+    const cls = serviceStateClass(s.state);
+    const isRunning = s.state === 'running';
+    const isMissing = s.state === 'not_created';
+    const status = esc(s.status || s.state || '?');
+    const startStop = isRunning
+      ? `<button class="btn btn-danger" data-svc="${esc(s.service)}" data-action="stop">Stop</button>`
+      : `<button class="btn btn-primary" data-svc="${esc(s.service)}" data-action="start">Start</button>`;
+    const restart = isRunning
+      ? `<button class="btn btn-blue" data-svc="${esc(s.service)}" data-action="restart">Restart</button>`
+      : '';
+    const recreate = !isMissing
+      ? `<button class="btn btn-blue" data-svc="${esc(s.service)}" data-action="recreate">Recreate</button>`
+      : '';
+    return `<div class="user-row">
+      <div class="user-info">
+        <span class="user-name"><span class="chip ${cls}" style="padding:2px 8px;font-size:10px;margin-right:6px"><span class="chip-dot"></span>${esc(s.state)}</span>${esc(s.service)}</span>
+        <span class="user-meta">${status}${s.image ? ' · ' + esc(s.image) : ''}</span>
+      </div>
+      <div class="user-actions">${startStop} ${restart} ${recreate}</div>
+    </div>`;
+  }).join('');
+}
+
+async function serviceAction(service, action) {
+  // Self-restart of the proxy is a special case: the request dies mid-flight.
+  // The sidecar schedules it async + returns 202, we pop a confirm + reload.
+  const isProxySelfHit = service === 'openresty' && (action === 'restart' || action === 'recreate' || action === 'stop');
+  if (isProxySelfHit) {
+    const ok = confirm(`This will ${action} the proxy itself and kill your current console session. Continue?`);
+    if (!ok) return;
+  }
+  try {
+    const r = await fetch(`/internal/admin/services/${encodeURIComponent(service)}/${encodeURIComponent(action)}`, { method: 'POST' });
+    const result = await r.json().catch(() => ({}));
+    if (r.status >= 200 && r.status < 300) {
+      toast(`${action} ${service} → ${result.note || 'ok'}`);
+      if (isProxySelfHit && action !== 'stop') {
+        // Wait for the async restart, then reload the page
+        setTimeout(() => location.reload(), 8000);
+      } else {
+        // Refresh services list after a short delay so docker has time to update
+        setTimeout(loadServices, 1500);
+      }
+    } else {
+      toast(`${action} ${service} failed: ${result.error || 'HTTP ' + r.status}`, true);
+    }
+  } catch (e) {
+    toast(`${action} ${service} failed: ${e.message}`, true);
+  }
+}
+
 // --- Plugins, Keys, Users / Limits / Block ---
 async function loadOverview() {
   const ov = await fetch('/internal/admin/overview').then(r => r.json());
@@ -412,6 +491,7 @@ async function refresh() {
       loadOverview(),
       loadStats(metrics),
       loadUsers(),
+      loadServices(),
     ]);
     loadRateLimits(metrics);
 
@@ -444,6 +524,13 @@ function initOverview() {
     const user = btn.dataset.user;
     if (btn.dataset.action === 'unblock') unblock(user);
     if (btn.dataset.action === 'remove-limit') removeLimit(user);
+  });
+
+  // Event delegation for service action buttons
+  $('services-body').addEventListener('click', e => {
+    const btn = e.target.closest('button[data-svc]');
+    if (!btn) return;
+    serviceAction(btn.dataset.svc, btn.dataset.action);
   });
 
   refresh();
