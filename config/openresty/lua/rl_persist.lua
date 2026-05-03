@@ -10,9 +10,9 @@
 
 local _M = {}
 local cjson = require "cjson.safe"
+local util = require "util"
 
 local STATE_PATH = "/etc/nginx/data/ratelimit_state.json"
-local TMP_PATH   = STATE_PATH .. ".tmp"
 local PERSIST_INTERVAL_SECONDS = 30
 
 -- Keys mirrored between shared dict and the on-disk JSON. Order doesn't matter
@@ -42,20 +42,8 @@ local function save_state()
 
     local payload = cjson.encode(snapshot)
     if not payload then return end
-
-    -- Atomic write: tmp + rename. Avoids partial reads if we crash mid-write.
-    local f, err = io.open(TMP_PATH, "w")
-    if not f then
-        ngx.log(ngx.WARN, "rl_persist: open tmp failed — ", err)
-        return
-    end
-    f:write(payload)
-    f:close()
-    local ok, rename_err = os.rename(TMP_PATH, STATE_PATH)
-    if not ok then
-        ngx.log(ngx.WARN, "rl_persist: rename failed — ", rename_err)
-        os.remove(TMP_PATH)
-    end
+    local ok, err = util.atomic_write(STATE_PATH, payload)
+    if not ok then ngx.log(ngx.WARN, "rl_persist: ", err) end
 end
 
 function _M.load_state()

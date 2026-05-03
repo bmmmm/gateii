@@ -162,3 +162,27 @@ async function promVector(expr) {
 }
 
 function isPromAvailable() { return _promAvailable; }
+
+// Shared header refresh: online/offline pill + mode-display tag.
+// Used by every page's refresh() so the per-page logic only owns its own
+// section. Returns the parsed overview object (or null on failure) so the
+// caller can chain off it without an extra fetch.
+async function refreshHeader() {
+  try {
+    const h = await fetch('/health').then(r => r.ok);
+    $('status-pill').className = h ? 'status-pill online' : 'status-pill offline';
+    $('status-text').textContent = h ? 'online' : 'offline';
+  } catch (e) {
+    $('status-pill').className = 'status-pill offline';
+    $('status-text').textContent = 'error: ' + e.message;
+  }
+  let ov = null;
+  try {
+    ov = await fetch('/internal/admin/overview').then(r => r.json());
+    if ($('mode-display')) {
+      $('mode-display').textContent = (ov.proxy_mode || '?').toUpperCase()
+        + (ov.passthrough_user ? ' (' + ov.passthrough_user + ')' : '');
+    }
+  } catch (e) { /* mode-display stays at last value */ }
+  return ov;
+}

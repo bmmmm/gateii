@@ -6,7 +6,8 @@ local cjson = require "cjson.safe"
 local _M = {}
 
 local function is_table(v) return type(v) == "table" end
-local function is_string(v) return type(v) == "string" and v ~= "" end
+local function is_string(v) return type(v) == "string" end
+local function is_nonempty_string(v) return type(v) == "string" and v ~= "" end
 local function is_number(v) return type(v) == "number" end
 local function is_pos_int(v) return is_number(v) and v > 0 and math.floor(v) == v end
 local function is_nonneg_number(v) return is_number(v) and v >= 0 end
@@ -16,7 +17,7 @@ function _M.validate_providers(data)
     if not is_table(data) then
         return false, "providers.json: root must be an object"
     end
-    if not is_string(data.active_provider) then
+    if not is_nonempty_string(data.active_provider) then
         return false, "providers.json: active_provider must be a non-empty string"
     end
     if not is_table(data.providers) or #data.providers == 0 then
@@ -29,7 +30,7 @@ function _M.validate_providers(data)
         if not is_table(p) then
             return false, path .. ": must be an object"
         end
-        if not is_string(p.id) then
+        if not is_nonempty_string(p.id) then
             return false, path .. ".id: must be a non-empty string"
         end
         if ids[p.id] then
@@ -77,7 +78,7 @@ function _M.validate_limits(data)
         return false, "limits.json: root must be an object (map user -> limits)"
     end
     for user, limits in pairs(data) do
-        if not is_string(user) then
+        if not is_nonempty_string(user) then
             return false, "limits.json: user keys must be strings"
         end
         if not is_table(limits) then
@@ -102,7 +103,7 @@ function _M.validate_keys(data)
         return false, "keys.json: root must be an object (map key -> {user, provider, upstream_key})"
     end
     for key, entry in pairs(data) do
-        if not is_string(key) then
+        if not is_nonempty_string(key) then
             return false, "keys.json: key must be a non-empty string"
         end
         if #key < 8 then
@@ -113,13 +114,13 @@ function _M.validate_keys(data)
             return false, "keys.json[" .. short .. "]: value must be an object with user/provider/upstream_key"
                 .. " (flat {key:user} format is no longer supported — run admin.sh migrate)"
         end
-        if not is_string(entry.user) then
+        if not is_nonempty_string(entry.user) then
             return false, "keys.json[" .. short .. "].user: must be a non-empty string"
         end
-        if not is_string(entry.provider) then
+        if not is_nonempty_string(entry.provider) then
             return false, "keys.json[" .. short .. "].provider: must be a non-empty string"
         end
-        if not is_string(entry.upstream_key) then
+        if not is_nonempty_string(entry.upstream_key) then
             return false, "keys.json[" .. short .. "].upstream_key: must be a non-empty string"
         end
     end
@@ -137,16 +138,15 @@ function _M.validate_git_tracking(data)
     if not is_table(data) then
         return false, "git-tracking.json: root must be an object"
     end
-    -- Optional fields: empty string is valid (means "not set"), but if non-empty
-    -- it must be a real string. The local is_string helper rejects empty strings,
-    -- which would break the UI's default-state PUT (all fields empty until typed).
-    if data.default_author ~= nil and type(data.default_author) ~= "string" then
+    -- Optional string fields use is_string (any string incl. "" = "not set");
+    -- only `path` is required and uses is_nonempty_string.
+    if data.default_author ~= nil and not is_string(data.default_author) then
         return false, "git-tracking.json: default_author must be a string"
     end
     if data.interval ~= nil and (type(data.interval) ~= "number" or data.interval < 30) then
         return false, "git-tracking.json: interval must be a number ≥ 30 (seconds)"
     end
-    if data.repos == nil then return true, nil end  -- empty config valid
+    if data.repos == nil then return true, nil end
     if type(data.repos) ~= "table" then
         return false, "git-tracking.json: repos must be an array"
     end
@@ -154,19 +154,19 @@ function _M.validate_git_tracking(data)
         if type(r) ~= "table" then
             return false, "git-tracking.json: repos[" .. i .. "] must be an object"
         end
-        if not is_string(r.path) then
+        if not is_nonempty_string(r.path) then
             return false, "git-tracking.json: repos[" .. i .. "].path required (non-empty string)"
         end
-        if r.author ~= nil and type(r.author) ~= "string" then
+        if r.author ~= nil and not is_string(r.author) then
             return false, "git-tracking.json: repos[" .. i .. "].author must be a string"
         end
         if r.platform ~= nil and r.platform ~= "" then
-            if type(r.platform) ~= "string" or not r.platform:match(PLATFORM_PATTERN) then
+            if not is_string(r.platform) or not r.platform:match(PLATFORM_PATTERN) then
                 return false, "git-tracking.json: repos[" .. i ..
                     "].platform must match [a-z0-9_-]+ (e.g. forgejo, github, gitlab)"
             end
         end
-        if r.alias ~= nil and type(r.alias) ~= "string" then
+        if r.alias ~= nil and not is_string(r.alias) then
             return false, "git-tracking.json: repos[" .. i .. "].alias must be a string"
         end
     end
