@@ -71,6 +71,8 @@ Or from this repo directly:
 - Proxy routing order: start stack → switch local-proxy; switch direct → stop stack (never reverse)
 - Before editing Lua/nginx: `admin.sh switch direct` first — broken proxy cuts off Claude Code
 - `data/keys.json` must use the structured schema (`{user, provider, upstream_key}`); flat `{key: "user"}` format is rejected by `schema.validate_keys` on startup — proxy then runs with empty auth cache (all requests 401)
+- `nginx.conf` is a single-file bind mount → every Edit forces a `compose up -d --force-recreate openresty` to be visible in the container. Batch all changes for a feature into ONE Edit. Lua under `config/openresty/lua/` is dir-mounted → no recreate needed
+- Console routes: `/console` → 302 → `/console/`; subpages `/console/compare` and `/console/git`; static assets at `/console/static/*` served with explicit MIME types (default `text/plain` trips strict-MIME on .css/.js)
 
 ## Key files
 
@@ -79,17 +81,23 @@ Or from this repo directly:
 | `config/openresty/lua/auth.lua` | Key validation, passthrough detection, blocking, rate limiting |
 | `config/openresty/lua/handler.lua` | Proxy to upstream, SSE token parsing, header forwarding |
 | `config/openresty/lua/tracking.lua` | Shared dict counters (tokens, latency, errors, stop_reason) |
-| `config/openresty/lua/metrics.lua` | Prometheus exposition format from shared dicts |
-| `config/openresty/lua/admin_api.lua` | HTTP admin API (block/unblock/limit, /providers, /llm-prices, /openrouter-models) |
+| `config/openresty/lua/metrics.lua` | Prometheus exposition format from shared dicts; defensive expired-window guards (emit 0 util when reset_ts in past) |
+| `config/openresty/lua/admin_api.lua` | HTTP admin API: block/unblock/limit, /keys, /addkey, /overview, /providers, /llm-prices, /openrouter-models, /health, /git-tracking (GET/PUT), /services/* (proxied to compose-ctl) |
 | `config/openresty/lua/providers/anthropic.lua` | Anthropic header building, token extraction |
 | `config/openresty/lua/providers.json` | Multi-provider pricing config, active provider selector |
-| `config/openresty/nginx.conf` | Env whitelist, shared dicts, routes, /internal/prometheus proxy |
+| `config/openresty/nginx.conf` | Env whitelist, shared dicts, routes, /internal/prometheus proxy, /console/* router, /console/static MIME map |
 | `data/keys.json` | Proxy-key → `{user, provider, upstream_key, ...}` mapping (apikey mode, gitignored, structured entries only) |
+| `data/git-tracking.json` | Per-repo tracking config: `{default_author, interval, repos:[{path, alias, author, platform}]}` (gitignored) |
 | `config/openresty/lua/bootstrap.lua` | HMAC challenge/exchange/confirm handshake for self-provisioning keys |
 | `config/openresty/lua/admin_login.lua` | `/internal/admin/login` — session cookie issuance, failure counter |
-| `config/openresty/lua/schema.lua` | Startup validation for `keys.json` and `limits.json` (rejects flat format) |
+| `config/openresty/lua/schema.lua` | Startup + admin-API validators for `keys.json`, `limits.json`, `providers.json`, `git-tracking.json` |
+| `config/openresty/lua/util.lua` | Shared primitives — currently `atomic_write(path, content)` |
 | `config/openresty/lua/circuit_breaker.lua` | Per-upstream breaker for repeated failures |
 | `config/openresty/lua/rl_persist.lua` | Persist rate-limit gauges to `data/ratelimit_state.json` (loaded on worker-0 startup, flushed every 30s) — survives container restarts |
+| `config/openresty/html/console/{index,compare,git}.html` | Three-tab console — Overview / Compare / Git. Shared CSS+JS in `static/` |
+| `config/openresty/lua/console_serve.lua` | Routes `/console/`, `/console/compare`, `/console/git` to their HTML files; sets CSP |
+| `scripts/compose-ctl.py` | Sidecar HTTP control plane — start/stop/restart/recreate any compose service via Console Services panel. Mounts docker socket; whitelisted to services in this compose project |
+| `scripts/git-tracking.sh` | Plugin script: reads `data/git-tracking.json` if present (per-repo author + platform), else falls back to filesystem scan. Auto-detects platform from `git remote -v` if not pinned |
 
 ## Architecture decisions
 
@@ -105,6 +113,8 @@ Or from this repo directly:
 - **Per-key upstream routing** — each `keys.json` entry pins its own `provider` + `upstream_key`; the `x-provider` request header is only a fallback/override, not the primary routing signal
 - **Bootstrap handshake** — HMAC-SHA256 challenge/exchange/confirm flow replaces copy-pasting proxy keys; secret disclosed only once on creation, auto-revoke on failed install
 - **Admin sessions** — HttpOnly cookie issued by `/internal/admin/login`; console uses it, CLI keeps `X-Admin-Token` header; both accepted on every endpoint
+- **Service control** — `gateii-compose-ctl` sidecar holds the docker socket; the proxy reverse-proxies `/internal/admin/services/*` to it under ADMIN_TOKEN. Whitelisted to services in the gateii compose project, actions limited to start/stop/restart/recreate. Self-restart of openresty is async with delay so the request can return first
+- **Per-repo git tracking** — `data/git-tracking.json` (managed via `/console/git`) drives the git-tracking sidecar. Each repo can pin its `platform` (forgejo/github/gitlab/…); auto-detected from `git remote get-url origin` if not pinned. Metric label `platform=` lets dashboards group across hosts
 
 ## Providers
 
