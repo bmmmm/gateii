@@ -23,6 +23,7 @@
   <nav class="tabs">
     <a href="/console/" class="tab active">Overview</a>
     <a href="/console/compare" class="tab">Compare</a>
+    <a href="/console/git" class="tab">Git</a>
     <span class="ext">
       <a href="http://localhost:3001/d/gateii-cost" target="_blank">Cost</a>
       <a href="http://localhost:3001/d/gateii-eff" target="_blank">Efficiency</a>
@@ -90,7 +91,11 @@
 
       <div class="form-row" style="margin-top:14px">
         <span class="form-label">Block</span>
-        <input class="input" id="block-user" type="text" placeholder="username" style="width:130px" maxlength="64">
+        <select class="input" id="block-user-select" style="min-width:140px">
+          <option value="">-- select user --</option>
+          <option value="__new__">+ new user…</option>
+        </select>
+        <input class="input" id="block-user-new" type="text" placeholder="username" style="width:130px;display:none" maxlength="64">
         <select class="input" id="block-ttl">
           <option value="3600">1 hour</option>
           <option value="86400" selected>1 day</option>
@@ -102,14 +107,18 @@
 
       <div class="form-row">
         <span class="form-label">Limit</span>
-        <input class="input" id="limit-user" type="text" placeholder="username" style="width:130px" maxlength="64">
+        <select class="input" id="limit-user-select" style="min-width:140px">
+          <option value="">-- select user --</option>
+          <option value="__new__">+ new user…</option>
+        </select>
+        <input class="input" id="limit-user-new" type="text" placeholder="username" style="width:130px;display:none" maxlength="64">
         <select class="input" id="limit-tokens-preset">
           <option value="">-- Tokens/day --</option>
           <option value="500000">Light (500K ≈ $2)</option>
           <option value="2000000">Normal (2M ≈ $8)</option>
           <option value="5000000">Heavy (5M ≈ $20)</option>
           <option value="0">Unlimited</option>
-          <option value="custom">Custom...</option>
+          <option value="custom">Custom…</option>
         </select>
         <input class="input input-sm" id="limit-tokens-custom" type="number" placeholder="tokens" min="0" step="100000" style="display:none;width:120px">
         <select class="input" id="limit-requests-preset">
@@ -118,7 +127,7 @@
           <option value="500">Normal (500)</option>
           <option value="1000">Heavy (1000)</option>
           <option value="0">Unlimited</option>
-          <option value="custom">Custom...</option>
+          <option value="custom">Custom…</option>
         </select>
         <input class="input input-sm" id="limit-requests-custom" type="number" placeholder="requests" min="0" step="10" style="display:none;width:100px">
         <button class="btn btn-blue" id="btn-limit">Set Limit</button>

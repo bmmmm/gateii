@@ -1,5 +1,6 @@
 -- admin_api.lua: internal admin endpoints for blocking/unblocking
 local cjson = require "cjson.safe"
+local schema = require "schema"
 local blocking_dict = ngx.shared.blocking
 local counters = ngx.shared.counters
 
@@ -682,6 +683,81 @@ do
     end
 end
 
+-- /internal/admin/git-tracking — read/write per-repo tracking config
+-- GET returns the current config (empty object if no file), PUT writes it back
+-- after schema validation. The file lives in the data bind mount and is also
+-- read by scripts/git-tracking.sh in the git-tracking container.
+local GIT_TRACKING_PATH = "/etc/nginx/data/git-tracking.json"
+local GIT_TRACKING_PATH_TMP = GIT_TRACKING_PATH .. ".tmp"
+
+if uri == "/internal/admin/git-tracking" and method == "GET" then
+    local f = io.open(GIT_TRACKING_PATH, "r")
+    if not f then
+        ngx.say('{"default_author":"","interval":300,"repos":[]}')
+        return
+    end
+    ngx.say(f:read("*a"))
+    f:close()
+    return
+end
+
+if uri == "/internal/admin/git-tracking" and method == "PUT" then
+    ngx.req.read_body()
+    local body = ngx.req.get_body_data()
+    if not body or body == "" then
+        ngx.status = 400
+        ngx.say('{"error":"Empty body — POST the full config JSON"}')
+        return
+    end
+    local data, decode_err = cjson.decode(body)
+    if not data then
+        ngx.status = 400
+        ngx.say(cjson.encode({error = "Invalid JSON: " .. tostring(decode_err)}))
+        return
+    end
+    -- Defensive path checks beyond schema.validate_git_tracking — block traversal
+    if data.repos then
+        for i, r in ipairs(data.repos) do
+            if r.path then
+                if r.path:sub(1, 1) ~= "/" then
+                    ngx.status = 400
+                    ngx.say(cjson.encode({error = "repos[" .. i .. "].path must be absolute (start with /)"}))
+                    return
+                end
+                if r.path:find("%.%.") then
+                    ngx.status = 400
+                    ngx.say(cjson.encode({error = "repos[" .. i .. "].path contains '..' — not allowed"}))
+                    return
+                end
+            end
+        end
+    end
+    local ok, err = schema.validate_git_tracking(data)
+    if not ok then
+        ngx.status = 400
+        ngx.say(cjson.encode({error = err}))
+        return
+    end
+    -- Atomic write: tmp + rename
+    local f, open_err = io.open(GIT_TRACKING_PATH_TMP, "w")
+    if not f then
+        ngx.status = 500
+        ngx.say(cjson.encode({error = "tmp open failed: " .. tostring(open_err)}))
+        return
+    end
+    f:write(cjson.encode(data))
+    f:close()
+    local rename_ok, rename_err = os.rename(GIT_TRACKING_PATH_TMP, GIT_TRACKING_PATH)
+    if not rename_ok then
+        os.remove(GIT_TRACKING_PATH_TMP)
+        ngx.status = 500
+        ngx.say(cjson.encode({error = "rename failed: " .. tostring(rename_err)}))
+        return
+    end
+    ngx.say(cjson.encode({ok = true, repos = #(data.repos or {})}))
+    return
+end
+
 ngx.status = 404
 ngx.say('{"error":"Unknown admin endpoint — available: /internal/admin/{block,unblock,limit,status,'
-    .. 'usage,keys,addkey,overview,providers,llm-prices,openrouter-models,health,bootstrap}"}')
+    .. 'usage,keys,addkey,overview,providers,llm-prices,openrouter-models,health,git-tracking,bootstrap}"}')

@@ -182,6 +182,14 @@ async function loadUsers() {
   const totalManaged = (usageList?.length || 0) + blockedList.length + limitsList.length;
   $('users-count').textContent = totalManaged;
 
+  // Repopulate user-pickers — union of traffic users + already-blocked + already-limited.
+  // Lets admin manage anyone they've already encountered without re-typing the name.
+  const known = new Set();
+  (usageList || []).forEach(u => u?.user && known.add(u.user));
+  blockedList.forEach(b => b?.user && known.add(b.user));
+  limitsList.forEach(l => l?.user && known.add(l.user));
+  refreshUserPickers([...known].sort());
+
   const barsEl = $('usage-bars');
   if (Array.isArray(usageList) && usageList.length > 0) {
     barsEl.innerHTML = usageList.map(u => {
@@ -258,6 +266,45 @@ async function loadUsers() {
   managedEl.innerHTML = html;
 }
 
+// --- User-picker helpers ---
+// Two combined controls per row: <select> for known users + a hidden <input>
+// that shows up when "+ new user…" is picked. Returns the resolved username
+// (trimmed) or '' if neither has a usable value.
+function pickedUser(selectId, newId) {
+  const sel = $(selectId);
+  if (!sel) return '';
+  if (sel.value === '__new__') return ($(newId)?.value || '').trim();
+  return sel.value.trim();
+}
+
+function refreshUserPickers(users) {
+  for (const selectId of ['block-user-select', 'limit-user-select']) {
+    const sel = $(selectId);
+    if (!sel) continue;
+    const previous = sel.value;
+    const opts = ['<option value="">-- select user --</option>'];
+    for (const u of users) {
+      opts.push(`<option value="${esc(u)}">${esc(u)}</option>`);
+    }
+    opts.push('<option value="__new__">+ new user…</option>');
+    sel.innerHTML = opts.join('');
+    // Restore previous selection if still valid (otherwise leave at default)
+    if (previous && (users.includes(previous) || previous === '__new__')) {
+      sel.value = previous;
+    }
+  }
+}
+
+function toggleNewUserInput(selectId, newId) {
+  const sel = $(selectId);
+  const inp = $(newId);
+  if (!sel || !inp) return;
+  const isNew = sel.value === '__new__';
+  inp.style.display = isNew ? 'inline-block' : 'none';
+  if (isNew) inp.focus();
+  else inp.value = '';
+}
+
 // --- Admin actions ---
 async function unblock(user) {
   try {
@@ -267,13 +314,17 @@ async function unblock(user) {
 }
 
 async function blockUser() {
-  const user = $('block-user').value.trim();
+  const user = pickedUser('block-user-select', 'block-user-new');
   const ttl = $('block-ttl').value;
   if (!user || !/^[a-zA-Z0-9_-]+$/.test(user)) return toast('Invalid username', true);
   try {
     const r = await fetch(`/internal/admin/block?user=${encodeURIComponent(user)}&ttl=${ttl}`, { method: 'POST' });
     if (!r.ok) throw new Error('HTTP ' + r.status);
-    toast('Blocked ' + user); $('block-user').value = ''; refresh();
+    toast('Blocked ' + user);
+    $('block-user-new').value = '';
+    $('block-user-select').value = '';
+    toggleNewUserInput('block-user-select', 'block-user-new');
+    refresh();
   } catch (e) { toast('Failed: ' + e.message, true); }
 }
 
@@ -293,7 +344,7 @@ function toggleCustom(type) {
 }
 
 async function setLimit() {
-  const user = $('limit-user').value.trim();
+  const user = pickedUser('limit-user-select', 'limit-user-new');
   const tokPerDay = getPresetVal('limit-tokens-preset', 'limit-tokens-custom');
   const reqPerDay = getPresetVal('limit-requests-preset', 'limit-requests-custom');
   if (!user || !/^[a-zA-Z0-9_-]+$/.test(user)) return toast('Invalid username', true);
@@ -309,7 +360,9 @@ async function setLimit() {
     });
     if (!r.ok) throw new Error('HTTP ' + r.status);
     toast('Limit set for ' + user);
-    $('limit-user').value = '';
+    $('limit-user-new').value = '';
+    $('limit-user-select').value = '';
+    toggleNewUserInput('limit-user-select', 'limit-user-new');
     $('limit-tokens-preset').value = ''; $('limit-requests-preset').value = '';
     $('limit-tokens-custom').style.display = 'none'; $('limit-requests-custom').style.display = 'none';
     refresh();
@@ -377,6 +430,8 @@ function initOverview() {
   });
   $('limit-tokens-preset').addEventListener('change', () => toggleCustom('tok'));
   $('limit-requests-preset').addEventListener('change', () => toggleCustom('req'));
+  $('block-user-select').addEventListener('change', () => toggleNewUserInput('block-user-select', 'block-user-new'));
+  $('limit-user-select').addEventListener('change', () => toggleNewUserInput('limit-user-select', 'limit-user-new'));
   $('btn-block').addEventListener('click', blockUser);
   $('btn-limit').addEventListener('click', setLimit);
   const btnAddKey = $('btn-add-key');
