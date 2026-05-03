@@ -1,0 +1,160 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>gateii console</title>
+<link rel="stylesheet" href="/console/static/console.css">
+</head>
+<body>
+<div class="shell">
+
+  <header class="header">
+    <div class="brand">
+      <span class="brand-name">gateii</span>
+      <span class="brand-tag">LLM Proxy Console</span>
+    </div>
+    <div id="status-pill" class="status-pill offline">
+      <span class="status-dot"></span>
+      <span id="status-text">connecting...</span>
+    </div>
+  </header>
+
+  <nav class="tabs">
+    <a href="/console/" class="tab active">Overview</a>
+    <a href="/console/compare" class="tab">Compare</a>
+    <span class="ext">
+      <a href="http://localhost:3001/d/gateii-cost" target="_blank">Cost</a>
+      <a href="http://localhost:3001/d/gateii-eff" target="_blank">Efficiency</a>
+      <a href="http://localhost:3001/d/gateii-ops" target="_blank">Ops</a>
+      <a href="http://localhost:9090" target="_blank">Prometheus</a>
+      <a href="/metrics" target="_blank">Raw</a>
+      <span class="mode-tag">Mode: <b id="mode-display">-</b></span>
+    </span>
+  </nav>
+
+  <!-- Component health + Rate limits as compact chip rows -->
+  <div class="chip-row" id="health-bar"></div>
+  <div class="chip-row alt" id="ratelimit-bar"></div>
+
+  <!-- Activity -->
+  <div class="sec-head">
+    <h2>Activity</h2>
+    <div class="controls">
+      <select class="input" id="window-selector">
+        <option value="24h">Last 24h</option>
+        <option value="7d">Last 7d</option>
+        <option value="30d" selected>Last 30d</option>
+        <option value="60d">Last 60d</option>
+        <option value="90d">Last 90d</option>
+      </select>
+    </div>
+  </div>
+  <div class="stats">
+    <div class="stat-card">
+      <div class="stat-val c-green" id="s-req">-</div>
+      <div class="stat-label">Requests</div>
+      <div class="stat-sub" id="s-req-detail"></div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-val c-green" id="s-tok">-</div>
+      <div class="stat-label">Tokens</div>
+      <div class="stat-sub" id="s-tok-detail"></div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-val c-green" id="s-cost">-</div>
+      <div class="stat-label">Cost</div>
+      <div class="stat-sub" id="s-cost-detail"></div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-val c-blue" id="s-monthly">-</div>
+      <div class="stat-label">Monthly Forecast</div>
+      <div class="stat-sub" id="s-monthly-detail">7d avg projected</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-val c-green" id="s-latency">-</div>
+      <div class="stat-label">Avg Latency</div>
+      <div class="stat-sub" id="s-latency-detail"></div>
+    </div>
+  </div>
+
+  <!-- Management -->
+  <div class="sec-head"><h2>Management</h2></div>
+
+  <!-- Active Users (visible first) + admin actions -->
+  <div class="panel">
+    <div class="panel-head"><span>Users</span><span class="count" id="users-count">0</span></div>
+    <div class="panel-body">
+      <div id="usage-bars"><div class="empty">no traffic yet</div></div>
+      <div id="managed-body" style="margin-top:8px"></div>
+
+      <div class="form-row" style="margin-top:14px">
+        <span class="form-label">Block</span>
+        <input class="input" id="block-user" type="text" placeholder="username" style="width:130px" maxlength="64">
+        <select class="input" id="block-ttl">
+          <option value="3600">1 hour</option>
+          <option value="86400" selected>1 day</option>
+          <option value="604800">1 week</option>
+          <option value="2592000">30 days</option>
+        </select>
+        <button class="btn btn-danger" id="btn-block">Block</button>
+      </div>
+
+      <div class="form-row">
+        <span class="form-label">Limit</span>
+        <input class="input" id="limit-user" type="text" placeholder="username" style="width:130px" maxlength="64">
+        <select class="input" id="limit-tokens-preset">
+          <option value="">-- Tokens/day --</option>
+          <option value="500000">Light (500K ≈ $2)</option>
+          <option value="2000000">Normal (2M ≈ $8)</option>
+          <option value="5000000">Heavy (5M ≈ $20)</option>
+          <option value="0">Unlimited</option>
+          <option value="custom">Custom...</option>
+        </select>
+        <input class="input input-sm" id="limit-tokens-custom" type="number" placeholder="tokens" min="0" step="100000" style="display:none;width:120px">
+        <select class="input" id="limit-requests-preset">
+          <option value="">-- Req/day --</option>
+          <option value="100">Light (100)</option>
+          <option value="500">Normal (500)</option>
+          <option value="1000">Heavy (1000)</option>
+          <option value="0">Unlimited</option>
+          <option value="custom">Custom...</option>
+        </select>
+        <input class="input input-sm" id="limit-requests-custom" type="number" placeholder="requests" min="0" step="10" style="display:none;width:100px">
+        <button class="btn btn-blue" id="btn-limit">Set Limit</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="grid-2">
+    <!-- Proxy Keys (only visible in apikey mode) -->
+    <div class="panel" id="keys-panel" style="display:none">
+      <div class="panel-head"><span>Proxy Keys</span><span class="count" id="key-count">-</span></div>
+      <div class="panel-body">
+        <div id="keys-body"><div class="empty">loading...</div></div>
+        <div class="form-row" id="add-key-row">
+          <span class="form-label">Add</span>
+          <input class="input" id="add-user" type="text" placeholder="username" style="width:120px" maxlength="64">
+          <button class="btn btn-primary" id="btn-add-key">Generate Key</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="panel">
+      <div class="panel-head"><span>Plugins</span></div>
+      <div class="panel-body" id="plugins-body"><div class="empty">loading...</div></div>
+    </div>
+  </div>
+
+  <div class="footer">
+    Last refresh <span id="last-refresh">-</span> &middot; auto-refresh 15s
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script src="/console/static/console.js"></script>
+<script src="/console/static/overview.js"></script>
+<script>document.addEventListener('DOMContentLoaded', initOverview);</script>
+</body>
+</html>

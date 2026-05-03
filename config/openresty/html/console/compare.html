@@ -1,0 +1,60 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>gateii console — Compare</title>
+<link rel="stylesheet" href="/console/static/console.css">
+</head>
+<body>
+<div class="shell">
+
+  <header class="header">
+    <div class="brand">
+      <span class="brand-name">gateii</span>
+      <span class="brand-tag">Cost Comparison</span>
+    </div>
+    <div id="status-pill" class="status-pill offline">
+      <span class="status-dot"></span>
+      <span id="status-text">connecting...</span>
+    </div>
+  </header>
+
+  <nav class="tabs">
+    <a href="/console/" class="tab">Overview</a>
+    <a href="/console/compare" class="tab active">Compare</a>
+    <span class="ext">
+      <a href="http://localhost:3001/d/gateii-cost" target="_blank">Cost</a>
+      <a href="http://localhost:3001/d/gateii-eff" target="_blank">Efficiency</a>
+      <a href="http://localhost:3001/d/gateii-ops" target="_blank">Ops</a>
+      <span class="mode-tag">Mode: <b id="mode-display">-</b></span>
+    </span>
+  </nav>
+
+  <div class="sec-head">
+    <h2>Monthly Cost — Top 10 Weekly Coding Models</h2>
+    <div class="controls">
+      <span id="comp-tokens" style="font-size:11px;color:var(--dim)">-</span>
+      <button class="btn btn-primary" id="btn-refresh">Refresh</button>
+    </div>
+  </div>
+
+  <div class="panel" id="comparison-panel">
+    <div id="comp-source" class="provider-attr" style="display:none"></div>
+    <div class="panel-body" id="comparison-body">
+      <div class="empty">loading providers…</div>
+    </div>
+  </div>
+
+  <div class="footer">
+    Last refresh <span id="last-refresh">-</span> &middot; auto-refresh 60s
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script src="/console/static/console.js"></script>
+<script src="/console/static/compare.js"></script>
+<script>document.addEventListener('DOMContentLoaded', initCompare);</script>
+</body>
+</html>
