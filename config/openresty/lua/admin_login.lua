@@ -16,12 +16,13 @@ if uri == "/internal/admin/logout" then
     end
     -- Delete session from shared dict if cookie present
     local cookie_header = ngx.var.http_cookie or ""
-    local session_id = cookie_header:match("admin_session=([a-f0-9]{32,128})")
+    local session_id = cookie_header:match("admin_session=([a-f0-9]+)")
+    if session_id and (#session_id < 32 or #session_id > 128) then session_id = nil end
     if session_id then
         sessions:delete(session_id)
     end
     -- Clear cookie by expiring it immediately
-    ngx.header["Set-Cookie"] = "admin_session=deleted; HttpOnly; Secure; SameSite=Strict; Path=/internal/admin; Max-Age=0"
+    ngx.header["Set-Cookie"] = "admin_session=deleted; HttpOnly; SameSite=Strict; Path=/internal/admin; Max-Age=0"
     ngx.say('{"ok":true}')
     return
 end
@@ -89,5 +90,5 @@ local session_id = table.concat(hex_parts)
 sessions:set(session_id, "1", 3600)  -- 1h TTL
 
 ngx.header["Set-Cookie"] = "admin_session=" .. session_id
-    .. "; HttpOnly; Secure; SameSite=Strict; Path=/internal/admin; Max-Age=3600"
+    .. "; HttpOnly; SameSite=Strict; Path=/internal/admin; Max-Age=3600"
 ngx.say('{"ok":true}')
