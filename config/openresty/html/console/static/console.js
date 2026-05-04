@@ -79,6 +79,20 @@ function toast(msg, isError) {
   t._tid = setTimeout(() => t.className = 'toast', 3000);
 }
 
+// Wraps an async action so the triggering button (or any element with
+// `aria-busy` capability) is disabled for the duration. Prevents
+// double-submit on rapid clicks. Pass either a button element or an event
+// (the helper picks the closest <button>). Restores `disabled` to its
+// pre-busy value, not unconditionally — buttons that were already disabled
+// by other logic stay disabled.
+async function withBusy(btn, fn) {
+  const el = btn && btn.tagName ? btn : (btn && btn.currentTarget) || null;
+  const wasDisabled = el ? el.disabled : false;
+  if (el) el.disabled = true;
+  try { return await fn(); }
+  finally { if (el && !wasDisabled) el.disabled = false; }
+}
+
 function fmt(n) {
   if (n >= 1e6) return (n / 1e6).toFixed(1) + 'M';
   if (n >= 1e3) return (n / 1e3).toFixed(1) + 'K';

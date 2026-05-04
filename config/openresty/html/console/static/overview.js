@@ -4,12 +4,24 @@
 const _prev = {};
 let _currentWindow = '30d';
 
+// Per-section signature cache — same idea as agents.js. Skip the
+// innerHTML-rebuild when the underlying data hasn't changed. Cuts
+// flicker, preserves scroll/hover/focus inside panels.
+const _sig = {};
+function _changed(section, payload) {
+  const next = JSON.stringify(payload);
+  if (_sig[section] === next) return false;
+  _sig[section] = next;
+  return true;
+}
+
 // --- Component health chip row ---
 async function loadHealth() {
   const bar = $('health-bar');
   if (!bar) return;
   try {
     const data = await fetch('/internal/admin/health').then(r => r.json());
+    if (!_changed('health', data.components)) return;
     const labels = { proxy: 'Proxy', prometheus: 'Prometheus', grafana: 'Grafana', upstream: 'Upstream' };
     bar.innerHTML = Object.entries(labels).map(([key, label]) => {
       const c = data.components?.[key];
@@ -22,7 +34,8 @@ async function loadHealth() {
       return `<span class="chip ${cls}"${title}><span class="chip-dot"></span>${label}${sub}</span>`;
     }).join('');
   } catch (e) {
-    bar.innerHTML = '<span class="chip muted"><span class="chip-dot"></span>health unavailable</span>';
+    if (_changed('health', '__err__'))
+      bar.innerHTML = '<span class="chip muted"><span class="chip-dot"></span>health unavailable</span>';
   }
 }
 
@@ -46,6 +59,12 @@ function loadRateLimits(metrics) {
   const u7 = get('gateii_rate_limit_7d_utilization');
   const r7 = get('gateii_rate_limit_7d_seconds_until_reset');
   const remaining = get('gateii_rate_limit_tokens_remaining');
+
+  // Bucketize the seconds-until-reset values so a 1-tick countdown doesn't
+  // re-render every poll — only meaningful changes (>= 60s) trigger redraw.
+  const bucket = s => s == null ? null : Math.floor(s / 60);
+  if (!_changed('ratelimit', { u5, u7, r5: bucket(r5), r7: bucket(r7), rem: remaining }))
+    return;
 
   if (u5 == null && u7 == null) {
     bar.innerHTML = '<span class="chip muted"><span class="chip-dot"></span>rate-limit data not available</span>';
@@ -145,11 +164,18 @@ async function loadServices() {
     if (!r.ok) throw new Error('HTTP ' + r.status);
     data = await r.json();
   } catch (e) {
-    body.innerHTML = `<div class="empty">services unavailable — compose-ctl sidecar not reachable (${esc(e.message)})</div>`;
-    $('services-count').textContent = '-';
+    if (_changed('services', '__err__:' + e.message)) {
+      body.innerHTML = `<div class="empty">services unavailable — compose-ctl sidecar not reachable (${esc(e.message)})</div>`;
+      $('services-count').textContent = '-';
+    }
     return;
   }
   const services = data.services || [];
+  // Strip out fields that flap on every poll (image SHA changes, status
+  // string ticking up "Up 5 seconds → Up 7 seconds"). Only redraw on
+  // service-list changes or state transitions.
+  const sigInput = services.map(s => ({ s: s.service, st: s.state }));
+  if (!_changed('services', sigInput)) return;
   $('services-count').textContent = services.length;
   if (services.length === 0) {
     body.innerHTML = '<div class="empty">no services found in compose project</div>';
@@ -179,7 +205,7 @@ async function loadServices() {
   }).join('');
 }
 
-async function serviceAction(service, action) {
+async function serviceAction(btn, service, action) {
   // Self-restart of the proxy is a special case: the request dies mid-flight.
   // The sidecar schedules it async + returns 202, we pop a confirm + reload.
   const isProxySelfHit = service === 'openresty' && (action === 'restart' || action === 'recreate' || action === 'stop');
@@ -187,24 +213,26 @@ async function serviceAction(service, action) {
     const ok = confirm(`This will ${action} the proxy itself and kill your current console session. Continue?`);
     if (!ok) return;
   }
-  try {
-    const r = await fetch(`/internal/admin/services/${encodeURIComponent(service)}/${encodeURIComponent(action)}`, { method: 'POST' });
-    const result = await r.json().catch(() => ({}));
-    if (r.status >= 200 && r.status < 300) {
-      toast(`${action} ${service} → ${result.note || 'ok'}`);
-      if (isProxySelfHit && action !== 'stop') {
-        // Wait for the async restart, then reload the page
-        setTimeout(() => location.reload(), 8000);
+  await withBusy(btn, async () => {
+    try {
+      const r = await fetch(`/internal/admin/services/${encodeURIComponent(service)}/${encodeURIComponent(action)}`, { method: 'POST' });
+      const result = await r.json().catch(() => ({}));
+      if (r.status >= 200 && r.status < 300) {
+        toast(`${action} ${service} → ${result.note || 'ok'}`);
+        if (isProxySelfHit && action !== 'stop') {
+          // Wait for the async restart, then reload the page
+          setTimeout(() => location.reload(), 8000);
+        } else {
+          // Refresh services list after a short delay so docker has time to update
+          setTimeout(loadServices, 1500);
+        }
       } else {
-        // Refresh services list after a short delay so docker has time to update
-        setTimeout(loadServices, 1500);
+        toast(`${action} ${service} failed: ${result.error || 'HTTP ' + r.status}`, true);
       }
-    } else {
-      toast(`${action} ${service} failed: ${result.error || 'HTTP ' + r.status}`, true);
+    } catch (e) {
+      toast(`${action} ${service} failed: ${e.message}`, true);
     }
-  } catch (e) {
-    toast(`${action} ${service} failed: ${e.message}`, true);
-  }
+  });
 }
 
 // --- Plugins, Keys, Users / Limits / Block ---
@@ -217,12 +245,14 @@ async function renderPluginsAndKeys(ov) {
     { name: 'console', desc: 'Admin web console', active: plugs.console },
     { name: 'git-tracking', desc: 'Git activity tracking', active: plugs.git_tracking },
   ];
-  $('plugins-body').innerHTML = pluginEntries.map(p =>
-    `<div style="display:flex;justify-content:space-between;align-items:center;padding:4px 0">
-      <span>${p.name} <span style="color:var(--dim);font-size:12px;margin-left:6px">${p.desc}</span></span>
-      <span class="badge ${p.active ? 'badge-on' : 'badge-off'}">${p.active ? 'ACTIVE' : 'INACTIVE'}</span>
-    </div>`
-  ).join('');
+  if (_changed('plugins', plugs)) {
+    $('plugins-body').innerHTML = pluginEntries.map(p =>
+      `<div style="display:flex;justify-content:space-between;align-items:center;padding:4px 0">
+        <span>${p.name} <span style="color:var(--dim);font-size:12px;margin-left:6px">${p.desc}</span></span>
+        <span class="badge ${p.active ? 'badge-on' : 'badge-off'}">${p.active ? 'ACTIVE' : 'INACTIVE'}</span>
+      </div>`
+    ).join('');
+  }
 
   // Keys panel — only visible in apikey mode
   const keysPanel = $('keys-panel');
@@ -232,16 +262,19 @@ async function renderPluginsAndKeys(ov) {
     keysPanel.style.display = '';
     try {
       const keys = await fetch('/internal/admin/keys').then(r => r.json());
-      $('key-count').textContent = keys.count;
-      if (keys.count === 0) {
-        $('keys-body').innerHTML = '<div class="empty">no keys — use form below</div>';
-      } else {
-        $('keys-body').innerHTML = '<table><tr><th>Key</th><th>User</th></tr>' +
-          keys.keys.map(k => `<tr><td class="key-masked">${esc(k.key)}</td><td class="key-user">${esc(k.user)}</td></tr>`).join('') +
-          '</table>';
+      if (_changed('keys', keys)) {
+        $('key-count').textContent = keys.count;
+        if (keys.count === 0) {
+          $('keys-body').innerHTML = '<div class="empty">no keys — use form below</div>';
+        } else {
+          $('keys-body').innerHTML = '<table><tr><th>Key</th><th>User</th></tr>' +
+            keys.keys.map(k => `<tr><td class="key-masked">${esc(k.key)}</td><td class="key-user">${esc(k.user)}</td></tr>`).join('') +
+            '</table>';
+        }
       }
     } catch (e) {
-      $('keys-body').innerHTML = '<div class="empty">load failed</div>';
+      if (_changed('keys', '__err__'))
+        $('keys-body').innerHTML = '<div class="empty">load failed</div>';
     }
   }
 }
@@ -265,8 +298,11 @@ async function loadUsers() {
   refreshUserPickers([...known].sort());
 
   const barsEl = $('usage-bars');
+  const usageSig = Array.isArray(usageList) ? usageList : [];
   if (Array.isArray(usageList) && usageList.length > 0) {
-    barsEl.innerHTML = usageList.map(u => {
+    // Skip the rebuild when the usage payload hasn't moved — preserves
+    // hover/scroll on the bar list during quiet windows.
+    if (_changed('usage', usageSig)) barsEl.innerHTML = usageList.map(u => {
       const totalTok = (u.input || 0) + (u.output || 0);
       const tokLimit = u.tokens_limit;
       const reqLimit = u.requests_limit;
@@ -304,8 +340,17 @@ async function loadUsers() {
     barsEl.innerHTML = '<div class="empty">no traffic yet</div>';
   }
 
-  // Blocked + persistent custom limits below active users
+  // Blocked + persistent custom limits below active users.
+  // Bucket TTL to whole minutes so the BLOCKED banner doesn't re-render
+  // every 15 s for a 1-second countdown drift.
+  const managedSig = {
+    blocked: blockedList.map(b => ({ u: b.user, m: Math.floor((b.ttl || 0) / 60) })),
+    limits: limitsList,
+  };
   const managedEl = $('managed-body');
+  if (!_changed('managed', managedSig)) {
+    // unchanged — skip rebuild
+  } else {
   let html = '';
   if (blockedList.length > 0) {
     html += blockedList.map(b => {
@@ -338,6 +383,7 @@ async function loadUsers() {
     }).join('');
   }
   managedEl.innerHTML = html;
+  }
 }
 
 // --- User-picker helpers ---
@@ -380,26 +426,30 @@ function toggleNewUserInput(selectId, newId) {
 }
 
 // --- Admin actions ---
-async function unblock(user) {
-  try {
-    await fetch('/internal/admin/unblock?user=' + encodeURIComponent(user), { method: 'POST' });
-    toast('Unblocked ' + user); refresh();
-  } catch (e) { toast('Failed: ' + e.message, true); }
+async function unblock(btn, user) {
+  await withBusy(btn, async () => {
+    try {
+      await fetch('/internal/admin/unblock?user=' + encodeURIComponent(user), { method: 'POST' });
+      toast('Unblocked ' + user); refresh();
+    } catch (e) { toast('Failed: ' + e.message, true); }
+  });
 }
 
-async function blockUser() {
+async function blockUser(ev) {
   const user = pickedUser('block-user-select', 'block-user-new');
   const ttl = $('block-ttl').value;
   if (!user || !/^[a-zA-Z0-9_-]+$/.test(user)) return toast('Invalid username', true);
-  try {
-    const r = await fetch(`/internal/admin/block?user=${encodeURIComponent(user)}&ttl=${ttl}`, { method: 'POST' });
-    if (!r.ok) throw new Error('HTTP ' + r.status);
-    toast('Blocked ' + user);
-    $('block-user-new').value = '';
-    $('block-user-select').value = '';
-    toggleNewUserInput('block-user-select', 'block-user-new');
-    refresh();
-  } catch (e) { toast('Failed: ' + e.message, true); }
+  await withBusy(ev?.currentTarget, async () => {
+    try {
+      const r = await fetch(`/internal/admin/block?user=${encodeURIComponent(user)}&ttl=${ttl}`, { method: 'POST' });
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      toast('Blocked ' + user);
+      $('block-user-new').value = '';
+      $('block-user-select').value = '';
+      toggleNewUserInput('block-user-select', 'block-user-new');
+      refresh();
+    } catch (e) { toast('Failed: ' + e.message, true); }
+  });
 }
 
 function getPresetVal(presetId, customId) {
@@ -417,7 +467,7 @@ function toggleCustom(type) {
   }
 }
 
-async function setLimit() {
+async function setLimit(ev) {
   const user = pickedUser('limit-user-select', 'limit-user-new');
   const tokPerDay = getPresetVal('limit-tokens-preset', 'limit-tokens-custom');
   const reqPerDay = getPresetVal('limit-requests-preset', 'limit-requests-custom');
@@ -426,49 +476,55 @@ async function setLimit() {
   const body = {};
   if (tokPerDay !== null) body.tokens_per_day = tokPerDay;
   if (reqPerDay !== null) body.requests_per_day = reqPerDay;
-  try {
-    const r = await fetch('/internal/admin/limit?user=' + encodeURIComponent(user), {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(body),
-    });
-    if (!r.ok) throw new Error('HTTP ' + r.status);
-    toast('Limit set for ' + user);
-    $('limit-user-new').value = '';
-    $('limit-user-select').value = '';
-    toggleNewUserInput('limit-user-select', 'limit-user-new');
-    $('limit-tokens-preset').value = ''; $('limit-requests-preset').value = '';
-    $('limit-tokens-custom').style.display = 'none'; $('limit-requests-custom').style.display = 'none';
-    refresh();
-  } catch (e) { toast('Failed: ' + e.message, true); }
+  await withBusy(ev?.currentTarget, async () => {
+    try {
+      const r = await fetch('/internal/admin/limit?user=' + encodeURIComponent(user), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      toast('Limit set for ' + user);
+      $('limit-user-new').value = '';
+      $('limit-user-select').value = '';
+      toggleNewUserInput('limit-user-select', 'limit-user-new');
+      $('limit-tokens-preset').value = ''; $('limit-requests-preset').value = '';
+      $('limit-tokens-custom').style.display = 'none'; $('limit-requests-custom').style.display = 'none';
+      refresh();
+    } catch (e) { toast('Failed: ' + e.message, true); }
+  });
 }
 
-async function removeLimit(user) {
-  try {
-    const r = await fetch('/internal/admin/limit?user=' + encodeURIComponent(user), {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ tokens_per_day: 0, requests_per_day: 0 }),
-    });
-    if (!r.ok) throw new Error('HTTP ' + r.status);
-    toast('Limit removed for ' + user); refresh();
-  } catch (e) { toast('Failed: ' + e.message, true); }
+async function removeLimit(btn, user) {
+  await withBusy(btn, async () => {
+    try {
+      const r = await fetch('/internal/admin/limit?user=' + encodeURIComponent(user), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ tokens_per_day: 0, requests_per_day: 0 }),
+      });
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      toast('Limit removed for ' + user); refresh();
+    } catch (e) { toast('Failed: ' + e.message, true); }
+  });
 }
 
-async function addKey() {
+async function addKey(ev) {
   const user = $('add-user').value.trim();
   if (!user || !/^[a-zA-Z0-9_-]+$/.test(user)) return toast('Invalid username', true);
   const key = 'sk-proxy-' + Array.from(crypto.getRandomValues(new Uint8Array(16))).map(b => b.toString(16).padStart(2,'0')).join('');
-  try {
-    const r = await fetch('/internal/admin/addkey?user=' + encodeURIComponent(user), {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ key }),
-    });
-    if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || 'HTTP ' + r.status);
-    toast('Key added for ' + user);
-    $('add-user').value = ''; refresh();
-  } catch (e) { toast('Failed: ' + e.message, true); }
+  await withBusy(ev?.currentTarget, async () => {
+    try {
+      const r = await fetch('/internal/admin/addkey?user=' + encodeURIComponent(user), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ key }),
+      });
+      if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || 'HTTP ' + r.status);
+      toast('Key added for ' + user);
+      $('add-user').value = ''; refresh();
+    } catch (e) { toast('Failed: ' + e.message, true); }
+  });
 }
 
 // --- Master refresh ---
@@ -515,15 +571,15 @@ function initOverview() {
     const btn = e.target.closest('button[data-action]');
     if (!btn) return;
     const user = btn.dataset.user;
-    if (btn.dataset.action === 'unblock') unblock(user);
-    if (btn.dataset.action === 'remove-limit') removeLimit(user);
+    if (btn.dataset.action === 'unblock') unblock(btn, user);
+    if (btn.dataset.action === 'remove-limit') removeLimit(btn, user);
   });
 
   // Event delegation for service action buttons
   $('services-body').addEventListener('click', e => {
     const btn = e.target.closest('button[data-svc]');
     if (!btn) return;
-    serviceAction(btn.dataset.svc, btn.dataset.action);
+    serviceAction(btn, btn.dataset.svc, btn.dataset.action);
   });
 
   refresh();

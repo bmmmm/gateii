@@ -4,6 +4,7 @@ local schema = require "schema"
 local util = require "util"
 local blocking_dict = ngx.shared.blocking
 local counters = ngx.shared.counters
+local or_cache = ngx.shared.or_cache
 
 local method = ngx.req.get_method()
 local uri = ngx.var.uri
@@ -549,7 +550,8 @@ end
 -- Returns slim pricing index: {models:[{id,name,input,output},...]}
 if uri == "/internal/admin/openrouter-models" and method == "GET" then
     local cache_key = "openrouter_models"
-    local cached = counters:get(cache_key)
+    local cache_dict = or_cache or counters
+    local cached = cache_dict:get(cache_key)
     if cached then
         ngx.header["X-Cache"] = "HIT"
         ngx.say(cached)
@@ -598,7 +600,7 @@ if uri == "/internal/admin/openrouter-models" and method == "GET" then
     end
 
     local result = cjson.encode({ models = models })
-    local ok, cerr = counters:set(cache_key, result, 43200)  -- 12h
+    local ok, cerr = cache_dict:set(cache_key, result, 43200)  -- 12h
     if not ok then
         ngx.log(ngx.WARN, "openrouter cache write failed: ", cerr)
     end
