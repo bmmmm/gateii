@@ -4,7 +4,8 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>gateii console — Local Agents</title>
-<link rel="stylesheet" href="/console/static/console.css">
+<link rel="icon" type="image/svg+xml" href="/console/static/favicon.svg">
+<link rel="stylesheet" href="/console/static/console.css?v=p5">
 <style>
   /* Page-local additions to the shared theme */
   .agent-card {
@@ -16,10 +17,13 @@
   .agent-card .pulse {
     width: 10px; height: 10px; border-radius: 50%;
     background: var(--accent, #6aa8e8);
-    animation: pulse 1.4s ease-in-out infinite;
+    animation: agent-pulse 1.4s ease-in-out infinite;
     flex-shrink: 0;
   }
-  @keyframes pulse {
+  /* Renamed from `pulse` so it doesn't collide with the status-pill
+     keyframe of the same name in console.css (different timing + adds
+     scale on top of opacity). */
+  @keyframes agent-pulse {
     0%,100% { transform: scale(1); opacity: 1 }
     50%     { transform: scale(1.4); opacity: .4 }
   }
@@ -167,7 +171,7 @@
   </div>
   <div class="panel">
     <div class="panel-body" id="models-area">
-      <div class="empty">connecting to omlx…</div>
+      <div class="skel-row" style="height:120px;margin:0"></div>
     </div>
   </div>
 
@@ -204,10 +208,10 @@
   </div>
 </div>
 
-<div class="toast" id="toast"></div>
+<div class="toast" id="toast" role="status" aria-live="polite" aria-atomic="true"></div>
 
-<script src="/console/static/console.js"></script>
-<script src="/console/static/agents.js"></script>
+<script src="/console/static/console.js?v=p5"></script>
+<script src="/console/static/agents.js?v=p5"></script>
 <script>document.addEventListener('DOMContentLoaded', () => { renderTabs(); initAgents(); initDiagnostics && initDiagnostics(); });</script>
 </body>
 </html>

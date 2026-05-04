@@ -4,7 +4,8 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>gateii console</title>
-<link rel="stylesheet" href="/console/static/console.css">
+<link rel="icon" type="image/svg+xml" href="/console/static/favicon.svg">
+<link rel="stylesheet" href="/console/static/console.css?v=p5">
 </head>
 <body>
 <div class="shell">
@@ -125,7 +126,7 @@
 
   <div class="panel">
     <div class="panel-head"><span>Services</span><span class="count" id="services-count">-</span></div>
-    <div class="panel-body" id="services-body"><div class="empty">loading…</div></div>
+    <div class="panel-body" id="services-body"><div class="skel-row"></div><div class="skel-row"></div><div class="skel-row"></div></div>
   </div>
 
   <div class="grid-2">
@@ -133,7 +134,7 @@
     <div class="panel" id="keys-panel" style="display:none">
       <div class="panel-head"><span>Proxy Keys</span><span class="count" id="key-count">-</span></div>
       <div class="panel-body">
-        <div id="keys-body"><div class="empty">loading...</div></div>
+        <div id="keys-body"><div class="skel-row sm"></div><div class="skel-row sm"></div></div>
         <div class="form-row" id="add-key-row">
           <span class="form-label">Add</span>
           <input class="input" id="add-user" type="text" placeholder="username" style="width:120px" maxlength="64">
@@ -144,7 +145,7 @@
 
     <div class="panel">
       <div class="panel-head"><span>Plugins (config)</span></div>
-      <div class="panel-body" id="plugins-body"><div class="empty">loading…</div></div>
+      <div class="panel-body" id="plugins-body"><div class="skel-row sm"></div><div class="skel-row sm"></div></div>
     </div>
   </div>
 
@@ -153,10 +154,10 @@
   </div>
 </div>
 
-<div class="toast" id="toast"></div>
+<div class="toast" id="toast" role="status" aria-live="polite" aria-atomic="true"></div>
 
-<script src="/console/static/console.js"></script>
-<script src="/console/static/overview.js"></script>
+<script src="/console/static/console.js?v=p5"></script>
+<script src="/console/static/overview.js?v=p5"></script>
 <script>document.addEventListener('DOMContentLoaded', () => { renderTabs(); initOverview(); initDiagnostics(); });</script>
 </body>
 </html>

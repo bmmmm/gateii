@@ -156,7 +156,7 @@ async function refresh() {
     await loadConfig();
     $('last-refresh').textContent = new Date().toLocaleTimeString();
   } catch (e) {
-    toast('refresh failed: ' + e.message, true);
+    toast('refresh failed: ' + e.message, true, 'git-refresh');
   }
 }
 

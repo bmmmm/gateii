@@ -4,7 +4,8 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>gateii console — Compare</title>
-<link rel="stylesheet" href="/console/static/console.css">
+<link rel="icon" type="image/svg+xml" href="/console/static/favicon.svg">
+<link rel="stylesheet" href="/console/static/console.css?v=p5">
 </head>
 <body>
 <div class="shell">
@@ -42,10 +43,10 @@
   </div>
 </div>
 
-<div class="toast" id="toast"></div>
+<div class="toast" id="toast" role="status" aria-live="polite" aria-atomic="true"></div>
 
-<script src="/console/static/console.js"></script>
-<script src="/console/static/compare.js"></script>
+<script src="/console/static/console.js?v=p5"></script>
+<script src="/console/static/compare.js?v=p5"></script>
 <script>document.addEventListener('DOMContentLoaded', () => { renderTabs(); initCompare(); initDiagnostics(); });</script>
 </body>
 </html>
