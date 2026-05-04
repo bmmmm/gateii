@@ -894,6 +894,46 @@ if uri == "/internal/admin/git-tracking" and method == "PUT" then
     return
 end
 
+-- GET /internal/admin/agents — local omlx-agent state for the Console "Agents" tab
+-- Reads files written by scripts/agent (mounted at /etc/nginx/data/agents):
+--   active.json   currently-running agent (omitted if idle)
+--   log.jsonl     append-only per-call history (last 50 returned)
+--   routing.json  bench-picked model/max_tokens per task (if scripts/agent-bench has run)
+local AGENTS_DIR = "/etc/nginx/data/agents"
+if uri == "/internal/admin/agents" and method == "GET" then
+    local out = { active = nil, recent = {}, routing = nil }
+
+    local af = io.open(AGENTS_DIR .. "/active.json", "r")
+    if af then
+        local content = af:read("*a"); af:close()
+        out.active = cjson.decode(content)
+    end
+
+    local lf = io.open(AGENTS_DIR .. "/log.jsonl", "r")
+    if lf then
+        local lines = {}
+        for line in lf:lines() do
+            if line ~= "" then table.insert(lines, line) end
+        end
+        lf:close()
+        local start_idx = math.max(1, #lines - 49)
+        for i = start_idx, #lines do
+            local rec = cjson.decode(lines[i])
+            if rec then table.insert(out.recent, rec) end
+        end
+    end
+
+    local rf = io.open(AGENTS_DIR .. "/routing.json", "r")
+    if rf then
+        local content = rf:read("*a"); rf:close()
+        out.routing = cjson.decode(content)
+    end
+
+    ngx.header["Content-Type"] = "application/json"
+    ngx.print(cjson.encode(out))
+    return
+end
+
 ngx.status = 404
 ngx.say('{"error":"Unknown admin endpoint — available: /internal/admin/{block,unblock,limit,status,'
-    .. 'usage,keys,addkey,overview,providers,llm-prices,openrouter-models,health,git-tracking,services,diagnostics,bootstrap}"}')
+    .. 'usage,keys,addkey,overview,providers,llm-prices,openrouter-models,health,git-tracking,services,diagnostics,bootstrap,agents}"}')

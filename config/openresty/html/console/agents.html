@@ -1,0 +1,146 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>gateii console — Local Agents</title>
+<link rel="stylesheet" href="/console/static/console.css">
+<style>
+  /* Page-local additions to the shared theme */
+  .agent-card {
+    background: var(--accent-subtle, rgba(80,160,255,.08));
+    border: 1px solid var(--accent, #6aa8e8);
+    border-radius: 8px; padding: 14px 16px; margin: 8px 0;
+    display: flex; align-items: center; gap: 14px;
+  }
+  .agent-card .pulse {
+    width: 10px; height: 10px; border-radius: 50%;
+    background: var(--accent, #6aa8e8);
+    animation: pulse 1.4s ease-in-out infinite;
+    flex-shrink: 0;
+  }
+  @keyframes pulse {
+    0%,100% { transform: scale(1); opacity: 1 }
+    50%     { transform: scale(1.4); opacity: .4 }
+  }
+  .agent-meta {
+    display: grid;
+    grid-template-columns: max-content 1fr;
+    gap: 2px 12px;
+    font-size: 12px;
+  }
+  .agent-meta b { color: var(--dim) }
+  .agent-preview {
+    margin-top: 6px;
+    color: var(--dim); font-style: italic;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    max-width: 600px;
+  }
+  .hist-table {
+    width: 100%; border-collapse: collapse; font-size: 12px;
+  }
+  .hist-table th, .hist-table td {
+    padding: 6px 10px; text-align: left;
+    border-bottom: 1px solid var(--border);
+  }
+  .hist-table th {
+    font-size: 10px; color: var(--dim); text-transform: uppercase; letter-spacing: .06em;
+    font-weight: 500;
+  }
+  .hist-table td.num { text-align: right; font-variant-numeric: tabular-nums }
+  .hist-table tr:hover td { background: var(--accent-subtle, rgba(80,160,255,.04)) }
+  .hist-table .preview-cell {
+    max-width: 400px;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    color: var(--dim);
+  }
+  .exit-ok   { color: var(--c-green, #6acb6a) }
+  .exit-bad  { color: var(--c-red,   #e87878) }
+  .routing-row {
+    display: flex; gap: 12px; padding: 4px 0;
+    font-size: 12px; align-items: baseline;
+  }
+  .routing-row .task { font-weight: 600; min-width: 180px }
+  .routing-row .model { color: var(--dim); font-family: ui-monospace, monospace }
+  .routing-row .pass { margin-left: auto; color: var(--c-green) }
+  .routing-row .pass.partial { color: var(--c-yellow, #d4b56a) }
+  .routing-row .pass.fail { color: var(--c-red) }
+</style>
+</head>
+<body>
+<div class="shell">
+
+  <header class="header">
+    <div class="brand">
+      <span class="brand-name">gateii</span>
+      <span class="brand-tag">Local Agents</span>
+    </div>
+    <div id="status-pill" class="status-pill offline">
+      <span class="status-dot"></span>
+      <span id="status-text">connecting...</span>
+    </div>
+  </header>
+
+  <nav class="tabs">
+    <a href="/console/" class="tab">Overview</a>
+    <a href="/console/compare" class="tab">Compare</a>
+    <a href="/console/git" class="tab">Git</a>
+    <a href="/console/agents" class="tab active">Agents</a>
+    <span class="ext">
+      <a href="http://localhost:3001/d/gateii-cost" target="_blank">Cost</a>
+      <a href="http://localhost:3001/d/gateii-eff" target="_blank">Efficiency</a>
+      <a href="http://localhost:3001/d/gateii-ops" target="_blank">Ops</a>
+      <button class="btn btn-blue" id="btn-diag" style="padding:4px 10px;font-size:11px">Diagnostics</button>
+      <span class="mode-tag">Mode: <b id="mode-display">-</b></span>
+    </span>
+  </nav>
+
+  <div class="sec-head">
+    <h2>Currently running</h2>
+    <div class="controls">
+      <span class="count" id="active-count" style="background:var(--accent-subtle);color:var(--accent);padding:2px 10px;border-radius:10px;font-size:11px;font-weight:600">0</span>
+    </div>
+  </div>
+  <div class="panel">
+    <div class="panel-body" id="active-area">
+      <div class="empty">no agent currently running</div>
+    </div>
+  </div>
+
+  <div class="sec-head">
+    <h2>Recent runs</h2>
+    <div class="controls">
+      <span class="count" id="recent-count" style="background:var(--accent-subtle);color:var(--accent);padding:2px 10px;border-radius:10px;font-size:11px;font-weight:600">0</span>
+    </div>
+  </div>
+  <div class="panel">
+    <div class="panel-body" id="history-area">
+      <div class="empty">no history yet — run <code>scripts/agent run &lt;task&gt;</code></div>
+    </div>
+  </div>
+
+  <div class="sec-head">
+    <h2>Routing</h2>
+    <div class="controls">
+      <span style="color:var(--dim);font-size:11px" id="routing-meta">no routing.json yet</span>
+    </div>
+  </div>
+  <div class="panel">
+    <div class="panel-body" id="routing-area">
+      <div class="empty">routing not yet generated — run <code>scripts/agent-bench</code></div>
+    </div>
+  </div>
+
+  <div class="footer">
+    Last refresh <span id="last-refresh">-</span> &middot; auto-refresh 2s
+    &middot; Source: data/agents/{active.json, log.jsonl, routing.json}
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script src="/console/static/console.js"></script>
+<script src="/console/static/agents.js"></script>
+<script>document.addEventListener('DOMContentLoaded', () => { initAgents(); initDiagnostics && initDiagnostics(); });</script>
+</body>
+</html>
