@@ -7,10 +7,12 @@ model, scores latency + format compliance, picks the best (model, max_tokens)
 per task, and writes data/agents/routing.json for the wrapper to pick up.
 
 Usage:
-    scripts/agent-bench               # full bench, default 3 trials
-    scripts/agent-bench --trials 5    # more trials = lower variance
-    scripts/agent-bench --quick       # 1 trial, default model only
-    scripts/agent-bench --task TASK   # bench only one task (debugging)
+    scripts/agent-bench                        # full bench, default 3 trials
+    scripts/agent-bench --trials 5             # more trials = lower variance
+    scripts/agent-bench --quick                # 1 trial, default model only
+    scripts/agent-bench --task TASK            # bench only one task (all models)
+    scripts/agent-bench --model gemma-4-e2b    # bench all tasks for one model (substring match)
+    scripts/agent-bench --task keywords --model gemma-4-e2b  # targeted single-cell re-bench
 
 Outputs:
     data/agents/bench-results.json    raw per-trial data
@@ -391,10 +393,12 @@ def aggregate(results: list[dict]) -> dict:
             {"output": r["output"], "stop": r.get("stop", "?")}
             for r in runs if not r["compliant"]
         ][:2]
+        warm_lats = lats[1:] if len(lats) > 1 else lats
         agg.setdefault(task, {})[model] = dict(
             trials=len(runs),
             pass_rate=round(passes / len(runs), 2),
             latency_p50=round(statistics.median(lats), 2),
+            latency_warm_p50=round(statistics.median(warm_lats), 2),
             latency_max=round(max(lats), 2),
             tokens_out_avg=round(statistics.mean(out_toks), 1),
             trunc_rate=round(truncs / len(runs), 2),
@@ -469,15 +473,17 @@ def render_report(agg: dict, routing: dict, started_at: str) -> str:
 
     out.append("## Per-task pass-rate × model")
     out.append("")
-    out.append("| Task | Model | Pass | p50 | max | out-avg/cap | util% | trunc% |")
-    out.append("|---|---|---:|---:|---:|---:|---:|---:|")
+    out.append("| Task | Model | Pass | p50 | warm_p50 | max | out-avg/cap | util% | trunc% |")
+    out.append("|---|---|---:|---:|---:|---:|---:|---:|---:|")
     for task in sorted(agg):
         max_tok = TASKS[task]["max_tokens"]
         for model, s in sorted(agg[task].items()):
             trunc_flag = " ⚠" if s["trunc_rate"] > 0 else ""
+            warm_flag = " ↓" if s["latency_warm_p50"] < s["latency_p50"] else ""
             out.append(
                 f"| {task} | {model} | {int(s['pass_rate']*100)}% "
-                f"| {s['latency_p50']}s | {s['latency_max']}s "
+                f"| {s['latency_p50']}s | {s['latency_warm_p50']}s{warm_flag}"
+                f"| {s['latency_max']}s "
                 f"| {s['tokens_out_avg']}/{max_tok} "
                 f"| {int(s['util_pct'])}% "
                 f"| {int(s['trunc_rate']*100)}%{trunc_flag} |"
@@ -558,6 +564,8 @@ def main():
                     help=f"reference model to bench (default: {DEFAULT_REFERENCE_MODEL})")
     ap.add_argument("--reference-only", action="store_true",
                     help="skip all oMLX models; bench only the reference model (no oMLX needed)")
+    ap.add_argument("--model", dest="model_filter",
+                    help="bench only models whose ID contains this substring (e.g. gemma-4-e2b)")
     args = ap.parse_args()
 
     if args.reference_only and args.no_reference:
@@ -594,6 +602,10 @@ def main():
             for m in available:
                 if m != DEFAULT_MODEL:
                     models_to_bench.append(m)
+        if args.model_filter:
+            models_to_bench = [m for m in models_to_bench if args.model_filter in m]
+            if not models_to_bench:
+                sys.exit(f"--model {args.model_filter!r}: no matching models in oMLX (available: {available})")
 
         SMALL_MODEL_GB = 10
         sizes = {m["id"]: m["estimated_size"] for m in status["models"]}
@@ -632,7 +644,7 @@ def main():
     # Uses existing Claude Code auth — no ANTHROPIC_API_KEY needed.
     # Skipped for --quick, --no-reference, or if claude CLI is not on PATH.
     ref_model = args.reference_model
-    if CLAUDE_CLI and not args.no_reference and not args.quick:
+    if CLAUDE_CLI and not args.no_reference and not args.quick and not args.model_filter:
         if _reference_already_benched(prev, ref_model) and not args.force:
             skipped.append(ref_model)
             print(f"\n=== {ref_model} (reference) — SKIP (already benched today; --force to override) ===",
@@ -644,25 +656,43 @@ def main():
                   f"{len(ref_tasks)} task(s) × {ref_trials} trial(s) ===", flush=True)
             all_results.extend(bench_model(ref_model, ref_tasks, ref_trials, reference=True))
         model_created[ref_model] = 0  # no omlx timestamp for Claude models
-    elif not CLAUDE_CLI and not args.no_reference and not args.quick:
+    elif not CLAUDE_CLI and not args.no_reference and not args.quick and not args.model_filter:
         print("\n  (reference model skipped — claude CLI not found on PATH)", flush=True)
 
     # Aggregate + decide
     agg = aggregate(all_results)
     routing = pick_routing(agg)
 
-    # --reference-only: no local models were benched so routing is empty.
-    # Preserve the existing routing.json instead of overwriting with {}.
+    # Merge new routing into existing for targeted runs (--task / --model / --reference-only).
+    # Full bench replaces everything; targeted runs update only their cells.
     routing_path = DATA_DIR / "routing.json"
-    if args.reference_only and not routing:
-        if routing_path.exists():
-            try:
-                routing = json.loads(routing_path.read_text()).get("routes", {})
+    is_targeted = args.task or args.model_filter or args.reference_only
+    if is_targeted and routing_path.exists():
+        try:
+            existing_routes = json.loads(routing_path.read_text()).get("routes", {})
+            merged = {**existing_routes, **routing}  # new cells overwrite; rest preserved
+            if args.reference_only and not routing:
+                merged = existing_routes
                 print("  (reference-only: keeping existing routing.json unchanged)", flush=True)
-            except Exception:
-                pass
+            routing = merged
+        except Exception:
+            pass
 
     # Persist
+    # For targeted runs (--task / --model), merge new results into existing bench-results.json
+    # so we don't lose full-bench data. Full bench always overwrites.
+    results_to_write = all_results
+    if is_targeted:
+        existing_path = DATA_DIR / "bench-results.json"
+        if existing_path.exists():
+            try:
+                prev_data = json.loads(existing_path.read_text())
+                benched_cells = {(r["task"], r["model"]) for r in all_results}
+                kept = [r for r in prev_data.get("results", [])
+                        if (r["task"], r["model"]) not in benched_cells]
+                results_to_write = kept + all_results
+            except Exception:
+                pass
     (DATA_DIR / "bench-results.json").write_text(json.dumps({
         "started_at": started,
         "started_epoch": int(time.time()),
@@ -670,7 +700,7 @@ def main():
         "trials_per_cell": 1 if args.quick else args.trials,
         "model_created": model_created,
         "skipped_models": skipped,
-        "results": all_results,
+        "results": results_to_write,
     }, indent=2) + "\n")
     (DATA_DIR / "routing.json").write_text(json.dumps({
         "generated_at": started,
