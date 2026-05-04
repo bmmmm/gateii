@@ -15,6 +15,9 @@ ngx.header["Content-Type"] = "application/json"
 -- on the Docker network; the IP allow-list in nginx.conf alone trusts every sidecar.
 local ADMIN_TOKEN = os.getenv("ADMIN_TOKEN") or ""
 local PROXY_MODE = os.getenv("PROXY_MODE") or "apikey"
+-- Shared secret openresty injects when forwarding to compose-ctl. Optional:
+-- if unset, compose-ctl falls back to "trust the docker network" (legacy).
+local INTERNAL_TOKEN = os.getenv("INTERNAL_TOKEN") or ""
 
 -- Per-component health-check timeouts (ms). Defaults tuned for LAN-local services.
 -- Override via env when hitting slower backends.
@@ -917,14 +920,15 @@ if uri == "/internal/admin/services"
         body = ngx.req.get_body_data() or ""
     end
 
+    local headers = { ["Content-Type"] = "application/json" }
+    if INTERNAL_TOKEN ~= "" then headers["X-Internal-Token"] = INTERNAL_TOKEN end
     local res, err = httpc:request_uri(target, {
-        method = method,
-        body = body,
-        headers = { ["Content-Type"] = "application/json" },
+        method = method, body = body, headers = headers,
     })
     if not res then
+        ngx.log(ngx.ERR, "compose-ctl forward services", sub_path, ": ", tostring(err))
         ngx.status = 502
-        ngx.say(cjson.encode({error = "compose-ctl unreachable: " .. (err or "unknown"),
+        ngx.say(cjson.encode({error = "upstream unavailable",
                               hint = "check that the gateii-compose-ctl container is running"}))
         return
     end
@@ -1175,34 +1179,46 @@ if uri == "/internal/admin/agents" and method == "GET" then
     return
 end
 
+-- Helper: forward an admin-authed request to the compose-ctl sidecar with
+-- the internal-shared-secret header. Generic 502 message on the wire (real
+-- error goes to ngx.log) so admin responses don't leak internal hostnames
+-- or lua-resty-http internals to anyone who got past the admin gate.
+local function compose_ctl_forward(path, method, body)
+    local http_ok, http = pcall(require, "resty.http")
+    if not http_ok then
+        ngx.status = 500; ngx.say(cjson.encode({error = "lua-resty-http unavailable"})); return
+    end
+    local httpc = http.new()
+    httpc:set_timeouts(1000, 1000, 5000)
+    local headers = { ["Content-Type"] = "application/json" }
+    if INTERNAL_TOKEN ~= "" then headers["X-Internal-Token"] = INTERNAL_TOKEN end
+    local res, err = httpc:request_uri("http://compose-ctl:8090" .. path, {
+        method = method, headers = headers, body = body,
+    })
+    if not res then
+        ngx.log(ngx.ERR, "compose-ctl forward ", method, " ", path, ": ", tostring(err))
+        ngx.status = 502
+        ngx.say(cjson.encode({error = "upstream unavailable"}))
+        return
+    end
+    ngx.status = res.status
+    ngx.header["Content-Type"] = res.headers["Content-Type"] or "application/json"
+    ngx.print(res.body)
+end
+
 -- /internal/admin/agents/idle-config — per-model idle-unload TTLs.
 -- GET returns current config, POST or PUT replaces it. Forwarded to
 -- compose-ctl which holds the writable mount + the watcher thread.
 -- Both POST/PUT accepted at the admin layer; always POSTed downstream
 -- (compose-ctl uses BaseHTTPRequestHandler which only implements GET/POST).
 if uri == "/internal/admin/agents/idle-config" and (method == "GET" or method == "PUT" or method == "POST") then
-    local http_ok, http = pcall(require, "resty.http")
-    if not http_ok then
-        ngx.status = 500; ngx.say(cjson.encode({error="lua-resty-http unavailable"})); return
-    end
-    local httpc = http.new()
-    httpc:set_timeouts(1000, 1000, 5000)
-    local opts = { method = (method == "GET" and "GET" or "POST"),
-                   headers = { ["Content-Type"] = "application/json" } }
+    local fwd_method = (method == "GET" and "GET" or "POST")
+    local fwd_body = nil
     if method ~= "GET" then
         ngx.req.read_body()
-        opts.body = ngx.req.get_body_data() or "{}"
+        fwd_body = ngx.req.get_body_data() or "{}"
     end
-    local res, err = httpc:request_uri("http://compose-ctl:8090/idle-config", opts)
-    if not res then
-        ngx.status = 502
-        ngx.say(cjson.encode({error = "compose-ctl unreachable: " .. tostring(err)}))
-        return
-    end
-    ngx.status = res.status
-    ngx.header["Content-Type"] = res.headers["Content-Type"] or "application/json"
-    ngx.print(res.body)
-    return
+    return compose_ctl_forward("/idle-config", fwd_method, fwd_body)
 end
 
 -- POST /internal/admin/agents/bench — fire scripts/agent-bench in the
@@ -1214,28 +1230,7 @@ if uri == "/internal/admin/agents/bench" and method == "POST" then
     local body = ngx.req.get_body_data() or "{}"
     local req_obj = (function() local ok, v = pcall(cjson.decode, body); return ok and v or {} end)()
     local force = req_obj.force == true
-    local http_ok, http = pcall(require, "resty.http")
-    if not http_ok then
-        ngx.status = 500
-        ngx.say(cjson.encode({error = "lua-resty-http unavailable"}))
-        return
-    end
-    local httpc = http.new()
-    httpc:set_timeouts(1000, 1000, 5000)
-    local res, err = httpc:request_uri("http://compose-ctl:8090/run-bench", {
-        method  = "POST",
-        headers = { ["Content-Type"] = "application/json" },
-        body    = cjson.encode({force = force}),
-    })
-    if not res then
-        ngx.status = 502
-        ngx.say(cjson.encode({error = "compose-ctl unreachable: " .. tostring(err)}))
-        return
-    end
-    ngx.status = res.status
-    ngx.header["Content-Type"] = res.headers["Content-Type"] or "application/json"
-    ngx.print(res.body)
-    return
+    return compose_ctl_forward("/run-bench", "POST", cjson.encode({force = force}))
 end
 
 -- POST /internal/admin/models — load/unload an omlx model on demand
@@ -1276,8 +1271,9 @@ if uri == "/internal/admin/models" and method == "POST" then
         headers = { ["Authorization"] = "Bearer " .. omlx_key },
     })
     if not res then
+        ngx.log(ngx.ERR, "omlx /v1/models/", model, "/", action, ": ", tostring(req_err))
         ngx.status = 502
-        ngx.say(cjson.encode({error = "omlx unreachable: " .. (req_err or "?")}))
+        ngx.say(cjson.encode({error = "upstream unavailable"}))
         return
     end
     ngx.status = res.status

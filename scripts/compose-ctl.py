@@ -314,6 +314,9 @@ def do_action(service, action):
     }
 
 
+INTERNAL_TOKEN = os.environ.get("INTERNAL_TOKEN", "")
+
+
 class Handler(BaseHTTPRequestHandler):
     server_version = "compose-ctl/1.0"
 
@@ -325,17 +328,34 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(payload)
 
+    def _auth_ok(self) -> bool:
+        """Defense-in-depth: only accept callers carrying X-Internal-Token
+        matching env INTERNAL_TOKEN. The proxy injects this header when
+        forwarding /internal/admin/services|agents/bench|agents/idle-config.
+        Without an INTERNAL_TOKEN set we keep the legacy "trust the docker
+        network" behavior so existing setups don't break — but we log a
+        WARN once at startup. /health is always allowed so probes work
+        regardless of auth state.
+        """
+        if not INTERNAL_TOKEN:
+            return True   # legacy: no token configured, accept all
+        return self.headers.get("X-Internal-Token", "") == INTERNAL_TOKEN
+
     def do_GET(self):
         path = urlparse(self.path).path.rstrip("/") or "/"
-        if path == "/services":
-            return self._reply(200, list_services())
         if path == "/health":
             return self._reply(200, {"ok": True, "project": PROJECT})
+        if not self._auth_ok():
+            return self._reply(401, {"error": "missing/invalid X-Internal-Token"})
+        if path == "/services":
+            return self._reply(200, list_services())
         if path == "/idle-config":
             return self._reply(*get_idle_config())
         return self._reply(404, {"error": f"Not found: {path}"})
 
     def do_POST(self):
+        if not self._auth_ok():
+            return self._reply(401, {"error": "missing/invalid X-Internal-Token"})
         path = urlparse(self.path).path.rstrip("/")
         # /services/<name>/<action>
         parts = path.split("/")
@@ -378,6 +398,10 @@ def main():
     # main process (sane shutdown via SIGTERM in compose stop).
     threading.Thread(target=_idle_watcher_loop, daemon=True).start()
     print(f"compose-ctl: idle watcher started (tick={IDLE_TICK_SECONDS}s)", flush=True)
+    if not INTERNAL_TOKEN:
+        print("compose-ctl: WARN — INTERNAL_TOKEN not set; accepting all callers "
+              "on the docker network. Set INTERNAL_TOKEN in .env for defense in depth.",
+              flush=True)
     HTTPServer(("0.0.0.0", port), Handler).serve_forever()
 
 
