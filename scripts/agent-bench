@@ -30,6 +30,7 @@ import sys
 import time
 import urllib.request
 import urllib.error
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
 ROOT      = Path(__file__).resolve().parent.parent
@@ -567,18 +568,17 @@ def render_calibration_report(results: list[dict], started_at: str) -> str:
             ctx_w  = ctx_windows.get(model, 32768)
             ctx_pct = round((p50_in + p50) / ctx_w * 100, 1) if ctx_w else 0
 
-            if trunc > 0:
+            if trunc > 0 or maxo > configured:
+                # Model wanted more tokens than the cap allows
                 rec = math.ceil(maxo * 1.5 / 10) * 10
-                advice = f"⚠ TRUNC {trunc}/{len(real)} — bump to ≥{rec}"
-            elif ratio > 0.8:
-                rec = math.ceil(p50 * 1.5 / 10) * 10
-                advice = f"⚠ tight ({int(ratio*100)}% util) — consider {rec}"
+                advice = f"⚠ cap too low (model used {maxo}>{configured}) — bump to {rec}"
             elif ratio < 0.2:
                 rec = max(30, math.ceil(p50 * 2.0 / 10) * 10)
                 advice = f"✓ generous ({int(ratio*100)}% util) — could reduce to {rec}"
             else:
                 rec = configured
-                advice = f"✓ OK ({int(ratio*100)}% util)"
+                note = f" (stops naturally at cap)" if ratio > 0.85 else ""
+                advice = f"✓ OK ({int(ratio*100)}% util{note})"
 
             out.append(f"| {task} | {configured} | {model} | {p50_in} | {p50} | {maxo} | {trunc}/{len(real)} | {ctx_pct}% | {advice} |")
             # Track the highest recommendation across models for this task
@@ -637,10 +637,54 @@ def main():
     ap.add_argument("--calibrate", action="store_true",
                     help="run each task with max_tokens=1024 to measure real output length; "
                          "writes bench-calibration.json + prints recommendations, skips routing update")
+    ap.add_argument("--reference-trials", type=int, default=1,
+                    help="number of trials for the reference model (default: 1; reference is "
+                         "consistent and external — more trials waste API budget)")
+    ap.add_argument("--analyze", action="store_true",
+                    help="offline: read bench-results.json and re-run analysis + routing without "
+                         "calling any models; useful for post-hoc re-scoring after tasks.json changes")
     args = ap.parse_args()
 
     if args.reference_only and args.no_reference:
         sys.exit("--reference-only and --no-reference are mutually exclusive")
+
+    # --analyze: offline re-score of existing bench-results.json, no model calls
+    if args.analyze:
+        res_path = DATA_DIR / "bench-results.json"
+        if not res_path.exists():
+            sys.exit(f"--analyze: {res_path} not found; run bench first")
+        started = time.strftime("%Y-%m-%dT%H:%M:%S")
+        print(f"agent-bench • {started} • --analyze (offline, no model calls)", flush=True)
+        raw = json.loads(res_path.read_text())
+        all_results = raw.get("results", [])
+        # Re-score with current tasks.json compliant patterns (catches pattern fixes)
+        for r in all_results:
+            t = TASKS.get(r["task"])
+            if not t or r.get("stop") == "skipped":
+                continue
+            if t.get("scoring") == "tool_use_name":
+                continue  # tool_use scoring requires raw content blocks, skip re-scoring
+            text = r.get("output", "")
+            if t.get("strip_fences"):
+                text = _strip_fences(text)
+            r["compliant"] = bool(t["compliant"].match(text.strip()))
+        agg = aggregate(all_results)
+        routing = pick_routing(agg)
+        routing_path = DATA_DIR / "routing.json"
+        if routing_path.exists():
+            existing = json.loads(routing_path.read_text()).get("routes", {})
+            routing = {**existing, **routing}
+        (DATA_DIR / "routing.json").write_text(json.dumps({
+            "generated_at": started,
+            "default_model": DEFAULT_MODEL,
+            "routes": routing,
+        }, indent=2) + "\n")
+        report = render_report(agg, routing, started)
+        (DATA_DIR / "bench-report.md").write_text(report)
+        print("\n" + report, flush=True)
+        print(f"\nWrote: routing.json, bench-report.md  (bench-results.json unchanged)", flush=True)
+        print("EXIT: 0", flush=True)
+        return
 
     if not args.reference_only and not KEY:
         sys.exit("OMLX_API_KEY not in env or .env")
@@ -716,21 +760,63 @@ def main():
 
     # Reference model bench (Claude Haiku via `claude` CLI).
     # Uses existing Claude Code auth — no ANTHROPIC_API_KEY needed.
-    # Skipped for --quick, --no-reference, or if claude CLI is not on PATH.
+    # Skipped for --quick, --no-reference, --model, --calibrate, or if claude CLI not on PATH.
+    # Runs in parallel (ThreadPoolExecutor) since it's external — no GPU contention.
+    # Default 1 trial (reference is consistent; extra trials waste API budget).
     ref_model = args.reference_model
-    if CLAUDE_CLI and not args.no_reference and not args.quick and not args.model_filter:
+    if CLAUDE_CLI and not args.no_reference and not args.quick and not args.model_filter and not args.calibrate:
         if _reference_already_benched(prev, ref_model) and not args.force:
             skipped.append(ref_model)
             print(f"\n=== {ref_model} (reference) — SKIP (already benched today; --force to override) ===",
                   flush=True)
         else:
-            ref_tasks = tasks_full  # reference always runs full suite
-            ref_trials = args.trials
+            ref_tasks = tasks_full
+            ref_trials = args.reference_trials
             print(f"\n=== {ref_model} (reference, via claude CLI) — "
-                  f"{len(ref_tasks)} task(s) × {ref_trials} trial(s) ===", flush=True)
-            all_results.extend(bench_model(ref_model, ref_tasks, ref_trials, reference=True))
+                  f"{len(ref_tasks)} task(s) × {ref_trials} trial(s) [parallel] ===", flush=True)
+            # Collect (task, trial_index) tuples for parallel dispatch
+            ref_work = [(task, i + 1) for task in ref_tasks for i in range(ref_trials)]
+            ref_raw: dict[tuple, dict] = {}
+            with ThreadPoolExecutor(max_workers=8) as pool:
+                futures = {
+                    pool.submit(call_via_claude_code, ref_model, task, trial, ref_trials): (task, trial)
+                    for task, trial in ref_work
+                }
+                for future in as_completed(futures):
+                    key = futures[future]
+                    try:
+                        ref_raw[key] = future.result()
+                    except Exception as exc:
+                        ref_raw[key] = dict(
+                            task=key[0], model=ref_model, trial=key[1],
+                            latency_s=0, http=-3, stop="error",
+                            tokens_in=0, tokens_out=0, compliant=False,
+                            output=str(exc)[:200],
+                        )
+            # Emit per-trial progress lines in task order (parallel ran out-of-order)
+            for task in ref_tasks:
+                for trial in range(1, ref_trials + 1):
+                    r = ref_raw.get((task, trial), {})
+                    if r.get("stop") == "skipped":
+                        print(f"    S {task:22s} trial {trial}/{ref_trials}  (skipped)", flush=True)
+                        continue
+                    mark  = "✓" if r.get("compliant") else "✗"
+                    flags = " TRUNC" if r.get("stop") == "length" else ""
+                    if r.get("http", 200) not in (200, -2):
+                        flags += f" ERR={r.get('http')}"
+                    print(f"    {mark} {task:22s} trial {trial}/{ref_trials}  {r.get('latency_s', 0):>5.2f}s  out={r.get('tokens_out', 0)}{flags}",
+                          flush=True)
+                # Per-task summary
+                task_runs = [ref_raw[(task, t)] for t in range(1, ref_trials + 1)
+                             if (task, t) in ref_raw and ref_raw[(task, t)].get("stop") != "skipped"]
+                if task_runs:
+                    pc = sum(1 for r in task_runs if r.get("compliant"))
+                    if pc < len(task_runs):
+                        fp = next((r["output"][:100] for r in task_runs if not r.get("compliant")), "")
+                        print(f"      → {pc}/{len(task_runs)} passed  first-fail: {fp!r}", flush=True)
+            all_results.extend(ref_raw.values())
         model_created[ref_model] = 0  # no omlx timestamp for Claude models
-    elif not CLAUDE_CLI and not args.no_reference and not args.quick and not args.model_filter:
+    elif not CLAUDE_CLI and not args.no_reference and not args.quick and not args.model_filter and not args.calibrate:
         print("\n  (reference model skipped — claude CLI not found on PATH)", flush=True)
 
     # Calibration path: emit recommendations, skip routing + bench-results update
@@ -780,7 +866,13 @@ def main():
                 results_to_write = kept + all_results
             except Exception:
                 pass
-    (DATA_DIR / "bench-results.json").write_text(json.dumps({
+    results_path = DATA_DIR / "bench-results.json"
+    if results_path.exists():  # keep one rolling backup before every overwrite
+        try:
+            results_path.replace(DATA_DIR / "bench-results.prev.json")
+        except Exception:
+            pass
+    results_path.write_text(json.dumps({
         "started_at": started,
         "started_epoch": int(time.time()),
         "host": OMLX_URL,

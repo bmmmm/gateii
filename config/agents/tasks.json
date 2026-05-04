@@ -63,7 +63,7 @@
       "compliant": "(?s)^\\s*1[\\.\\)].*find"
     },
     "code-gen-short": {
-      "max_tokens": 250,
+      "max_tokens": 400,
       "system": "Write code only. Your response MUST begin with `def`. No markdown code fences, no backticks, no explanation, no preamble of any kind.",
       "strip_fences": true,
       "bench_prompt": "Write a Python function `parse_size(s: str) -> int` that converts strings like '5KB', '2.5MB', '1.5GB' to bytes.",
