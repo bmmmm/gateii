@@ -44,6 +44,47 @@ def _run(cmd):
     )
 
 
+# scripts/agent-bench is a Python script and writes to data/agents/. We don't
+# wait for it — it can take 5+ minutes — so we spawn detached. Concurrent calls
+# return 409 if a bench is already running (cheap check via active.json's task
+# field starting with "bench:").
+BENCH_SCRIPT = "/workspace/scripts/agent-bench"
+ACTIVE_FILE  = "/workspace/data/agents/active.json"
+
+
+def _bench_in_flight() -> bool:
+    try:
+        with open(ACTIVE_FILE) as f:
+            d = json.load(f)
+        return isinstance(d.get("task"), str) and d["task"].startswith("bench:")
+    except Exception:
+        return False
+
+
+def run_bench(force: bool = False):
+    if not os.path.exists(BENCH_SCRIPT):
+        return 500, {"error": f"bench script not found at {BENCH_SCRIPT}"}
+    if _bench_in_flight():
+        return 409, {"error": "bench already in progress (see active.json)"}
+    args = [BENCH_SCRIPT]
+    if force:
+        args.append("--force")
+    try:
+        # Detach: setsid so the child survives our HTTP response cycle, and
+        # discard its stdio so we don't pin a pipe buffer.
+        subprocess.Popen(
+            args,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            start_new_session=True,
+            cwd="/workspace",
+        )
+    except Exception as e:
+        return 500, {"error": f"spawn failed: {e}"}
+    return 202, {"status": "started", "force": force}
+
+
 def list_services():
     """All containers belonging to this compose project (running OR stopped),
     plus any configured services that have no container yet."""
@@ -178,6 +219,17 @@ class Handler(BaseHTTPRequestHandler):
         if len(parts) == 4 and parts[1] == "services":
             code, body = do_action(parts[2], parts[3])
             return self._reply(code, body)
+        # /run-bench — fire scripts/agent-bench in the background. Returns
+        # immediately; progress is visible via active.json + log.jsonl, the
+        # final report appears in data/agents/bench-report.md when done.
+        # Body: {"force": true} to bypass --smart cache; otherwise default.
+        if path == "/run-bench":
+            length = int(self.headers.get("Content-Length", "0") or "0")
+            try:
+                req = json.loads(self.rfile.read(length).decode() or "{}")
+            except Exception:
+                req = {}
+            return self._reply(*run_bench(force=bool(req.get("force"))))
         return self._reply(404, {"error": f"Not found: {self.path}"})
 
     def log_message(self, fmt, *args):

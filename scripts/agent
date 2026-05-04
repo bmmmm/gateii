@@ -167,6 +167,26 @@ task_config() {
             MAX_TOKENS=250
             SYSTEM='Write code only, no explanation, no markdown fences. Just the raw code.'
             ;;
+        tldr)
+            MAX_TOKENS=80
+            SYSTEM='Summarize the input in ONE or TWO sentences. No bullet list. No preamble. Output only the summary.'
+            ;;
+        slug)
+            MAX_TOKENS=30
+            SYSTEM='Convert the input title to a URL-safe slug (lowercase, hyphens, no special chars, max 50 chars). Output ONLY the slug.'
+            ;;
+        regex)
+            MAX_TOKENS=50
+            SYSTEM='Convert the natural-language description to a single regex pattern (PCRE-compatible, anchored). Output ONLY the regex on one line, no surrounding slashes, no explanation.'
+            ;;
+        error-explain)
+            MAX_TOKENS=60
+            SYSTEM='Explain in ONE short sentence what went wrong. Plain English, no jargon, no bullet list. Output only the sentence.'
+            ;;
+        keywords)
+            MAX_TOKENS=80
+            SYSTEM='Extract the top 5 keywords from the input. Output ONLY a JSON array of strings, e.g. ["foo","bar","baz"]. No explanation.'
+            ;;
         *)
             return 1
             ;;
@@ -186,7 +206,12 @@ Available tasks:
   refactor-suggestion   code block → 1 specific refactor (what + why)
   ambiguity-check       request → answer or "AMBIGUOUS: ..."
   unix-recipe           task description → 3 shell command suggestions
-  code-gen-short        spec → small function (≤400 tokens)
+  code-gen-short        spec → small function (≤250 tokens)
+  tldr                  paragraph → one or two-sentence summary
+  slug                  title → URL-safe slug (kebab-case, ≤50 chars)
+  regex                 NL description → single PCRE regex pattern
+  error-explain         stack trace / error msg → one-sentence cause
+  keywords              text → JSON array of top 5 keywords
 
 Usage: echo "<input>" | scripts/agent run <task>
 EOF
@@ -352,10 +377,45 @@ cmd_list() {
     fi
 }
 
+cmd_count_tokens() {
+    # POST /v1/messages/count_tokens — no model invocation, just the tokenizer.
+    # Uses default model unless --model passed. Reads stdin as the user content.
+    local model="$MODEL"
+    if [ "${1:-}" = "--model" ] && [ -n "${2:-}" ]; then
+        model="$2"; shift 2
+    fi
+    if [ -t 0 ]; then
+        echo "scripts/agent count-tokens: no input on stdin" >&2
+        echo "usage: cat file.md | scripts/agent count-tokens [--model <id>]" >&2
+        exit 2
+    fi
+    local input key body resp http_code body_only count
+    input=$(cat)
+    key=$(resolve_key)
+    body=$($JQ -n --arg model "$model" --arg user "$input" \
+        '{model:$model, messages:[{role:"user", content:$user}]}')
+    resp=$(/usr/bin/curl -s --max-time "$TIMEOUT" \
+        -w "\n__HTTP__%{http_code}" \
+        -X POST "$GATEII_URL/v1/messages/count_tokens" \
+        -H "Content-Type: application/json" \
+        -H "x-api-key: $key" \
+        -H "x-provider: omlx" \
+        -d "$body")
+    http_code=$(printf '%s' "$resp" | /usr/bin/grep -oE '__HTTP__[0-9]+$' | /usr/bin/grep -oE '[0-9]+$' || echo "?")
+    body_only=$(printf '%s' "$resp" | /usr/bin/sed 's/__HTTP__[0-9]*$//')
+    if [ "$http_code" != "200" ]; then
+        echo "[agent] HTTP $http_code: $body_only" >&2
+        exit 5
+    fi
+    count=$(printf '%s' "$body_only" | $JQ -r '.input_tokens // .count // 0')
+    printf '%s\n' "$count"
+}
+
 case "${1:-}" in
-    run)        shift; cmd_run "$@" ;;
-    tasks)      cmd_tasks ;;
-    list)       cmd_list ;;
-    -h|--help|"") cmd_tasks ;;
-    *)          echo "unknown subcommand: $1 (try: tasks)" >&2; exit 2 ;;
+    run)            shift; cmd_run "$@" ;;
+    tasks)          cmd_tasks ;;
+    list)           cmd_list ;;
+    count-tokens)   shift; cmd_count_tokens "$@" ;;
+    -h|--help|"")   cmd_tasks ;;
+    *)              echo "unknown subcommand: $1 (try: tasks)" >&2; exit 2 ;;
 esac
