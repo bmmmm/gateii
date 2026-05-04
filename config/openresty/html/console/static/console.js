@@ -6,27 +6,99 @@ const $ = id => document.getElementById(id);
 const esc = s => String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
 
 // Fetch wrapper: credentials:include for cookie-based admin auth, 10s timeout,
-// auto-prompt for token on 401 and retry once.
+// auto-prompt-for-token on 401 (via in-page modal — replaces the old
+// blocking prompt() that broke headless flows and looked unstyled).
+//
+// Also exposes `window._initialAuth` — a promise that resolves once the
+// `?token=…` URL-param login (if any) has finished. Each page's init*()
+// awaits this before kicking off polling, so we never race a first fetch
+// against an in-flight initial login.
 (() => {
-  let _loginInProgress = false;
-  async function _doLogin() {
-    if (_loginInProgress) return;
-    _loginInProgress = true;
-    const token = prompt('Admin token required:');
-    if (!token) { _loginInProgress = false; return; }
-    try {
-      const r = await window._rawFetch('/internal/admin/login', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ token }),
-        credentials: 'include',
-      });
-      if (!r.ok) alert('Login failed — check token');
-    } catch (e) {
-      alert('Login error: ' + e.message);
-    }
-    _loginInProgress = false;
+  // --- Login modal ---------------------------------------------------------
+  function _ensureAuthModal() {
+    if (document.getElementById('auth-overlay')) return;
+    const overlay = document.createElement('div');
+    overlay.id = 'auth-overlay';
+    overlay.className = 'diag-overlay';
+    overlay.innerHTML = `<div class="diag-modal" style="max-width:420px" onclick="event.stopPropagation()">
+      <div class="diag-head"><h3>Admin Login</h3></div>
+      <div class="diag-body" style="padding:14px 16px">
+        <p style="margin-bottom:10px;font-size:13px;color:var(--dim)">Admin token required for this console.</p>
+        <input type="password" id="auth-token-input" class="input" style="width:100%" autocomplete="off" placeholder="paste ADMIN_TOKEN…">
+        <p id="auth-error" style="color:var(--err);font-size:12px;min-height:1.4em;margin-top:6px"></p>
+        <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:6px">
+          <button class="btn btn-danger" id="auth-cancel">Cancel</button>
+          <button class="btn btn-primary" id="auth-submit">Login</button>
+        </div>
+      </div>
+    </div>`;
+    document.body.appendChild(overlay);
   }
+
+  function _showAuthModal() {
+    _ensureAuthModal();
+    return new Promise(resolve => {
+      const overlay = document.getElementById('auth-overlay');
+      const input = document.getElementById('auth-token-input');
+      const errEl = document.getElementById('auth-error');
+      const submitBtn = document.getElementById('auth-submit');
+      const cancelBtn = document.getElementById('auth-cancel');
+      errEl.textContent = '';
+      input.value = '';
+      overlay.classList.add('show');
+      // Defer focus until after the layout settles so the field accepts input
+      setTimeout(() => input.focus(), 50);
+      const cleanup = () => {
+        overlay.classList.remove('show');
+        submitBtn.onclick = cancelBtn.onclick = null;
+        input.onkeydown = null;
+      };
+      const submit = () => {
+        const v = input.value.trim();
+        if (!v) { errEl.textContent = 'Token cannot be empty'; return; }
+        cleanup(); resolve(v);
+      };
+      const cancel = () => { cleanup(); resolve(null); };
+      submitBtn.onclick = submit;
+      cancelBtn.onclick = cancel;
+      input.onkeydown = e => {
+        if (e.key === 'Enter') submit();
+        if (e.key === 'Escape') cancel();
+      };
+    });
+  }
+
+  // Coalesce concurrent 401s onto a single in-flight login attempt so we
+  // don't pop up four overlapping modals when four polls fail simultaneously.
+  let _loginPromise = null;
+  async function _doLogin() {
+    if (_loginPromise) return _loginPromise;
+    _loginPromise = (async () => {
+      try {
+        const token = await _showAuthModal();
+        if (!token) return false;
+        const r = await window._rawFetch('/internal/admin/login', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ token }),
+          credentials: 'include',
+        });
+        if (!r.ok) {
+          if (typeof toast === 'function') toast('Login failed — check token', true);
+          return false;
+        }
+        return true;
+      } catch (e) {
+        if (typeof toast === 'function') toast('Login error: ' + e.message, true);
+        return false;
+      } finally {
+        _loginPromise = null;
+      }
+    })();
+    return _loginPromise;
+  }
+
+  // --- Fetch wrapper -------------------------------------------------------
   window._rawFetch = window.fetch.bind(window);
   window.fetch = (url, opts) => {
     opts = opts || {};
@@ -51,23 +123,35 @@ const esc = s => String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>
       throw err;
     });
   };
-  // Auto-login from ?token= URL parameter (used by headless tests; token stripped from URL after use)
-  const _urlToken = new URLSearchParams(window.location.search).get('token');
-  if (_urlToken) {
-    window._rawFetch('/internal/admin/login', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ token: _urlToken }),
-      credentials: 'include',
-    }).then(r => {
+
+  // --- Initial auth (URL-param flow) --------------------------------------
+  // Resolves to true on a successful URL-token login, false otherwise.
+  // Pages await this in their init*() before any first fetch so we never
+  // 401 into a modal while a valid URL-token is still mid-flight.
+  window._initialAuth = (async () => {
+    const urlToken = new URLSearchParams(window.location.search).get('token');
+    if (!urlToken) return false;
+    try {
+      const r = await window._rawFetch('/internal/admin/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ token: urlToken }),
+        credentials: 'include',
+      });
       if (r.ok) {
-        // Remove token from URL without reload so it doesn't persist in browser history
+        // Strip the token from the URL so it doesn't persist in history
         const url = new URL(window.location.href);
         url.searchParams.delete('token');
         window.history.replaceState({}, '', url.toString());
+        return true;
       }
-    });
-  }
+      if (typeof toast === 'function') toast('URL token rejected by server', true);
+      return false;
+    } catch (e) {
+      if (typeof toast === 'function') toast('Initial auth failed: ' + e.message, true);
+      return false;
+    }
+  })();
 })();
 
 function toast(msg, isError) {
@@ -77,6 +161,64 @@ function toast(msg, isError) {
   t.className = 'toast show' + (isError ? ' error' : '');
   clearTimeout(t._tid);
   t._tid = setTimeout(() => t.className = 'toast', 3000);
+}
+
+// Shared tab navigation — single source of truth so adding/renaming a
+// tab is a one-line change instead of four. Each page mounts an empty
+// <nav class="tabs" id="tabs-mount" data-active="overview"></nav> and
+// console.js renderTabs() fills it. Active tab comes from data-active.
+const _TAB_HTML = `
+    <a href="/console/" class="tab" data-tab="overview">Overview</a>
+    <a href="/console/compare" class="tab" data-tab="compare">Compare</a>
+    <a href="/console/git" class="tab" data-tab="git">Git</a>
+    <a href="/console/agents" class="tab" data-tab="agents">Agents</a>
+    <span class="ext">
+      <a href="http://localhost:3001/d/gateii-cost" target="_blank">Cost</a>
+      <a href="http://localhost:3001/d/gateii-eff" target="_blank">Efficiency</a>
+      <a href="http://localhost:3001/d/gateii-ops" target="_blank">Ops</a>
+      <a href="http://localhost:9090" target="_blank">Prometheus</a>
+      <a href="/metrics" target="_blank">Raw</a>
+      <button class="btn btn-blue" id="btn-diag" style="padding:4px 10px;font-size:11px">Diagnostics</button>
+      <span class="mode-tag">Mode: <b id="mode-display">-</b></span>
+    </span>`;
+
+function renderTabs() {
+  const mount = document.getElementById('tabs-mount');
+  if (!mount) return;
+  mount.innerHTML = _TAB_HTML;
+  const active = mount.dataset.active;
+  if (active) {
+    const tab = mount.querySelector(`[data-tab="${active}"]`);
+    if (tab) tab.classList.add('active');
+  }
+}
+
+// setInterval replacement that pauses while the tab is hidden and fires
+// once on resume (so a returning user sees fresh data immediately, not
+// after another full interval). Replaces raw setInterval in all four
+// page scripts — saves background-tab fetches without changing the
+// foreground feel.
+function pausableInterval(fn, ms) {
+  let timer = null;
+  const start = () => {
+    if (timer != null) return;
+    timer = setInterval(fn, ms);
+  };
+  const stop = () => {
+    if (timer == null) return;
+    clearInterval(timer); timer = null;
+  };
+  document.addEventListener('visibilitychange', () => {
+    if (document.hidden) {
+      stop();
+    } else {
+      // Catch up immediately on resume, then resume the cadence
+      try { fn(); } catch (e) { console.warn('pausableInterval fn threw:', e); }
+      start();
+    }
+  });
+  start();
+  return { stop, start };
 }
 
 // Wraps an async action so the triggering button (or any element with
