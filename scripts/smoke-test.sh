@@ -106,6 +106,16 @@ if [ "$SANDBOX_MODE" -eq 0 ]; then
   else
     fail "/metrics — gateii_cost_dollars_total missing"
   fi
+  if echo "$METRICS" | grep -q 'gateii_shared_dict_free_bytes{dict="or_cache"}'; then
+    ok "/metrics — or_cache shared dict present"
+  else
+    fail "/metrics — or_cache shared dict missing (force-recreate openresty needed?)"
+  fi
+  if echo "$METRICS" | grep -q 'gateii_shared_dict_free_bytes{dict="rl_events"}'; then
+    ok "/metrics — rl_events shared dict present"
+  else
+    fail "/metrics — rl_events shared dict missing (force-recreate openresty needed?)"
+  fi
 else
   echo -e "  ${DIM}⊘  network tests skipped${NC}"
 fi
@@ -198,6 +208,63 @@ if [ -n "${ADMIN_TOKEN:-}" ] && [ "$SANDBOX_MODE" -eq 0 ]; then
   else
     fail "/diagnostics?include=plugins — scope filter not honored"
     info "got: $(echo "$SCOPED" | head -c 200)"
+  fi
+
+  echo ""
+fi
+
+# --- Admin session auth (cookie roundtrip) ---
+# Covers the full login → Set-Cookie → cookie-authenticated request → logout flow
+# used by the browser console. This is the path that was broken by the Lua {32,128}
+# quantifier bug (commit f1d50b3) which silently matched nothing, causing all cookie
+# auth to return 401 while X-Admin-Token continued to work.
+if [ -n "${ADMIN_TOKEN:-}" ] && [ "$SANDBOX_MODE" -eq 0 ]; then
+  echo -e "${BOLD}Admin session auth${NC}"
+  ADMIN_URL="${PROXY}/internal/admin"
+
+  LOGIN_RESP=$(curl -si --max-time 5 -X POST \
+    -H "Content-Type: application/json" \
+    -d "{\"token\":\"$ADMIN_TOKEN\"}" \
+    "$ADMIN_URL/login" 2>/dev/null || echo "")
+  LOGIN_STATUS=$(echo "$LOGIN_RESP" | head -1 | grep -oE "[0-9]{3}" | head -1)
+  SESSION_COOKIE=$(echo "$LOGIN_RESP" | grep -i "set-cookie:" | grep -oE "admin_session=[a-f0-9]+" | head -1)
+
+  if [ "$LOGIN_STATUS" = "200" ] && [ -n "$SESSION_COOKIE" ]; then
+    ok "login — 200 + session cookie issued"
+
+    # Cookie must authenticate a subsequent admin request
+    COOKIE_CHECK=$(curl -sf --max-time 5 \
+      -H "Cookie: $SESSION_COOKIE" \
+      "$ADMIN_URL/overview" 2>/dev/null || echo "")
+    if [ -n "$COOKIE_CHECK" ] && echo "$COOKIE_CHECK" | jq empty >/dev/null 2>&1; then
+      ok "cookie auth — /overview returns valid JSON"
+    else
+      fail "cookie auth — /overview returned invalid/empty response (cookie not accepted?)"
+      info "got: $(echo "$COOKIE_CHECK" | head -c 200)"
+    fi
+
+    # Logout must invalidate the session
+    LOGOUT_STATUS=$(curl -si --max-time 5 -X POST \
+      -H "Cookie: $SESSION_COOKIE" \
+      "$ADMIN_URL/logout" 2>/dev/null | head -1 | grep -oE "[0-9]{3}" | head -1 || echo "000")
+    if [ "$LOGOUT_STATUS" = "200" ]; then
+      ok "logout — 200"
+
+      # Same cookie must be rejected after logout (session deleted from shared dict)
+      POST_LOGOUT=$(curl -s --max-time 5 -o /dev/null -w "%{http_code}" \
+        -H "Cookie: $SESSION_COOKIE" \
+        "$ADMIN_URL/overview" 2>/dev/null || echo "000")
+      if [ "$POST_LOGOUT" = "401" ]; then
+        ok "post-logout cookie — correctly rejected (401)"
+      else
+        fail "post-logout cookie — expected 401, got $POST_LOGOUT"
+      fi
+    else
+      fail "logout — expected 200, got ${LOGOUT_STATUS:-no response}"
+    fi
+  else
+    fail "login — expected 200 + Set-Cookie, got status=${LOGIN_STATUS:-no response} cookie=${SESSION_COOKIE:-none}"
+    info "login response snippet: $(echo "$LOGIN_RESP" | head -5)"
   fi
 
   echo ""
