@@ -31,6 +31,7 @@ from pathlib import Path
 
 ROOT      = Path(__file__).resolve().parent.parent
 DATA_DIR  = ROOT / "data" / "agents"
+ACTIVE    = DATA_DIR / "active.json"      # console reads this for the "running" card
 OMLX_URL  = os.environ.get("OMLX_URL", "http://localhost:8000")
 RESERVE_GB = 4   # keep this much headroom on top of omlx's own max_model_memory
 
@@ -179,8 +180,35 @@ def ensure_model(model_id: str, status: dict) -> dict:
 
 
 # ─── benchmark ──────────────────────────────────────────────────────────────
-def call(model: str, task_name: str, trial: int) -> dict:
+def _write_active(task_name: str, model: str, trial: int, max_trials: int) -> None:
+    """Make the bench visible on /console/agents while it runs.
+    Uses 'bench:' prefix so it's distinguishable from real wrapper runs.
+    """
+    DATA_DIR.mkdir(parents=True, exist_ok=True)
+    payload = {
+        "task": f"bench:{task_name} ({trial}/{max_trials})",
+        "model": model,
+        "max_tokens": TASKS[task_name]["max_tokens"],
+        "started_at": time.strftime("%Y-%m-%dT%H:%M:%S"),
+        "started_epoch": int(time.time()),
+        "pid": str(os.getpid()),
+        "prompt_preview": TASKS[task_name]["prompt"][:80].replace("\n", " "),
+        "parent": {"cwd": str(ROOT), "ppid": str(os.getppid()),
+                   "parent_cmd": "scripts/agent-bench", "session_id": ""},
+    }
+    tmp = ACTIVE.with_suffix(".json.tmp")
+    tmp.write_text(json.dumps(payload))
+    tmp.replace(ACTIVE)
+
+
+def _clear_active() -> None:
+    try: ACTIVE.unlink()
+    except FileNotFoundError: pass
+
+
+def call(model: str, task_name: str, trial: int, max_trials: int = 3) -> dict:
     t = TASKS[task_name]
+    _write_active(task_name, model, trial, max_trials)
     body = {
         "model": model,
         "max_tokens": t["max_tokens"],
@@ -220,7 +248,7 @@ def bench_model(model: str, tasks: list[str], trials: int) -> list[dict]:
     for task in tasks:
         runs = []
         for i in range(trials):
-            r = call(model, task, i + 1)
+            r = call(model, task, i + 1, trials)
             runs.append(r)
             mark = "✓" if r["compliant"] else "✗"
             print(f"    {mark} {task:22s} trial {i+1}/{trials}  {r['latency_s']:>5.2f}s  out={r['tokens_out']}", flush=True)
@@ -370,4 +398,7 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    finally:
+        _clear_active()  # don't leave a stale "running" indicator

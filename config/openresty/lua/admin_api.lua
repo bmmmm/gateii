@@ -997,6 +997,51 @@ if uri == "/internal/admin/agents" and method == "GET" then
     return
 end
 
+-- POST /internal/admin/models — load/unload an omlx model on demand
+-- Body: {"action": "load"|"unload", "model": "<id>"}
+-- Proxies to omlx /v1/models/<id>/(load|unload). Used by the Console
+-- "Models" cards (per-model unload button); also handy from CLI.
+if uri == "/internal/admin/models" and method == "POST" then
+    ngx.req.read_body()
+    local body = ngx.req.get_body_data() or "{}"
+    local req_obj = cjson.decode(body) or {}
+    local action  = req_obj.action
+    local model   = req_obj.model
+    if action ~= "load" and action ~= "unload" then
+        ngx.status = 400
+        ngx.say(cjson.encode({error = "action must be 'load' or 'unload'"}))
+        return
+    end
+    if not model or model == "" then
+        ngx.status = 400
+        ngx.say(cjson.encode({error = "model id required"}))
+        return
+    end
+    local http_ok, http = pcall(require, "resty.http")
+    if not http_ok then
+        ngx.status = 500
+        ngx.say(cjson.encode({error = "lua-resty-http unavailable"}))
+        return
+    end
+    local omlx_url = os.getenv("OMLX_URL") or "http://host.docker.internal:8000"
+    local omlx_key = os.getenv("OMLX_API_KEY") or ""
+    local httpc = http.new()
+    httpc:set_timeout(10000)  -- load can be slow on cold start
+    local res, req_err = httpc:request_uri(omlx_url .. "/v1/models/" .. model .. "/" .. action, {
+        method  = "POST",
+        headers = { ["Authorization"] = "Bearer " .. omlx_key },
+    })
+    if not res then
+        ngx.status = 502
+        ngx.say(cjson.encode({error = "omlx unreachable: " .. (req_err or "?")}))
+        return
+    end
+    ngx.status = res.status
+    ngx.header["Content-Type"] = res.headers["Content-Type"] or "application/json"
+    ngx.print(res.body)
+    return
+end
+
 ngx.status = 404
 ngx.say('{"error":"Unknown admin endpoint — available: /internal/admin/{block,unblock,limit,status,'
     .. 'usage,keys,addkey,overview,providers,llm-prices,openrouter-models,health,git-tracking,services,diagnostics,bootstrap,agents}"}')
