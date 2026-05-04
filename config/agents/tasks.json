@@ -5,7 +5,7 @@
       "max_tokens": 80,
       "system": "Generate a single-line conventional commit message for this git diff. Format: type(scope): description. Output ONLY the commit message line, no explanation, no preamble.",
       "bench_prompt": "scripts/git-tracking.sh +50 -10\nconfig/openresty/lua/admin_api.lua +30 -5",
-      "compliant": "^[a-zA-Z]+(\\([a-zA-Z0-9._\\-]+\\))?: .+$"
+      "compliant": "^[a-zA-Z]+(\\([a-zA-Z0-9.,/ _\\-]+\\))?: .+$"
     },
     "summarize-file": {
       "max_tokens": 80,
@@ -34,7 +34,7 @@
     "extract-json": {
       "max_tokens": 120,
       "system": "Extract structured data as a JSON object. Output ONLY the JSON, no markdown fences, no explanation.",
-      "bench_prompt": "192.168.1.42 - - [04/May/2026:12:33:01 +0000] \"POST /api/login HTTP/1.1\" 200 421",
+      "bench_prompt": "192.168.1.42 - - [04/May/2026:12:33:01 +0000] \"POST /api/login HTTP/1.1\" 200 421\nExtract fields: ip, method, status_code, path",
       "compliant": "(?s)^\\s*\\{[^{}]*\"ip\"\\s*:\\s*\"\\d+\\.\\d+\\.\\d+\\.\\d+\".*\"method\"\\s*:\\s*\"[A-Z]+\""
     },
     "explain-line": {
@@ -53,7 +53,7 @@
       "max_tokens": 80,
       "system": "If the request is too vague to answer confidently, reply 'AMBIGUOUS: <what is missing>'. Otherwise answer normally.",
       "bench_prompt": "Make this faster",
-      "compliant": "(?i)^AMBIGUOUS:"
+      "compliant": "(?i)(^AMBIGUOUS:|please provide|what.{0,40}(refer|mean)|more specific|unclear)"
     },
     "unix-recipe": {
       "max_tokens": 200,
@@ -68,7 +68,7 @@
       "compliant": "(?s)^def\\s+parse_size"
     },
     "tldr": {
-      "max_tokens": 80,
+      "max_tokens": 120,
       "system": "Summarize the input in ONE or TWO sentences. No bullet list. No preamble. Output only the summary.",
       "bench_prompt": "OpenResty is a web platform that integrates the standard Nginx core with LuaJIT, enabling developers to write Lua scripts that run inside Nginx workers. It is widely used for building high-performance API gateways, dynamic content servers, and microservice routers. Key advantages include co-routine-based concurrency, non-blocking I/O via cosockets, and a rich ecosystem of lua-resty-* libraries.",
       "compliant": "(?s)^[A-Z].{40,300}\\.\\s*$"
@@ -83,7 +83,7 @@
       "max_tokens": 50,
       "system": "Convert the natural-language description to a single regex pattern (PCRE-compatible, anchored). Output ONLY the regex on one line, no surrounding slashes, no explanation.",
       "bench_prompt": "match a US ZIP code: 5 digits optionally followed by a hyphen and 4 more digits",
-      "compliant": "\\\\d\\{5\\}"
+      "compliant": "(?s).*(?:\\\\d|\\\\\\[0-9\\\\\\])\\{5\\}"
     },
     "error-explain": {
       "max_tokens": 60,

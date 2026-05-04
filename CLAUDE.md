@@ -203,8 +203,11 @@ mkdir-based (`data/agents/lock.d`), max 1 concurrent agent.
 ```bash
 scripts/agent-bench                   # default: full suite on Qwen3.5-9B
                                        # + small models, comparison-only on big
-scripts/agent-bench --quick           # 1 trial, default model only
+                                       # + claude-haiku reference if ANTHROPIC_API_KEY set
+scripts/agent-bench --quick           # 1 trial, default model only (no reference)
 scripts/agent-bench --task TASK       # single task, all models
+scripts/agent-bench --no-reference    # skip Haiku even if ANTHROPIC_API_KEY is set
+scripts/agent-bench --reference-model claude-haiku-4-5-20251001  # override reference
 ```
 
 Writes `data/agents/{bench-results.json, bench-report.md, routing.json}`.
@@ -212,6 +215,10 @@ The wrapper consults `routing.json` and switches *away* from the default
 model only on a *qualitative* win (default fails, candidate passes 100%) —
 ignores marginal latency advantages so we don't burn 15-21 GB of RAM for
 an 80 ms saving.
+
+Reference model (Haiku) appears in the bench matrix for quality comparison
+but is never written into routing.json — it's excluded from local routing
+decisions. Smart-skip: re-runs reference only once per day (or with --force).
 
 **Visualization:** Console tab at `http://localhost:8888/console/agents`
 shows live active agent, recent runs (full log.jsonl tail), per-model
