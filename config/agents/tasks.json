@@ -1,0 +1,107 @@
+{
+  "_doc": "Single source of truth for scripts/agent + scripts/agent-bench. Edit here, both consumers re-read on every invocation. The `compliant` regex is bench-only (Python re.match against the trimmed model output) — wrapper ignores it.",
+  "tasks": {
+    "commit-msg": {
+      "max_tokens": 80,
+      "system": "Generate a single-line conventional commit message for this git diff. Format: type(scope): description. Output ONLY the commit message line, no explanation, no preamble.",
+      "bench_prompt": "scripts/git-tracking.sh +50 -10\nconfig/openresty/lua/admin_api.lua +30 -5",
+      "compliant": "^[a-zA-Z]+(\\([a-zA-Z0-9._\\-]+\\))?: .+$"
+    },
+    "summarize-file": {
+      "max_tokens": 80,
+      "system": "Summarize what this file does in ONE sentence. No preamble, no thinking. Output only the sentence.",
+      "bench_prompt": "#!/bin/bash\nset -e\nfor f in $(find . -name '*.lua'); do\n  luac -p \"$f\" || exit 1\ndone\necho 'all lua files compile'",
+      "compliant": "(?s)^[A-Z].{20,200}\\.?$"
+    },
+    "classify-yesno": {
+      "max_tokens": 40,
+      "system": "Reply with 'yes' or 'no' followed by max 10 words justification. Output only that line.",
+      "bench_prompt": "Is changing `if (x = null)` to `if (x == null)` a bug fix?",
+      "compliant": "(?i)^(yes|no)\\b"
+    },
+    "rename": {
+      "max_tokens": 100,
+      "system": "Suggest 3 better variable names. Output as numbered list 1./2./3. with name and 3-word reason. Nothing else.",
+      "bench_prompt": "Variable: x\nfor x in users:\n    send_email(x.email)",
+      "compliant": "^\\s*1[\\.\\)]"
+    },
+    "doc-comment": {
+      "max_tokens": 80,
+      "system": "Write a one-line docstring for this function. Output only the docstring text, no quotes, no preamble.",
+      "bench_prompt": "def jaccard(a,b):\n    s1,s2=set(a),set(b)\n    return len(s1&s2)/len(s1|s2) if s1|s2 else 0",
+      "compliant": "(?s)^.{20,200}$"
+    },
+    "extract-json": {
+      "max_tokens": 120,
+      "system": "Extract structured data as a JSON object. Output ONLY the JSON, no markdown fences, no explanation.",
+      "bench_prompt": "192.168.1.42 - - [04/May/2026:12:33:01 +0000] \"POST /api/login HTTP/1.1\" 200 421",
+      "compliant": "(?s)^\\s*\\{[^{}]*\"ip\"\\s*:\\s*\"\\d+\\.\\d+\\.\\d+\\.\\d+\".*\"method\"\\s*:\\s*\"[A-Z]+\""
+    },
+    "explain-line": {
+      "max_tokens": 60,
+      "system": "Explain in one short sentence what this code does. No preamble. Output only the sentence.",
+      "bench_prompt": "x = sum(1 for c in s if c.isalnum()) / max(len(s), 1)",
+      "compliant": "(?s)^[A-Z].{15,200}\\.?$"
+    },
+    "refactor-suggestion": {
+      "max_tokens": 120,
+      "system": "Suggest 1 specific refactor. Output: 1 sentence what to change + 1 sentence why. Nothing else.",
+      "bench_prompt": "def f(x):\n  if x is not None:\n    if x > 0:\n      if x < 10:\n        return x*2",
+      "compliant": "(?s)^.{40,400}"
+    },
+    "ambiguity-check": {
+      "max_tokens": 80,
+      "system": "If the request is too vague to answer confidently, reply 'AMBIGUOUS: <what is missing>'. Otherwise answer normally.",
+      "bench_prompt": "Make this faster",
+      "compliant": "(?i)^AMBIGUOUS:"
+    },
+    "unix-recipe": {
+      "max_tokens": 200,
+      "system": "Suggest 3 unix commands or one-liners that solve the task. Output as numbered list, no explanation.",
+      "bench_prompt": "Find all .lua files modified in the last 7 days, sorted by size",
+      "compliant": "(?s)^\\s*1[\\.\\)].*find"
+    },
+    "code-gen-short": {
+      "max_tokens": 250,
+      "system": "Write code only, no explanation, no markdown fences. Just the raw code.",
+      "bench_prompt": "Write a Python function `parse_size(s: str) -> int` that converts strings like '5KB', '2.5MB', '1.5GB' to bytes.",
+      "compliant": "(?s)^def\\s+parse_size"
+    },
+    "tldr": {
+      "max_tokens": 80,
+      "system": "Summarize the input in ONE or TWO sentences. No bullet list. No preamble. Output only the summary.",
+      "bench_prompt": "OpenResty is a web platform that integrates the standard Nginx core with LuaJIT, enabling developers to write Lua scripts that run inside Nginx workers. It is widely used for building high-performance API gateways, dynamic content servers, and microservice routers. Key advantages include co-routine-based concurrency, non-blocking I/O via cosockets, and a rich ecosystem of lua-resty-* libraries.",
+      "compliant": "(?s)^[A-Z].{40,300}\\.\\s*$"
+    },
+    "slug": {
+      "max_tokens": 30,
+      "system": "Convert the input title to a URL-safe slug (lowercase, hyphens, no special chars, max 50 chars). Output ONLY the slug.",
+      "bench_prompt": "OMlx + GateII: A Local-First Approach to LLM Routing!",
+      "compliant": "^[a-z0-9]+(-[a-z0-9]+){2,}$"
+    },
+    "regex": {
+      "max_tokens": 50,
+      "system": "Convert the natural-language description to a single regex pattern (PCRE-compatible, anchored). Output ONLY the regex on one line, no surrounding slashes, no explanation.",
+      "bench_prompt": "match a US ZIP code: 5 digits optionally followed by a hyphen and 4 more digits",
+      "compliant": "\\\\d\\{5\\}"
+    },
+    "error-explain": {
+      "max_tokens": 60,
+      "system": "Explain in ONE short sentence what went wrong. Plain English, no jargon, no bullet list. Output only the sentence.",
+      "bench_prompt": "TypeError: Cannot read properties of undefined (reading 'length') at processItems (app.js:42:18)",
+      "compliant": "(?s)^[A-Z].{20,300}\\.?\\s*$"
+    },
+    "keywords": {
+      "max_tokens": 80,
+      "system": "Extract the top 5 keywords from the input. Output ONLY a JSON array of strings, e.g. [\"foo\",\"bar\",\"baz\"]. No explanation.",
+      "bench_prompt": "OpenResty integrates Nginx with LuaJIT for high-performance, scriptable web applications, supporting non-blocking I/O via cosockets and co-routine concurrency.",
+      "compliant": "^\\s*\\[\\s*\"[^\"]+\"(\\s*,\\s*\"[^\"]+\"){2,}"
+    },
+    "reasoning": {
+      "max_tokens": 80,
+      "system": "Solve and output only the final HH:MM time.",
+      "bench_prompt": "Train1 leaves 9am at 60km/h. Train2 leaves 10am same station, same direction, 90km/h. Meeting time?",
+      "compliant": "^\\s*12:00\\s*$"
+    }
+  }
+}

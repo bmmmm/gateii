@@ -30,6 +30,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 STATE_DIR="$PROJECT_DIR/data/agents"
+TASKS_JSON="$PROJECT_DIR/config/agents/tasks.json"
 
 GATEII_URL="${GATEII_URL:-http://localhost:8888}"
 TIMEOUT="${OMLX_AGENT_TIMEOUT:-60}"
@@ -126,104 +127,28 @@ append_log() {
     printf '%s\n' "$(printf '%s' "$payload" | $JQ -c .)" >> "$LOG_FILE"
 }
 
-# Task definitions: each task pins its system prompt + max_tokens.
-# Add new tasks here; keep system prompts strict ("output only", "no preamble").
+# Task definitions are read from config/agents/tasks.json — single source
+# of truth shared with scripts/agent-bench. To add a new task: edit the
+# JSON; both scripts re-read on every invocation.
 task_config() {
-    case "$1" in
-        commit-msg)
-            MAX_TOKENS=80
-            SYSTEM='Generate a single-line conventional commit message for this git diff. Format: type(scope): description. Output ONLY the commit message line, no explanation, no preamble.'
-            ;;
-        summarize-file)
-            MAX_TOKENS=80
-            SYSTEM='Summarize what this file does in ONE sentence. No preamble, no thinking. Output only the sentence.'
-            ;;
-        classify-yesno)
-            MAX_TOKENS=40
-            SYSTEM="Reply with 'yes' or 'no' followed by max 10 words justification. Output only that line."
-            ;;
-        rename)
-            MAX_TOKENS=100
-            SYSTEM='Suggest 3 better variable names. Output as numbered list 1./2./3. with name and 3-word reason. Nothing else.'
-            ;;
-        doc-comment)
-            MAX_TOKENS=80
-            SYSTEM='Write a one-line docstring for this function. Output only the docstring text, no quotes, no preamble.'
-            ;;
-        extract-json)
-            MAX_TOKENS=120
-            SYSTEM='Extract structured data as a JSON object. Output ONLY the JSON, no markdown fences, no explanation.'
-            ;;
-        explain-line)
-            MAX_TOKENS=60
-            SYSTEM='Explain in one short sentence what this code does. No preamble. Output only the sentence.'
-            ;;
-        refactor-suggestion)
-            MAX_TOKENS=120
-            SYSTEM='Suggest 1 specific refactor. Output: 1 sentence what to change + 1 sentence why. Nothing else.'
-            ;;
-        ambiguity-check)
-            MAX_TOKENS=80
-            SYSTEM="If the request is too vague to answer confidently, reply 'AMBIGUOUS: <what is missing>'. Otherwise answer normally."
-            ;;
-        unix-recipe)
-            MAX_TOKENS=200
-            SYSTEM='Suggest 3 unix commands or one-liners that solve the task. Output as numbered list, no explanation.'
-            ;;
-        code-gen-short)
-            # Qwen3.5-9B generates ~13 tok/s, so 250 ≈ 19s. Cap kept tight to
-            # avoid runaway latency; longer code-gen should stay on Claude.
-            MAX_TOKENS=250
-            SYSTEM='Write code only, no explanation, no markdown fences. Just the raw code.'
-            ;;
-        tldr)
-            MAX_TOKENS=80
-            SYSTEM='Summarize the input in ONE or TWO sentences. No bullet list. No preamble. Output only the summary.'
-            ;;
-        slug)
-            MAX_TOKENS=30
-            SYSTEM='Convert the input title to a URL-safe slug (lowercase, hyphens, no special chars, max 50 chars). Output ONLY the slug.'
-            ;;
-        regex)
-            MAX_TOKENS=50
-            SYSTEM='Convert the natural-language description to a single regex pattern (PCRE-compatible, anchored). Output ONLY the regex on one line, no surrounding slashes, no explanation.'
-            ;;
-        error-explain)
-            MAX_TOKENS=60
-            SYSTEM='Explain in ONE short sentence what went wrong. Plain English, no jargon, no bullet list. Output only the sentence.'
-            ;;
-        keywords)
-            MAX_TOKENS=80
-            SYSTEM='Extract the top 5 keywords from the input. Output ONLY a JSON array of strings, e.g. ["foo","bar","baz"]. No explanation.'
-            ;;
-        *)
-            return 1
-            ;;
-    esac
+    local task="$1"
+    local row
+    row=$($JQ -r --arg t "$task" '.tasks[$t] // empty | "\(.max_tokens)\t\(.system)"' "$TASKS_JSON" 2>/dev/null)
+    [ -z "$row" ] && return 1
+    MAX_TOKENS="${row%%$'\t'*}"
+    SYSTEM="${row#*$'\t'}"
 }
 
 cmd_tasks() {
-    cat <<'EOF'
-Available tasks:
-  commit-msg            git diff/stat → conventional commit message
-  summarize-file        file contents → one-sentence summary
-  classify-yesno        question → yes/no + 10-word reason
-  rename                variable + context → 3 better names
-  doc-comment           function code → one-line docstring
-  extract-json          unstructured text → JSON object
-  explain-line          code line → one-sentence explanation
-  refactor-suggestion   code block → 1 specific refactor (what + why)
-  ambiguity-check       request → answer or "AMBIGUOUS: ..."
-  unix-recipe           task description → 3 shell command suggestions
-  code-gen-short        spec → small function (≤250 tokens)
-  tldr                  paragraph → one or two-sentence summary
-  slug                  title → URL-safe slug (kebab-case, ≤50 chars)
-  regex                 NL description → single PCRE regex pattern
-  error-explain         stack trace / error msg → one-sentence cause
-  keywords              text → JSON array of top 5 keywords
-
-Usage: echo "<input>" | scripts/agent run <task>
-EOF
+    printf 'Available tasks (from %s):\n\n' "${TASKS_JSON#$PROJECT_DIR/}"
+    # Pretty-print each task as: id (Nt) — first sentence of system prompt
+    $JQ -r '
+      .tasks
+      | to_entries
+      | sort_by(.key)[]
+      | "  \(.key)  \"  \(.value.max_tokens)t  \"  \(.value.system | split(". ")[0] | .[0:80])"
+    ' "$TASKS_JSON" | /usr/bin/awk -F'"' '{ printf "  %-22s %5s  %s\n", $1, $2, $3 }'
+    printf '\nUsage: echo "<input>" | scripts/agent run <task>\n'
 }
 
 cmd_run() {
