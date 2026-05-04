@@ -88,8 +88,13 @@ collect_from_config() {
         echo "# TYPE gateii_git_files_changed_24h gauge"
 
         default_author=$(jq -r '.default_author // ""' "$config")
-        jq -r '.repos[]? | [.path, (.alias // ""), (.author // ""), (.platform // "")] | @tsv' "$config" \
+        # busybox `read` collapses empty middle TSV fields, so wrap each
+        # optional value with a sentinel and strip it in shell.
+        jq -r '.repos[]? | [.path, (.alias // "__NONE__"), (.author // "__NONE__"), (.platform // "__NONE__")] | @tsv' "$config" \
             | while IFS="$(printf '\t')" read -r path alias author platform; do
+                [ "$alias"    = "__NONE__" ] && alias=""
+                [ "$author"   = "__NONE__" ] && author=""
+                [ "$platform" = "__NONE__" ] && platform=""
                 if [ ! -d "$path/.git" ]; then
                     echo "git-tracking: skipping $path (not a git repo)" >&2
                     continue
