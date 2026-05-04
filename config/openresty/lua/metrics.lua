@@ -543,21 +543,8 @@ add(string.format('gateii_counters_scan_truncated{truncated="%s"} %d', scan_trun
 -- pass-rate + median latency) and Grafana can graph trends over benchmark runs.
 -- Routing choices are also exported so changes are visible in the time series.
 local function _bench_to_metrics()
-    local f = io.open("/etc/nginx/data/agents/bench-results.json", "r")
-    if not f then return end
-    local content = f:read("*a"); f:close()
-    local b = cjson.decode(content)
-    if not b or not b.results then return end
-
-    -- Aggregate per (task, model)
-    local agg = {}  -- key = task .. "|" .. model → {runs, passed, lats={}}
-    for _, r in ipairs(b.results) do
-        local k = (r.task or "?") .. "|" .. (r.model or "?")
-        agg[k] = agg[k] or { runs = 0, passed = 0, lats = {} }
-        agg[k].runs = agg[k].runs + 1
-        if r.compliant then agg[k].passed = agg[k].passed + 1 end
-        table.insert(agg[k].lats, r.latency_s or 0)
-    end
+    local bdata = require("bench_agg").load()
+    if not bdata then return end
 
     add("# HELP gateii_omlx_bench_pass_rate Local-agent bench pass rate (0..1) per task+model")
     add("# TYPE gateii_omlx_bench_pass_rate gauge")
@@ -565,32 +552,28 @@ local function _bench_to_metrics()
     add("# TYPE gateii_omlx_bench_latency_seconds gauge")
     add("# HELP gateii_omlx_bench_trials_total Local-agent bench trials per task+model")
     add("# TYPE gateii_omlx_bench_trials_total gauge")
-    for k, c in pairs(agg) do
+    for k, c in pairs(bdata.cells) do
         local task, model = k:match("^([^|]+)|(.+)$")
         if task and model then
-            table.sort(c.lats)
-            local p50 = c.lats[math.ceil(#c.lats / 2)] or 0
-            local pass = c.runs > 0 and (c.passed / c.runs) or 0
-            add(string.format('gateii_omlx_bench_pass_rate{task="%s",model="%s"} %.3f', task, model, pass))
-            add(string.format('gateii_omlx_bench_latency_seconds{task="%s",model="%s",quantile="0.5"} %.3f', task, model, p50))
+            add(string.format('gateii_omlx_bench_pass_rate{task="%s",model="%s"} %.3f', task, model, c.pass_rate))
+            add(string.format('gateii_omlx_bench_latency_seconds{task="%s",model="%s",quantile="0.5"} %.3f', task, model, c.latency_p50))
             add(string.format('gateii_omlx_bench_trials_total{task="%s",model="%s"} %d', task, model, c.runs))
         end
     end
 
     -- Per-model created-timestamp (lets dashboards show "model X added on Y, last benched on Z")
-    if b.model_created then
+    if bdata.model_created then
         add("# HELP gateii_omlx_model_created_timestamp_seconds When a benched model was registered with omlx (Unix epoch)")
         add("# TYPE gateii_omlx_model_created_timestamp_seconds gauge")
-        for model, created in pairs(b.model_created) do
+        for model, created in pairs(bdata.model_created) do
             add(string.format('gateii_omlx_model_created_timestamp_seconds{model="%s"} %d', model, created))
         end
     end
 
     add("# HELP gateii_omlx_bench_generated_timestamp_seconds When the latest bench was generated (Unix epoch)")
     add("# TYPE gateii_omlx_bench_generated_timestamp_seconds gauge")
-    -- bench started_at is ISO; if epoch present in newer schema use it, else parse loosely (skip)
-    if b.started_epoch then
-        add(string.format('gateii_omlx_bench_generated_timestamp_seconds %d', b.started_epoch))
+    if bdata.started_epoch then
+        add(string.format('gateii_omlx_bench_generated_timestamp_seconds %d', bdata.started_epoch))
     end
 end
 
