@@ -300,7 +300,9 @@ def call_via_claude_code(model: str, task_name: str, trial: int,
             tokens_in=0, tokens_out=0,
             compliant=False, output="(skipped: tool_use_name not supported via claude CLI)",
         )
-    _write_active(task_name, model, trial, max_trials)
+    # Skip _write_active — reference bench runs in parallel; concurrent threads
+    # would race on the single active.json.tmp temp file. Status tracking is
+    # informational-only and meaningless during parallel execution anyway.
     cmd = [
         CLAUDE_CLI, "--model", model,
         "--print", t["prompt"],
@@ -777,7 +779,7 @@ def main():
             # Collect (task, trial_index) tuples for parallel dispatch
             ref_work = [(task, i + 1) for task in ref_tasks for i in range(ref_trials)]
             ref_raw: dict[tuple, dict] = {}
-            with ThreadPoolExecutor(max_workers=8) as pool:
+            with ThreadPoolExecutor(max_workers=3) as pool:
                 futures = {
                     pool.submit(call_via_claude_code, ref_model, task, trial, ref_trials): (task, trial)
                     for task, trial in ref_work
