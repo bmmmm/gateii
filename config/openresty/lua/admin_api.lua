@@ -83,7 +83,7 @@ if ADMIN_TOKEN ~= "" then
     else
         -- Check session cookie
         local cookie_header = ngx.var.http_cookie or ""
-        local session_id = cookie_header:match("admin_session=([a-f0-9]+)")
+        local session_id = cookie_header:match("admin_session=([a-f0-9]{32,128})")
         if session_id then
             local sessions = ngx.shared.admin_sessions
             local valid = sessions:get(session_id)
