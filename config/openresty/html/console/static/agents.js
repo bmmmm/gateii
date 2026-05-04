@@ -56,6 +56,30 @@ async function loadModel(modelId) {
   }
 }
 
+async function rerunBench(force) {
+  const verb = force ? 'force re-run' : 'smart re-run';
+  if (!confirm(`Trigger ${verb} of scripts/agent-bench?\n\nThe bench runs in the compose-ctl sidecar, takes 1–6 min depending on which models need to be (re)benched, and writes data/agents/bench-results.json + routing.json on completion. Currently-running indicator shows "bench:" prefix.`)) return;
+  toast(`bench started (${verb})…`);
+  try {
+    const r = await fetch('/internal/admin/agents/bench', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ force: !!force }),
+    });
+    const data = await r.json().catch(() => ({}));
+    if (r.ok && data.status === 'started') {
+      toast('bench started — watch the "Currently running" card');
+      pollAgents();
+    } else if (r.status === 409) {
+      toast(data.error || 'bench already in progress', true);
+    } else {
+      toast(data.error || `bench start failed (HTTP ${r.status})`, true);
+    }
+  } catch (err) {
+    toast('bench start error: ' + err.message, true);
+  }
+}
+
 async function unloadAll() {
   // Pull current loaded set from the shared cached omlx_status (last poll).
   const data = window._lastAgentsData;
@@ -318,5 +342,7 @@ function initAgents() {
     });
   }
   $('btn-unload-all')?.addEventListener('click', unloadAll);
+  $('btn-rerun-bench')?.addEventListener('click', () => rerunBench(false));
+  $('btn-rerun-bench-force')?.addEventListener('click', () => rerunBench(true));
   $('footer-diag')?.addEventListener('click', e => { e.preventDefault(); showDiagnostics(); });
 }

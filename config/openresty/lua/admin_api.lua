@@ -1126,6 +1126,39 @@ if uri == "/internal/admin/agents" and method == "GET" then
     return
 end
 
+-- POST /internal/admin/agents/bench — fire scripts/agent-bench in the
+-- background via the compose-ctl sidecar (which has python + the writable
+-- data/agents/ mount). Returns 202 immediately; progress is visible via
+-- the existing Agents tab (active.json gets the "bench:" prefix).
+if uri == "/internal/admin/agents/bench" and method == "POST" then
+    ngx.req.read_body()
+    local body = ngx.req.get_body_data() or "{}"
+    local req_obj = cjson.decode(body) or {}
+    local force = req_obj.force == true
+    local http_ok, http = pcall(require, "resty.http")
+    if not http_ok then
+        ngx.status = 500
+        ngx.say(cjson.encode({error = "lua-resty-http unavailable"}))
+        return
+    end
+    local httpc = http.new()
+    httpc:set_timeouts(1000, 1000, 5000)
+    local res, err = httpc:request_uri("http://compose-ctl:8090/run-bench", {
+        method  = "POST",
+        headers = { ["Content-Type"] = "application/json" },
+        body    = cjson.encode({force = force}),
+    })
+    if not res then
+        ngx.status = 502
+        ngx.say(cjson.encode({error = "compose-ctl unreachable: " .. tostring(err)}))
+        return
+    end
+    ngx.status = res.status
+    ngx.header["Content-Type"] = res.headers["Content-Type"] or "application/json"
+    ngx.print(res.body)
+    return
+end
+
 -- POST /internal/admin/models — load/unload an omlx model on demand
 -- Body: {"action": "load"|"unload", "model": "<id>"}
 -- Proxies to omlx /v1/models/<id>/(load|unload). Used by the Console

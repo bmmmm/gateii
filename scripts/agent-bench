@@ -136,6 +136,41 @@ TASKS = {
         prompt="Train1 leaves 9am at 60km/h. Train2 leaves 10am same station, same direction, 90km/h. Meeting time?",
         compliant=re.compile(r"^\s*12:00\s*$"),  # known-correct answer
     ),
+    "tldr": dict(
+        max_tokens=80,
+        system="Summarize in ONE or TWO sentences. No bullet list. No preamble. Output only the summary.",
+        prompt=("OpenResty is a web platform that integrates the standard Nginx core with LuaJIT, "
+                "enabling developers to write Lua scripts that run inside Nginx workers. It is widely "
+                "used for building high-performance API gateways, dynamic content servers, and "
+                "microservice routers. Key advantages include co-routine-based concurrency, "
+                "non-blocking I/O via cosockets, and a rich ecosystem of lua-resty-* libraries."),
+        compliant=re.compile(r"^[A-Z].{40,300}\.\s*$", re.DOTALL),
+    ),
+    "slug": dict(
+        max_tokens=30,
+        system="Convert the input title to a URL-safe slug (lowercase, hyphens, no special chars, max 50 chars). Output ONLY the slug.",
+        prompt="OMlx + GateII: A Local-First Approach to LLM Routing!",
+        compliant=re.compile(r"^[a-z0-9]+(-[a-z0-9]+){2,}$"),
+    ),
+    "regex": dict(
+        max_tokens=50,
+        system="Convert the natural-language description to a single regex pattern (PCRE-compatible, anchored). Output ONLY the regex on one line, no surrounding slashes, no explanation.",
+        prompt="match a US ZIP code: 5 digits optionally followed by a hyphen and 4 more digits",
+        compliant=re.compile(r".*\\?d.*\{.*5"),  # any answer mentioning \d{5}-ish pattern
+    ),
+    "error-explain": dict(
+        max_tokens=60,
+        system="Explain in ONE short sentence what went wrong. Plain English, no jargon, no bullet list. Output only the sentence.",
+        prompt='TypeError: Cannot read properties of undefined (reading \'length\') at processItems (app.js:42:18)',
+        compliant=re.compile(r"^[A-Z].{20,300}\.?\s*$", re.DOTALL),
+    ),
+    "keywords": dict(
+        max_tokens=80,
+        system='Extract the top 5 keywords from the input. Output ONLY a JSON array of strings, e.g. ["foo","bar","baz"]. No explanation.',
+        prompt=("OpenResty integrates Nginx with LuaJIT for high-performance, scriptable web "
+                "applications, supporting non-blocking I/O via cosockets and co-routine concurrency."),
+        compliant=re.compile(r'^\s*\[\s*"[^"]+"(\s*,\s*"[^"]+"){2,}'),
+    ),
 }
 
 
@@ -441,6 +476,28 @@ def main():
 
     print("\n" + report, flush=True)
     print(f"\nWrote: data/agents/bench-results.json, routing.json, bench-report.md", flush=True)
+
+    # Drop one summary line into log.jsonl so the Console "Recent runs" table
+    # shows when benches happened (mixed in with normal wrapper invocations).
+    # The frontend treats "bench-summary" tasks as informational rows.
+    cells_total  = sum(s["trials"] for tasks in agg.values() for s in tasks.values())
+    cells_passed = sum(int(s["pass_rate"] * s["trials"]) for tasks in agg.values() for s in tasks.values())
+    summary = {
+        "started_at":     started,
+        "task":           "bench-summary",
+        "model":          DEFAULT_MODEL,
+        "latency_s":      0,
+        "stop":           "ok",
+        "tokens_in":      sum(r.get("tokens_in", 0)  for r in all_results),
+        "tokens_out":     sum(r.get("tokens_out", 0) for r in all_results),
+        "prompt_preview": f"agent-bench{' --force' if args.force else ''}{' --quick' if args.quick else ''}",
+        "output_preview": f"{cells_passed}/{cells_total} cells passed across "
+                          f"{len(set(r['model'] for r in all_results))} model(s) "
+                          f"({len(skipped)} skipped via --smart)",
+        "exit":           0,
+    }
+    with open(DATA_DIR / "log.jsonl", "a") as f:
+        f.write(json.dumps(summary) + "\n")
 
 
 if __name__ == "__main__":

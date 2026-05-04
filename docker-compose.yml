@@ -161,10 +161,18 @@ services:
       # bind-mount magic (single-file mounts of files that may not exist would
       # silently create them as empty dirs).
       - .:/workspace:ro
+      # Writable layer for agent-bench: it writes to data/agents/. Mounted
+      # AFTER the read-only :ro mount so this overrides for that subdir only.
+      - ./data/agents:/workspace/data/agents:rw
       - ./scripts/compose-ctl.py:/app/compose-ctl.py:ro
     working_dir: /workspace
     environment:
       - COMPOSE_PROJECT_NAME=${COMPOSE_PROJECT_NAME:-gateii}
+      # Used by scripts/agent-bench when triggered via /run-bench. Inside the
+      # container "localhost" is the container itself; we need host.docker
+      # .internal to reach the omlx server on the Mac host.
+      - OMLX_URL=${OMLX_URL:-http://host.docker.internal:8000}
+      - OMLX_API_KEY=${OMLX_API_KEY:-}
       - COMPOSE_FILE=/workspace/docker-compose.yml:/workspace/docker-compose.override.yml
       - PROXY_SERVICE_NAME=openresty
       - CTL_PORT=8090
