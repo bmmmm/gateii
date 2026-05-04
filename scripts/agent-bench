@@ -43,7 +43,11 @@ def load_api_key() -> str:
     if env.exists():
         for line in env.read_text().splitlines():
             if line.startswith("OMLX_API_KEY="):
-                return line.split("=", 1)[1].strip()
+                v = line.split("=", 1)[1].rstrip("\r").strip()
+                # Strip surrounding quotes (Windows-style or POSIX-style)
+                if len(v) >= 2 and v[0] in '"\'' and v[-1] == v[0]:
+                    v = v[1:-1]
+                return v
     return os.environ.get("OMLX_API_KEY", "")
 
 
@@ -156,7 +160,8 @@ TASKS = {
         max_tokens=50,
         system="Convert the natural-language description to a single regex pattern (PCRE-compatible, anchored). Output ONLY the regex on one line, no surrounding slashes, no explanation.",
         prompt="match a US ZIP code: 5 digits optionally followed by a hyphen and 4 more digits",
-        compliant=re.compile(r".*\\?d.*\{.*5"),  # any answer mentioning \d{5}-ish pattern
+        # Must contain the literal sequence \d{5} — anything looser passes garbage.
+        compliant=re.compile(r"\\d\{5\}"),
     ),
     "error-explain": dict(
         max_tokens=60,
