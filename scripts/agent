@@ -29,10 +29,22 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+STATE_DIR="$PROJECT_DIR/data/agents"
 
 GATEII_URL="${GATEII_URL:-http://localhost:8888}"
 TIMEOUT="${OMLX_AGENT_TIMEOUT:-60}"
 MODEL="${OMLX_AGENT_MODEL:-Qwen3.5-9B-MLX-4bit}"
+
+# Source of truth for routing (set by scripts/agent-bench). If present, picks
+# (model, max_tokens) per task; otherwise falls back to in-script defaults.
+ROUTING_FILE="$STATE_DIR/routing.json"
+
+# State files written during a run
+LOCK_FILE="$STATE_DIR/lock"
+ACTIVE_FILE="$STATE_DIR/active.json"
+LOG_FILE="$STATE_DIR/log.jsonl"
+
+JQ=/opt/homebrew/bin/jq
 
 # Resolve API key (passthrough mode forwards the client key to omlx as Bearer)
 resolve_key() {
@@ -43,6 +55,66 @@ resolve_key() {
     if [ -f "$PROJECT_DIR/.env" ]; then
         awk -F= '/^OMLX_API_KEY=/{print $2; exit}' "$PROJECT_DIR/.env"
     fi
+}
+
+# Per-task routing override from bench results.
+# Only switches away from MODEL when there's a qualitative win:
+#   default fails (pass_rate < 1.0) AND chosen model passes (1.0).
+# Ignores marginal latency advantages — we'd burn 15-21 GB RAM for an
+# 80 ms latency saving on classify-yesno. Not worth it.
+resolve_model_for_task() {
+    local task="$1"
+    [ ! -f "$ROUTING_FILE" ] && { printf '%s' "$MODEL"; return; }
+    local default_pass picked_model picked_pass
+    default_pass=$($JQ -r --arg m "$MODEL" --arg t "$task" \
+        '[.routes[$t] | select(.picked_from | index($m))] | first | .pass_rate // 0' \
+        "$ROUTING_FILE" 2>/dev/null)
+    picked_model=$($JQ -r --arg t "$task" '.routes[$t].model // ""' "$ROUTING_FILE" 2>/dev/null)
+    picked_pass=$($JQ -r --arg t "$task" '.routes[$t].pass_rate // 0' "$ROUTING_FILE" 2>/dev/null)
+    # Switch only when default underperforms AND picked is reliable
+    if [ -n "$picked_model" ] && [ "$picked_model" != "$MODEL" ]; then
+        local cmp_default cmp_picked
+        cmp_default=$(awk "BEGIN{print ($default_pass < 1.0)}")
+        cmp_picked=$(awk "BEGIN{print ($picked_pass >= 0.99)}")
+        if [ "$cmp_default" = "1" ] && [ "$cmp_picked" = "1" ]; then
+            printf '%s' "$picked_model"
+            return
+        fi
+    fi
+    printf '%s' "$MODEL"
+}
+
+# Inspect parent process / env to fingerprint the calling Claude Code session
+parent_context() {
+    local ppid_chain cwd parent_cmd
+    ppid_chain=$(/bin/ps -o ppid= -p $$ 2>/dev/null | /usr/bin/tr -d ' ')
+    cwd=$(/bin/pwd)
+    parent_cmd=$(/bin/ps -o command= -p "$ppid_chain" 2>/dev/null | /usr/bin/cut -c1-80)
+    $JQ -n \
+        --arg cwd "$cwd" \
+        --arg ppid "$ppid_chain" \
+        --arg pcmd "$parent_cmd" \
+        --arg session "${CLAUDE_SESSION_ID:-${CLAUDECODE_SESSION_ID:-}}" \
+        '{cwd:$cwd, ppid:$ppid, parent_cmd:$pcmd, session_id:$session}'
+}
+
+# Atomic-ish active.json writer
+write_active() {
+    local payload="$1"
+    /bin/mkdir -p "$STATE_DIR"
+    printf '%s\n' "$payload" > "$ACTIVE_FILE.tmp" && /bin/mv "$ACTIVE_FILE.tmp" "$ACTIVE_FILE"
+}
+
+clear_active() {
+    /bin/rm -f "$ACTIVE_FILE" 2>/dev/null
+}
+
+append_log() {
+    local payload="$1"
+    /bin/mkdir -p "$STATE_DIR"
+    # Compact to single line — log.jsonl invariant is one JSON object per line
+    printf '%s' "$payload" | $JQ -c . >> "$LOG_FILE"
+    printf '\n' >> "$LOG_FILE"
 }
 
 # Task definitions: each task pins its system prompt + max_tokens.
@@ -138,17 +210,65 @@ cmd_run() {
     fi
     input=$(cat)
 
-    local key body resp text stop tokens_in tokens_out http_code
+    local key
     key=$(resolve_key)
     [ -z "$key" ] && { echo "OMLX_API_KEY not found in env or .env" >&2; exit 3; }
 
-    body=$(/opt/homebrew/bin/jq -n \
-        --arg model "$MODEL" \
+    # Pick model based on bench results (default unless qualitative win)
+    local picked_model
+    picked_model=$(resolve_model_for_task "$task")
+
+    # Acquire lock — portable across Linux/macOS via atomic mkdir.
+    # Stale lock guard: if the dir is older than 5 min AND its PID is gone, reclaim.
+    /bin/mkdir -p "$STATE_DIR"
+    if ! /bin/mkdir "$LOCK_FILE.d" 2>/dev/null; then
+        local lock_age stale_pid
+        lock_age=$(( $(/bin/date +%s) - $(/usr/bin/stat -f %m "$LOCK_FILE.d" 2>/dev/null || echo 0) ))
+        stale_pid=$($JQ -r '.pid // "0"' "$ACTIVE_FILE" 2>/dev/null || echo 0)
+        if [ "$lock_age" -gt 300 ] && ! /bin/kill -0 "$stale_pid" 2>/dev/null; then
+            /bin/rm -rf "$LOCK_FILE.d" 2>/dev/null
+            /bin/rm -f  "$ACTIVE_FILE" 2>/dev/null
+            /bin/mkdir  "$LOCK_FILE.d" 2>/dev/null || { echo "[agent] couldn't reclaim stale lock" >&2; exit 7; }
+        else
+            local current_task
+            current_task=$($JQ -r '.task // "unknown"' "$ACTIVE_FILE" 2>/dev/null || echo "unknown")
+            echo "[agent] busy: another task ($current_task) is running" >&2
+            exit 7
+        fi
+    fi
+    # Lock acquired — make sure it's released on any exit
+    trap '/bin/rm -rf "$LOCK_FILE.d" 2>/dev/null; clear_active' EXIT INT TERM
+
+    # Write active.json so statusline + console can show what's running
+    local started_at started_epoch ctx
+    started_at=$(/bin/date +"%Y-%m-%dT%H:%M:%S")
+    started_epoch=$(/bin/date +%s)
+    ctx=$(parent_context)
+    local prompt_preview
+    prompt_preview=$(printf '%s' "$input" | /usr/bin/head -c 80 | /usr/bin/tr '\n' ' ')
+
+    write_active "$($JQ -n \
+        --arg task "$task" \
+        --arg model "$picked_model" \
+        --argjson mt "$MAX_TOKENS" \
+        --arg started "$started_at" \
+        --argjson started_epoch "$started_epoch" \
+        --arg pid "$$" \
+        --arg preview "$prompt_preview" \
+        --argjson ctx "$ctx" \
+        '{task:$task, model:$model, max_tokens:$mt, started_at:$started, started_epoch:$started_epoch, pid:$pid, prompt_preview:$preview, parent:$ctx}')"
+
+    # active.json + lock cleanup is set in the lock-acquire trap above
+
+    local body resp body_only http_code text stop in_tok out_tok dt
+    body=$($JQ -n \
+        --arg model "$picked_model" \
         --argjson mt "$MAX_TOKENS" \
         --arg sys "$SYSTEM" \
         --arg user "$input" \
         '{model:$model, max_tokens:$mt, temperature:0.2, chat_template_kwargs:{enable_thinking:false}, system:$sys, messages:[{role:"user", content:$user}]}')
 
+    local t0=$(/usr/bin/python3 -c 'import time;print(time.time())')
     resp=$(/usr/bin/curl -s --max-time "$TIMEOUT" \
         -w "\n__HTTP__%{http_code}" \
         -X POST "$GATEII_URL/v1/messages" \
@@ -157,8 +277,12 @@ cmd_run() {
         -H "x-provider: omlx" \
         -d "$body" 2>&1) || {
             echo "[agent] curl failed (timeout or network)" >&2
+            append_log "$($JQ -n --arg t "$task" --arg m "$picked_model" --arg s "$started_at" \
+                '{started_at:$s, task:$t, model:$m, error:"curl failed", exit:4}')"
             exit 4
         }
+    local t1=$(/usr/bin/python3 -c 'import time;print(time.time())')
+    dt=$(/usr/bin/python3 -c "print(round($t1-$t0,3))")
 
     http_code=$(printf '%s' "$resp" | /usr/bin/grep -oE '__HTTP__[0-9]+$' | /usr/bin/grep -oE '[0-9]+$' || echo "?")
     body_only=$(printf '%s' "$resp" | /usr/bin/sed 's/__HTTP__[0-9]*$//')
@@ -166,25 +290,72 @@ cmd_run() {
     if [ "$http_code" != "200" ]; then
         echo "[agent] upstream returned HTTP $http_code:" >&2
         echo "$body_only" >&2
+        append_log "$($JQ -n --arg t "$task" --arg m "$picked_model" --arg s "$started_at" \
+            --argjson dt "$dt" --argjson http "${http_code:-0}" \
+            '{started_at:$s, task:$t, model:$m, latency_s:$dt, http:$http, exit:5}')"
         exit 5
     fi
 
-    text=$(printf '%s' "$body_only" | /opt/homebrew/bin/jq -r '.content[0].text // .error.message // ""')
-    stop=$(printf '%s' "$body_only" | /opt/homebrew/bin/jq -r '.stop_reason // "?"')
+    text=$(printf '%s' "$body_only" | $JQ -r '.content[0].text // ""')
+    stop=$(printf '%s' "$body_only" | $JQ -r '.stop_reason // "?"')
+    in_tok=$(printf '%s' "$body_only" | $JQ -r '
+        (.usage.input_tokens // 0)
+      + (.usage.cache_creation_input_tokens // 0)
+      + (.usage.cache_read_input_tokens // 0)')
+    out_tok=$(printf '%s' "$body_only" | $JQ -r '.usage.output_tokens // 0')
 
     if [ -z "$text" ]; then
         echo "[agent] empty response from omlx (stop=$stop)" >&2
+        append_log "$($JQ -n --arg t "$task" --arg m "$picked_model" --arg s "$started_at" \
+            --argjson dt "$dt" --arg stop "$stop" \
+            '{started_at:$s, task:$t, model:$m, latency_s:$dt, stop:$stop, exit:6, error:"empty response"}')"
         exit 6
     fi
+
+    # Append history record
+    append_log "$($JQ -n \
+        --arg s "$started_at" \
+        --arg t "$task" \
+        --arg m "$picked_model" \
+        --argjson dt "$dt" \
+        --arg stop "$stop" \
+        --argjson in_tok "$in_tok" \
+        --argjson out_tok "$out_tok" \
+        --arg preview "$prompt_preview" \
+        --arg out "$(printf '%s' "$text" | /usr/bin/head -c 300)" \
+        '{started_at:$s, task:$t, model:$m, latency_s:$dt, stop:$stop, tokens_in:$in_tok, tokens_out:$out_tok, prompt_preview:$preview, output_preview:$out, exit:0}')"
 
     # Print result to stdout
     printf '%s\n' "$text"
 }
 
+cmd_list() {
+    if [ -f "$ACTIVE_FILE" ]; then
+        local now elapsed task model started preview pid
+        now=$(/bin/date +%s)
+        task=$($JQ -r '.task' "$ACTIVE_FILE")
+        model=$($JQ -r '.model' "$ACTIVE_FILE")
+        started=$($JQ -r '.started_epoch' "$ACTIVE_FILE")
+        preview=$($JQ -r '.prompt_preview' "$ACTIVE_FILE")
+        pid=$($JQ -r '.pid' "$ACTIVE_FILE")
+        elapsed=$((now - started))
+        printf "RUNNING  pid=%s  %s  via %s  (%ds)\n  → %s\n\n" "$pid" "$task" "$model" "$elapsed" "$preview"
+    else
+        printf "RUNNING  (none)\n\n"
+    fi
+    if [ -s "$LOG_FILE" ]; then
+        printf "RECENT (last 10):\n"
+        /usr/bin/tail -10 "$LOG_FILE" | $JQ -r '
+            "  \(.started_at)  \(.task // "?")  \(.model // "?")  \(.latency_s // 0)s  exit=\(.exit // "?")"'
+    else
+        printf "RECENT  (no history)\n"
+    fi
+}
+
 case "${1:-}" in
     run)        shift; cmd_run "$@" ;;
     tasks)      cmd_tasks ;;
-    list)       echo "[agent list — coming in Stage 2]" >&2; exit 0 ;;
+    list)       cmd_list ;;
     -h|--help|"") cmd_tasks ;;
     *)          echo "unknown subcommand: $1 (try: tasks)" >&2; exit 2 ;;
 esac
