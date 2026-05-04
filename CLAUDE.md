@@ -51,15 +51,22 @@ docker exec gateii-proxy openresty -s reload   # 2. reload to test
 ## Emergency recovery (proxy broken, Claude Code cut off)
 
 ```bash
-gateii rescue          # switch direct + restart proxy container
+gateii rescue          # switch direct (global+project) + restart proxy container
 # then restart Claude Code to reconnect
 ```
 
 Or from this repo directly:
 ```bash
-./scripts/rescue.sh              # switch direct + restart proxy
-./scripts/rescue.sh --no-restart # only switch direct (if Docker is also down)
+./scripts/rescue.sh              # global + project sweep + restart
+./scripts/rescue.sh --no-restart # global + project sweep only (if Docker is down too)
+./scripts/rescue.sh --no-sweep   # global + restart only (skip project sweep)
 ```
+
+The project sweep walks `$GATEII_PROJECT_ROOTS` (space-separated) or, when
+unset, any of `~/offline_coding ~/coding ~/projects ~/dev ~/src` that exist
+(maxdepth 4). It only resets `ANTHROPIC_BASE_URL` keys that point at
+`localhost:`, `127.0.0.1:`, or `$REMOTE_URL` from `.env` — non-gateii
+overrides (e.g. company proxies) are left alone.
 
 ## Gotchas
 
