@@ -132,19 +132,7 @@
     </div>
   </header>
 
-  <nav class="tabs">
-    <a href="/console/" class="tab">Overview</a>
-    <a href="/console/compare" class="tab">Compare</a>
-    <a href="/console/git" class="tab">Git</a>
-    <a href="/console/agents" class="tab active">Agents</a>
-    <span class="ext">
-      <a href="http://localhost:3001/d/gateii-cost" target="_blank">Cost</a>
-      <a href="http://localhost:3001/d/gateii-eff" target="_blank">Efficiency</a>
-      <a href="http://localhost:3001/d/gateii-ops" target="_blank">Ops</a>
-      <button class="btn btn-blue" id="btn-diag" style="padding:4px 10px;font-size:11px">Diagnostics</button>
-      <span class="mode-tag">Mode: <b id="mode-display">-</b></span>
-    </span>
-  </nav>
+  <nav class="tabs" id="tabs-mount" data-active="agents"></nav>
 
   <div class="sec-head">
     <h2>Currently running</h2>
@@ -220,6 +208,6 @@
 
 <script src="/console/static/console.js"></script>
 <script src="/console/static/agents.js"></script>
-<script>document.addEventListener('DOMContentLoaded', () => { initAgents(); initDiagnostics && initDiagnostics(); });</script>
+<script>document.addEventListener('DOMContentLoaded', () => { renderTabs(); initAgents(); initDiagnostics && initDiagnostics(); });</script>
 </body>
 </html>

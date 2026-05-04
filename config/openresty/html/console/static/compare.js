@@ -9,8 +9,14 @@ let llmPricesData = null;
 let monthlyTokensByPattern = null;
 
 async function loadProviders() {
-  try { providersData = await fetch('/internal/admin/providers').then(r => r.json()); }
-  catch (e) { providersData = null; }
+  try {
+    const r = await fetch('/internal/admin/providers');
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    providersData = await r.json();
+  } catch (e) {
+    providersData = null;
+    toast('providers config unavailable: ' + e.message, true);
+  }
 }
 
 async function loadOpenRouterModels() {
@@ -190,8 +196,9 @@ async function refreshCompare() {
   }
 }
 
-function initCompare() {
+async function initCompare() {
+  await window._initialAuth;
   $('btn-refresh').addEventListener('click', e => withBusy(e.currentTarget, refreshCompare));
   refreshCompare();
-  setInterval(refreshCompare, 60000);
+  pausableInterval(refreshCompare, 60000);
 }

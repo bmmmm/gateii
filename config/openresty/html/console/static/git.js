@@ -94,6 +94,10 @@ async function saveSettings(ev) {
   await withBusy(ev?.currentTarget, async () => {
     try {
       await saveConfig();
+      // Re-read so the form reflects whatever the server normalized
+      // (trimmed whitespace, dropped duplicates, etc.) instead of the
+      // input we just sent.
+      await loadConfig();
       toast('Settings saved');
     } catch (e) { toast('Save failed: ' + e.message, true); }
   });
@@ -116,13 +120,16 @@ async function addRepo(ev) {
   await withBusy(ev?.currentTarget, async () => {
     try {
       await saveConfig();
+      // Pull canonicalized state (server may default alias from path,
+      // strip trailing slashes, etc.) so the rendered list matches storage.
+      await loadConfig();
       toast('Added ' + (alias || path));
       $('new-path').value = ''; $('new-alias').value = ''; $('new-author').value = '';
       $('new-platform').value = '';
-      renderRepos();
     } catch (e) {
       _config.repos.pop();
       toast('Add failed: ' + e.message, true);
+      renderRepos();
     }
   });
 }
@@ -133,8 +140,8 @@ async function removeRepo(btn, idx) {
   await withBusy(btn, async () => {
     try {
       await saveConfig();
+      await loadConfig();   // re-sync to canonical server state
       toast('Removed ' + (removed.alias || removed.path));
-      renderRepos();
     } catch (e) {
       _config.repos.splice(idx, 0, removed);
       toast('Remove failed: ' + e.message, true);
@@ -153,7 +160,8 @@ async function refresh() {
   }
 }
 
-function initGit() {
+async function initGit() {
+  await window._initialAuth;
   $('btn-save-settings').addEventListener('click', saveSettings);
   $('btn-add-repo').addEventListener('click', addRepo);
   $('repos-list').addEventListener('click', e => {
@@ -162,5 +170,5 @@ function initGit() {
     removeRepo(btn, parseInt(btn.dataset.idx, 10));
   });
   refresh();
-  setInterval(refresh, 30000);
+  pausableInterval(refresh, 30000);
 }

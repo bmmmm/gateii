@@ -434,9 +434,12 @@ async function saveIdleConfig() {
   } catch (err) { toast('save error: ' + err.message, true); }
 }
 
-function initAgents() {
+async function initAgents() {
+  // Wait for the URL-token login (if any) to finish so the first poll
+  // doesn't race against an in-flight initial auth.
+  await window._initialAuth;
   loadIdleConfig().then(() => pollAgents());
-  setInterval(pollAgents, POLL_MS);
+  pausableInterval(pollAgents, POLL_MS);
   const area = $('models-area');
   if (area) {
     // Click handler for load/unload buttons

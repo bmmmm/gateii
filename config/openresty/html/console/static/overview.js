@@ -205,9 +205,27 @@ async function loadServices() {
   }).join('');
 }
 
+// Wait for the proxy to come back after a self-restart, then reload the
+// page. Polls /health every second up to maxWaitMs; reloads as soon as we
+// see a 200. Replaces the old hardcoded 8s setTimeout — that was racy in
+// both directions: too short on a slow Docker, and too long when the proxy
+// was actually back in 1-2s.
+async function waitForProxyAndReload(maxWaitMs = 30000) {
+  const deadline = Date.now() + maxWaitMs;
+  while (Date.now() < deadline) {
+    await new Promise(r => setTimeout(r, 1000));
+    try {
+      const r = await window._rawFetch('/health', { cache: 'no-store' });
+      if (r.ok) { location.reload(); return; }
+    } catch { /* still down — keep polling */ }
+  }
+  toast('proxy did not recover within 30s — reload the page manually', true);
+}
+
 async function serviceAction(btn, service, action) {
   // Self-restart of the proxy is a special case: the request dies mid-flight.
-  // The sidecar schedules it async + returns 202, we pop a confirm + reload.
+  // The sidecar schedules it async + returns 202, we pop a confirm + poll
+  // /health, reload as soon as it's back.
   const isProxySelfHit = service === 'openresty' && (action === 'restart' || action === 'recreate' || action === 'stop');
   if (isProxySelfHit) {
     const ok = confirm(`This will ${action} the proxy itself and kill your current console session. Continue?`);
@@ -220,8 +238,8 @@ async function serviceAction(btn, service, action) {
       if (r.status >= 200 && r.status < 300) {
         toast(`${action} ${service} → ${result.note || 'ok'}`);
         if (isProxySelfHit && action !== 'stop') {
-          // Wait for the async restart, then reload the page
-          setTimeout(() => location.reload(), 8000);
+          toast('proxy restarting — reloading when /health is back…');
+          waitForProxyAndReload();
         } else {
           // Refresh services list after a short delay so docker has time to update
           setTimeout(loadServices, 1500);
@@ -528,12 +546,18 @@ async function addKey(ev) {
 }
 
 // --- Master refresh ---
+// Epoch-guard: same idea as agents.js. Every refresh() bumps the counter;
+// after each await we bail if a newer cycle has started, so a slow upstream
+// response can't overwrite fresh data with stale.
+let _refreshEpoch = 0;
 async function refresh() {
+  const myEpoch = ++_refreshEpoch;
   try {
     const [ov, metricsText] = await Promise.all([
       refreshHeader(),
       fetch('/metrics').then(r => r.text()).catch(() => ''),
     ]);
+    if (myEpoch !== _refreshEpoch) return;
     const metrics = parseMetrics(metricsText);
 
     await Promise.allSettled([
@@ -543,16 +567,21 @@ async function refresh() {
       loadUsers(),
       loadServices(),
     ]);
+    if (myEpoch !== _refreshEpoch) return;
     loadRateLimits(metrics);
 
     $('last-refresh').textContent = new Date().toLocaleTimeString();
   } catch (e) {
+    if (myEpoch !== _refreshEpoch) return;
     toast('refresh failed: ' + e.message, true);
   }
 }
 
 // --- Init ---
-function initOverview() {
+async function initOverview() {
+  // Wait for the URL-token login (if any) to finish so the first refresh
+  // doesn't race against an in-flight initial auth.
+  await window._initialAuth;
   $('window-selector').addEventListener('change', e => {
     _currentWindow = e.target.value;
     refresh();
@@ -583,5 +612,5 @@ function initOverview() {
   });
 
   refresh();
-  setInterval(refresh, 15000);
+  pausableInterval(refresh, 15000);
 }

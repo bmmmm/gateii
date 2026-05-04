@@ -197,7 +197,12 @@ select.input{cursor:pointer;-webkit-appearance:none;padding-right:28px;
   .shell{padding:16px 12px 32px}
   .header{flex-direction:column;gap:12px;align-items:flex-start}
   .tabs{flex-wrap:wrap}
-  .tabs .ext{margin-left:0;width:100%;flex-wrap:wrap}
+  /* Drop the external Cost/Efficiency dashboard links on narrow screens —
+     they were pushing the active-tab indicator onto a second row. The
+     mode-tag + diag button stay (.ext .keep) since they're operationally
+     useful on mobile. */
+  .tabs .ext > a{display:none}
+  .tabs .ext{margin-left:auto;width:auto;flex-wrap:nowrap}
   .form-row{flex-direction:column;align-items:stretch}
   .form-label{min-width:auto}
   .grid-2{grid-template-columns:1fr}
