@@ -670,12 +670,96 @@ do
     end
 end
 
+-- /internal/admin/diagnostics — single-shot snapshot of everything an
+-- operator (or a future-Claude debugging via the API) needs to assess
+-- gateii's current state. Aggregates: proxy mode, plugin config,
+-- shared-dict free space, rate-limit window state, services list (via
+-- compose-ctl), upstream health probe summary. Read-only; same auth
+-- as every other admin endpoint.
+if uri == "/internal/admin/diagnostics" and method == "GET" then
+    local out = {
+        timestamp = os.date("!%Y-%m-%dT%H:%M:%SZ"),
+        proxy_mode = os.getenv("PROXY_MODE") or "apikey",
+        passthrough_user = os.getenv("PASSTHROUGH_USER") or "",
+    }
+
+    -- Shared dict free bytes
+    out.shared_dicts = {
+        counters       = ngx.shared.counters       and ngx.shared.counters:free_space()       or nil,
+        blocking       = ngx.shared.blocking       and ngx.shared.blocking:free_space()       or nil,
+        admin_sessions = ngx.shared.admin_sessions and ngx.shared.admin_sessions:free_space() or nil,
+        auth_cache     = ngx.shared.auth_cache     and ngx.shared.auth_cache:free_space()     or nil,
+    }
+
+    -- Rate-limit window state (raw values from counters dict, not derived)
+    local cd = ngx.shared.counters
+    out.rate_limits = {
+        util_5h        = tonumber(cd:get("ratelimit_5h_utilization")),
+        util_7d        = tonumber(cd:get("ratelimit_7d_utilization")),
+        tokens_remaining = tonumber(cd:get("ratelimit_remaining")),
+        tokens_window_max = tonumber(cd:get("tokens_window_limit")),
+        reset_5h_ts    = cd:get("ratelimit_reset_ts"),
+        reset_7d_ts    = cd:get("ratelimit_7d_reset_ts"),
+        fallback_pct   = tonumber(cd:get("ratelimit_fallback_pct")),
+        tokens_expired_last_window = tonumber(cd:get("ratelimit_tokens_expired")),
+    }
+
+    -- Counters totals (last reset = container restart minus persistence)
+    local total_requests, total_errors, total_input, total_output = 0, 0, 0, 0
+    for _, key in ipairs(cd:get_keys(5000) or {}) do
+        if key:find("|requests$",        1, true) then total_requests = total_requests + (cd:get(key) or 0) end
+        if key:find("|errors$",          1, true) then total_errors   = total_errors   + (cd:get(key) or 0) end
+        if key:find("|input$",           1, true) then total_input    = total_input    + (cd:get(key) or 0) end
+        if key:find("|output$",          1, true) then total_output   = total_output   + (cd:get(key) or 0) end
+    end
+    out.totals = {
+        requests = total_requests,
+        upstream_errors = total_errors,
+        input_tokens  = total_input,
+        output_tokens = total_output,
+    }
+
+    -- Services from compose-ctl (best-effort, not fatal if sidecar down)
+    do
+        local http = require "resty.http"
+        local httpc = http.new()
+        httpc:set_timeouts(1000, 1000, 3000)
+        local res, err = httpc:request_uri("http://compose-ctl:8090/services")
+        if res and res.status == 200 then
+            out.services = cjson.decode(res.body) or { error = "decode failed" }
+        else
+            out.services = { error = "compose-ctl unreachable: " .. tostring(err or res and res.status) }
+        end
+    end
+
+    -- Plugins — separate "configured" (env var) from "produced output" (the
+    -- /overview endpoint uses git-metrics.txt presence). Runtime container
+    -- state is in the `services` array above; cross-reference for the full
+    -- picture.
+    local git_metrics_file = io.open("/etc/nginx/data/git-metrics.txt", "r")
+    if git_metrics_file then git_metrics_file:close() end
+    out.plugins = {
+        console = { configured = os.getenv("CONSOLE_ENABLED") == "1" },
+        git_tracking = {
+            configured = os.getenv("GIT_TRACKING_ENABLED") == "1",
+            metrics_file_present = git_metrics_file ~= nil,
+        },
+    }
+
+    -- Recent admin login failures (rolling 7d counter)
+    out.admin_login_failures_7d = tonumber(cd:get("admin_login_failures")) or 0
+
+    ngx.say(cjson.encode(out))
+    return
+end
+
 -- /internal/admin/services — proxy to compose-ctl sidecar for stack control.
 -- GET  /internal/admin/services                    → list+state of all services
 -- POST /internal/admin/services/<name>/<action>    → start|stop|restart|recreate
 -- The sidecar runs at compose-ctl:8090 inside the gateii Docker network and
 -- holds the docker-socket mount; the proxy never talks to Docker directly.
-if uri:sub(1, 25) == "/internal/admin/services" or uri == "/internal/admin/services" then
+if uri == "/internal/admin/services"
+   or uri:sub(1, #"/internal/admin/services/") == "/internal/admin/services/" then
     local http = require "resty.http"
     local httpc = http.new()
     httpc:set_timeouts(2000, 2000, 30000)  -- connect/send/read
@@ -770,4 +854,4 @@ end
 
 ngx.status = 404
 ngx.say('{"error":"Unknown admin endpoint — available: /internal/admin/{block,unblock,limit,status,'
-    .. 'usage,keys,addkey,overview,providers,llm-prices,openrouter-models,health,git-tracking,services,bootstrap}"}')
+    .. 'usage,keys,addkey,overview,providers,llm-prices,openrouter-models,health,git-tracking,services,diagnostics,bootstrap}"}')

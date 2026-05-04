@@ -28,6 +28,7 @@
       <a href="http://localhost:3001/d/gateii-cost" target="_blank">Cost</a>
       <a href="http://localhost:3001/d/gateii-eff" target="_blank">Efficiency</a>
       <a href="http://localhost:3001/d/gateii-ops" target="_blank">Ops</a>
+      <button class="btn btn-blue" id="btn-diag" style="padding:4px 10px;font-size:11px">Diagnostics</button>
       <span class="mode-tag">Mode: <b id="mode-display">-</b></span>
     </span>
   </nav>
@@ -104,6 +105,6 @@
 
 <script src="/console/static/console.js"></script>
 <script src="/console/static/git.js"></script>
-<script>document.addEventListener('DOMContentLoaded', initGit);</script>
+<script>document.addEventListener('DOMContentLoaded', () => { initGit(); initDiagnostics(); });</script>
 </body>
 </html>
