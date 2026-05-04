@@ -269,18 +269,46 @@ case "$SUBCMD" in
     ;;
 
   switch)
-    TARGET="${1:?Usage: admin.sh switch <local-proxy|remote-proxy|direct|status>}"
-    CLAUDE_SETTINGS="$HOME/.claude/settings.json"
-    if [ ! -f "$CLAUDE_SETTINGS" ]; then
-      echo -e "${RED}Claude settings not found at $CLAUDE_SETTINGS${NC}" >&2; exit 1
+    TARGET="${1:?Usage: admin.sh switch <local-proxy|remote-proxy|direct|status> [--project [path]]}"
+    shift || true
+    PROJECT_PATH=""
+    while [ $# -gt 0 ]; do
+      case "$1" in
+        --project)
+          # --project alone = CWD; --project <path> = explicit dir
+          if [ $# -ge 2 ] && [ "${2#-}" = "$2" ]; then
+            PROJECT_PATH="$(cd "$2" && pwd 2>/dev/null || echo "$2")"
+            shift 2
+          else
+            PROJECT_PATH="$(pwd)"
+            shift
+          fi
+          ;;
+        *)
+          echo -e "${RED}Unknown switch arg: $1${NC}" >&2; exit 1 ;;
+      esac
+    done
+
+    GLOBAL_SETTINGS="$HOME/.claude/settings.json"
+    if [ -n "$PROJECT_PATH" ]; then
+      SETTINGS_FILE="$PROJECT_PATH/.claude/settings.local.json"
+      SCOPE_LABEL="project ($PROJECT_PATH)"
+      mkdir -p "$(dirname "$SETTINGS_FILE")"
+      [ -f "$SETTINGS_FILE" ] || echo '{}' > "$SETTINGS_FILE"
+    else
+      SETTINGS_FILE="$GLOBAL_SETTINGS"
+      SCOPE_LABEL="global"
+      if [ ! -f "$SETTINGS_FILE" ]; then
+        echo -e "${RED}Claude settings not found at $SETTINGS_FILE${NC}" >&2; exit 1
+      fi
     fi
 
     set_base_url() {
       local url="$1" label="$2"
-      local tmp="${CLAUDE_SETTINGS}.tmp"
+      local tmp="${SETTINGS_FILE}.tmp"
       jq --arg url "$url" '.env //= {} | .env.ANTHROPIC_BASE_URL = $url' \
-        "$CLAUDE_SETTINGS" > "$tmp" && mv "$tmp" "$CLAUDE_SETTINGS"
-      echo -e "${GRN}Switched to ${label}${NC} ($url)"
+        "$SETTINGS_FILE" > "$tmp" && mv "$tmp" "$SETTINGS_FILE"
+      echo -e "${GRN}Switched to ${label}${NC} ($url) — scope: ${SCOPE_LABEL}"
       echo -e "  ${DIM}Restart Claude Code to apply${NC}"
     }
 
@@ -312,15 +340,38 @@ case "$SUBCMD" in
         set_base_url "$REMOTE_URL" "$REMOTE_LABEL"
         ;;
       direct)
-        TMP="${CLAUDE_SETTINGS}.tmp"
+        TMP="${SETTINGS_FILE}.tmp"
         jq 'if .env then .env |= del(.ANTHROPIC_BASE_URL) else . end' \
-          "$CLAUDE_SETTINGS" > "$TMP" && mv "$TMP" "$CLAUDE_SETTINGS"
-        echo -e "${GRN}Switched to direct Anthropic connection${NC}"
-        echo -e "  ${DIM}Restart Claude Code to apply. Safe to stop the proxy now.${NC}"
+          "$SETTINGS_FILE" > "$TMP" && mv "$TMP" "$SETTINGS_FILE"
+        echo -e "${GRN}Switched to direct Anthropic connection${NC} — scope: ${SCOPE_LABEL}"
+        if [ -n "$PROJECT_PATH" ]; then
+          echo -e "  ${DIM}Project override removed; falls back to global setting${NC}"
+        else
+          echo -e "  ${DIM}Restart Claude Code to apply. Safe to stop the proxy now.${NC}"
+        fi
         ;;
       status)
-        CUR=$(jq -r '.env.ANTHROPIC_BASE_URL // "direct (unset)"' "$CLAUDE_SETTINGS")
-        echo -e "Current ANTHROPIC_BASE_URL: ${BOLD}${CUR}${NC}"
+        # Always show global; if a project file exists for the requested path
+        # (or CWD if none given), show its override too — actual effective
+        # value is the project one when claude runs in that dir.
+        GLOBAL_CUR=$(jq -r '.env.ANTHROPIC_BASE_URL // "direct (unset)"' "$GLOBAL_SETTINGS" 2>/dev/null)
+        echo -e "Global:  ${BOLD}${GLOBAL_CUR}${NC}  ${DIM}(~/.claude/settings.json)${NC}"
+        if [ -n "$PROJECT_PATH" ]; then
+          PROJ_FILE="$PROJECT_PATH/.claude/settings.local.json"
+        else
+          PROJ_FILE="$(pwd)/.claude/settings.local.json"
+        fi
+        if [ -f "$PROJ_FILE" ]; then
+          PROJ_CUR=$(jq -r '.env.ANTHROPIC_BASE_URL // empty' "$PROJ_FILE" 2>/dev/null)
+          if [ -n "$PROJ_CUR" ]; then
+            echo -e "Project: ${BOLD}${PROJ_CUR}${NC}  ${DIM}($PROJ_FILE)${NC}"
+            echo -e "  ${DIM}↑ wins when claude runs in this dir${NC}"
+          else
+            echo -e "Project: ${DIM}(no env override in $PROJ_FILE)${NC}"
+          fi
+        else
+          echo -e "Project: ${DIM}(no settings.local.json — global wins)${NC}"
+        fi
         ;;
       *)
         echo -e "${RED}Unknown target '$TARGET' — use 'local-proxy', 'remote-proxy', 'direct', or 'status'${NC}" >&2; exit 1
@@ -605,7 +656,9 @@ YAML
     echo "  switch local-proxy              Route Claude Code through the local proxy (checks health first)"
     echo "  switch remote-proxy             Route Claude Code through a remote gateii (requires REMOTE_URL in .env)"
     echo "  switch direct                   Route Claude Code directly to Anthropic (no proxy)"
-    echo "  switch status                   Show the current ANTHROPIC_BASE_URL"
+    echo "  switch status                   Show the current ANTHROPIC_BASE_URL (global + project)"
+    echo "    add --project [path]          Scope to <path>/.claude/settings.local.json (default: CWD)"
+    echo "    e.g. switch local-proxy --project    sets only this repo, leaves global untouched"
     echo ""
     echo "  ${BOLD}Key management${NC} (apikey mode — structured per-user upstream routing)"
     echo "  keys                                    All proxy keys (masked)"
