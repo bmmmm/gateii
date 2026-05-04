@@ -1,0 +1,1 @@
+../../.claude/domains/grafana.md

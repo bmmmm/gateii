@@ -12,8 +12,12 @@ function _M.atomic_write(path, content)
     if not f then
         return nil, "open " .. tmp .. " failed: " .. tostring(open_err)
     end
-    f:write(content)
+    local ok_w, write_err = f:write(content)
     f:close()
+    if not ok_w then
+        os.remove(tmp)
+        return nil, "write " .. tmp .. " failed: " .. tostring(write_err)
+    end
     local ok, rename_err = os.rename(tmp, path)
     if not ok then
         os.remove(tmp)
@@ -32,14 +36,17 @@ function _M.sanitize(s, fallback)
     return (v:gsub("[:|%s]", "_"):sub(1, 64))
 end
 
--- Today's UTC date string (YYYY-MM-DD), cached per-module with 60s refresh.
-local _today = ""
-local _today_ts = 0
+-- Today's UTC date string (YYYY-MM-DD), cached until the next UTC midnight.
+-- A fixed 60s window risked returning yesterday after midnight for up to 60s;
+-- expiring at midnight guarantees the cache flips exactly at the day boundary.
+local _today         = ""
+local _today_expires = 0
 function _M.get_today()
     local now = ngx.time()
-    if now - _today_ts >= 60 then
-        _today    = os.date("!%Y-%m-%d", now)
-        _today_ts = now
+    if now >= _today_expires then
+        _today         = os.date("!%Y-%m-%d", now)
+        -- Next UTC midnight = next multiple of 86400 seconds since epoch
+        _today_expires = (math.floor(now / 86400) + 1) * 86400
     end
     return _today
 end

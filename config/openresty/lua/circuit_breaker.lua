@@ -20,8 +20,13 @@ local function key(provider, field)
     return "cb|" .. provider .. "|" .. field
 end
 
+-- TTL for half_open: auto-expires if the probe never calls record() (deadlock prevention).
+-- Two cooldown cycles is long enough for a slow response, short enough to unblock eventually.
+local HALF_OPEN_TTL = COOLDOWN_SECONDS * 2
+
 -- Check if a request is allowed. Returns (allowed: bool, reason: string?).
--- When in open state AND cooldown elapsed, transitions to half_open and allows ONE probe.
+-- When in open state AND cooldown elapsed, exactly ONE worker transitions to half_open
+-- and sends the probe; all others are blocked until the probe completes or times out.
 function _M.allow_request(provider)
     local cd = ngx.shared.counters
     local state = cd:get(key(provider, "state")) or "closed"
@@ -33,18 +38,24 @@ function _M.allow_request(provider)
     if state == "open" then
         local opened_at = cd:get(key(provider, "opened_at")) or 0
         if ngx.time() - opened_at >= COOLDOWN_SECONDS then
-            -- Only worker 0 drives the transition to avoid simultaneous probes
-            if ngx.worker.id() == 0 then
-                cd:set(key(provider, "state"), "half_open", STATE_TTL)
+            -- Atomic claim: cd:add only succeeds for the FIRST caller (key must not exist).
+            -- The winner transitions to half_open and sends the single probe.
+            -- HALF_OPEN_TTL auto-clears the claim if the probe never returns (no deadlock).
+            local claim_key = key(provider, "probe_claim")
+            local claimed = cd:add(claim_key, 1, HALF_OPEN_TTL)
+            if claimed then
+                cd:set(key(provider, "state"), "half_open", HALF_OPEN_TTL)
                 ngx.log(ngx.NOTICE, "circuit_breaker: ", provider, " transitioning to half_open")
+                return true, nil
             end
-            return true, nil
+            -- Another worker already claimed the probe — block until it completes
+            return false, "circuit_probing"
         end
         return false, "circuit_open"
     end
 
     if state == "half_open" then
-        -- Already probing — deny further requests until probe completes
+        -- Probe in progress — deny until record() resolves it
         return false, "circuit_probing"
     end
 
@@ -64,7 +75,8 @@ function _M.record(provider, status, transport_err)
         local failures = cd:incr(key(provider, "failures"), 1, 0, STATE_TTL)
 
         if state == "half_open" then
-            -- Probe failed — back to open, reset cooldown timer
+            -- Probe failed — release claim, reset to open with fresh cooldown timer
+            cd:delete(key(provider, "probe_claim"))
             cd:set(key(provider, "state"), "open", STATE_TTL)
             cd:set(key(provider, "opened_at"), ngx.time(), STATE_TTL)
             ngx.log(ngx.WARN, "circuit_breaker: ", provider, " probe failed, reopening")
@@ -75,8 +87,9 @@ function _M.record(provider, status, transport_err)
                     failures, " consecutive failures")
         end
     else
-        -- Success — reset
+        -- Success — release probe claim and close circuit
         if state == "half_open" then
+            cd:delete(key(provider, "probe_claim"))
             ngx.log(ngx.NOTICE, "circuit_breaker: ", provider, " probe succeeded, closing")
         end
         cd:set(key(provider, "state"), "closed", STATE_TTL)
