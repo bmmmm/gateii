@@ -50,6 +50,12 @@ Prometheus scrape endpoint: `http://localhost:8888/metrics`
 | `gateii_upstream_errors_total` | user, provider, model | Non-200 upstream responses |
 | `gateii_stop_reason_total` | user, provider, model, reason | `end_turn` / `max_tokens` / `tool_use` |
 | `gateii_user_blocked` | user | 1 if user is currently blocked |
+| `gateii_omlx_bench_pass_rate` | task, model | 0..1 fraction of compliant trials in the last `agent-bench` run |
+| `gateii_omlx_bench_latency_seconds` | task, model, quantile | Median latency per (task, model) cell |
+| `gateii_omlx_bench_trials_total` | task, model | Trial count per cell |
+| `gateii_omlx_bench_generated_timestamp_seconds` | — | When the latest bench finished (Unix epoch) |
+| `gateii_omlx_model_created_timestamp_seconds` | model | When the model was registered with oMLX |
+| `gateii_omlx_routing_choice` | task, model | 1.0 = currently picked for that task |
 
 The `type` label on `gateii_tokens_total` distinguishes input, output,
 cache-write, and cache-read tokens separately — useful when evaluating

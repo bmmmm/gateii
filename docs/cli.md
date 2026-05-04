@@ -61,6 +61,21 @@ Key management: run `gateii admin help` for the full subcommand list.
 | `gateii version` | Git commit + tag of the current checkout. |
 | `gateii help` | Subcommand list. |
 
+### Local agents (omlx)
+
+Standalone scripts — not wired into `gateii <subcommand>`. See
+[agents.md](agents.md) for the full feature description.
+
+| Command | What it does |
+|---------|-------------|
+| `scripts/agent run <task>` | Route one task to a local oMLX model (reads stdin). |
+| `scripts/agent tasks` | List available tasks. |
+| `scripts/agent list` | Currently running + last 10 records. |
+| `scripts/agent count-tokens` | POST `/v1/messages/count_tokens` (no LLM call). |
+| `scripts/agent-bench` | Benchmark all models × all tasks; smart-skips unchanged models. |
+| `scripts/agent-bench --force` | Re-bench every cell from scratch. |
+| `scripts/agent-bench --task TASK` | Bench one task across all models. |
+
 ## Exit codes
 
 - `0` — success

@@ -67,6 +67,7 @@ Full walkthrough: [Getting started](docs/getting-started.md).
 | [Monitoring](docs/monitoring.md) | What the Grafana dashboard shows, metrics exposed |
 | [Configuration](docs/configuration.md) | All `.env` variables, `providers.json` pricing |
 | [Plugins](docs/plugins.md) | `console` (web UI) and `git-tracking` |
+| [Local agents (omlx)](docs/agents.md) | Route simple tasks (commits, summaries, …) to a local Apple-Silicon LLM |
 | [Providers](docs/providers.md) | Adding a new upstream provider |
 | [Architecture](docs/architecture.md) | Three containers, shared dicts, why no Redis |
 | [Security](docs/security.md) | Admin API hardening, secrets hygiene, network exposure |
