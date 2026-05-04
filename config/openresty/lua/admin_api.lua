@@ -741,16 +741,28 @@ if uri == "/internal/admin/diagnostics" and method == "GET" then
     end
 
     if want("totals") then
-        local total_requests, total_errors, total_input, total_output = 0, 0, 0, 0
+        local t = { requests = 0, errors = 0, input = 0, output = 0,
+                    cache_read = 0, cache_creation = 0 }
+        -- Only the 4-part base counter `user|provider|model|<field>` — skip
+        -- the parallel `day|...` rollups and `user|provider|model|effort|...`
+        -- / `|modality|...` dimensional counters which all share the same
+        -- field-name suffix and would 4× the numbers if added together.
         for _, key in ipairs(cd:get_keys(5000) or {}) do
-            if key:find("|requests$", 1, true) then total_requests = total_requests + (cd:get(key) or 0) end
-            if key:find("|errors$",   1, true) then total_errors   = total_errors   + (cd:get(key) or 0) end
-            if key:find("|input$",    1, true) then total_input    = total_input    + (cd:get(key) or 0) end
-            if key:find("|output$",   1, true) then total_output   = total_output   + (cd:get(key) or 0) end
+            local _, pipes = key:gsub("|", "")
+            if pipes == 3 and key:sub(1, 4) ~= "day|" then
+                local field = key:match("|([^|]+)$")
+                if field and t[field] ~= nil then
+                    t[field] = t[field] + (cd:get(key) or 0)
+                end
+            end
         end
         out.totals = {
-            requests = total_requests, upstream_errors = total_errors,
-            input_tokens = total_input, output_tokens = total_output,
+            requests = t.requests,
+            upstream_errors = t.errors,
+            input_tokens = t.input,
+            output_tokens = t.output,
+            cache_read_tokens = t.cache_read,
+            cache_creation_tokens = t.cache_creation,
         }
     end
 
