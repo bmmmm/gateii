@@ -323,17 +323,25 @@ def main():
     if args.task and args.task not in TASKS:
         sys.exit(f"unknown task: {args.task}")
 
+    # Small models (≤ SMALL_MODEL_GB) are fast enough to bench on the full task
+    # suite; big models get only reasoning + classify (where they might shine
+    # despite the latency cost). The default model is always full-bench.
+    SMALL_MODEL_GB = 10
+    sizes = {m["id"]: m["estimated_size"] for m in status["models"]}
+
     all_results = []
     for model in models_to_bench:
-        # For non-default models, only bench reasoning + 1 fast task as comparison
-        if model == DEFAULT_MODEL or args.task or args.quick:
+        size_gb = gb(sizes.get(model, 0))
+        is_small = size_gb <= SMALL_MODEL_GB
+        if model == DEFAULT_MODEL or args.task or args.quick or is_small:
             tasks = tasks_full
         else:
             tasks = [t for t in ["reasoning", "classify-yesno"] if t in tasks_full]
             if not tasks:
                 continue
 
-        print(f"\n=== {model} ({len(tasks)} task(s) × {1 if args.quick else args.trials} trial(s)) ===", flush=True)
+        size_label = f"{size_gb:.1f} GB" + (" — small, full bench" if (is_small and model != DEFAULT_MODEL) else "")
+        print(f"\n=== {model} ({size_label}) — {len(tasks)} task(s) × {1 if args.quick else args.trials} trial(s) ===", flush=True)
         status = ensure_model(model, status)
         trials = 1 if args.quick else args.trials
         all_results.extend(bench_model(model, tasks, trials))
