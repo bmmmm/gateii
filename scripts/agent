@@ -125,10 +125,12 @@ append_log() {
 task_config() {
     local task="$1"
     local row
-    row=$($JQ -r --arg t "$task" '.tasks[$t] // empty | "\(.max_tokens)\t\(.system)"' "$TASKS_JSON" 2>/dev/null)
+    row=$($JQ -r --arg t "$task" '.tasks[$t] // empty | "\(.max_tokens)\t\(.system)\t\(.strip_fences // false)"' "$TASKS_JSON" 2>/dev/null)
     [ -z "$row" ] && return 1
     MAX_TOKENS="${row%%$'\t'*}"
-    SYSTEM="${row#*$'\t'}"
+    local rest="${row#*$'\t'}"
+    STRIP_FENCES="${rest##*$'\t'}"
+    SYSTEM="${rest%$'\t'*}"
 }
 
 cmd_tasks() {
@@ -291,6 +293,13 @@ cmd_run() {
 
     local t1=$(/usr/bin/python3 -c 'import time;print(time.time())')
     dt=$(/usr/bin/python3 -c "print(round($t1-$t0,3))")
+
+    # Strip markdown code fences if the task declares strip_fences=true.
+    # Handles both ```lang\n...\n``` and ```\n...\n``` patterns. Needed because
+    # some models (notably Haiku) wrap JSON/code in fences despite prompt instructions.
+    if [ "$STRIP_FENCES" = "true" ] && [ -n "$text" ]; then
+        text=$(printf '%s' "$text" | /usr/bin/sed -E 's/^```[a-z]*[[:space:]]*//' | /usr/bin/sed 's/[[:space:]]*```[[:space:]]*$//')
+    fi
 
     if [ -z "$text" ]; then
         echo "[agent] empty response (model=$picked_model stop=$stop)" >&2

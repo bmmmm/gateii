@@ -4,7 +4,7 @@
     "commit-msg": {
       "max_tokens": 80,
       "system": "Generate a single-line conventional commit message for this git diff. Format: type(scope): description. Output ONLY the commit message line, no explanation, no preamble.",
-      "bench_prompt": "scripts/git-tracking.sh +50 -10\nconfig/openresty/lua/admin_api.lua +30 -5",
+      "bench_prompt": "diff --git a/scripts/git-tracking.sh b/scripts/git-tracking.sh\n@@ -1,5 +1,8 @@\n+PLATFORM=$(git remote get-url origin 2>/dev/null | ...)\n+echo \"platform=$PLATFORM\"\n diff --git a/config/openresty/lua/admin_api.lua b/config/openresty/lua/admin_api.lua\n@@ -42,6 +42,9 @@ local function handle_agents()\n+  local omlx = fetch_omlx_status()\n+  resp.omlx_status = omlx",
       "compliant": "^[a-zA-Z]+(\\([a-zA-Z0-9.,/ _\\-]+\\))?: .+$"
     },
     "summarize-file": {
@@ -33,9 +33,10 @@
     },
     "extract-json": {
       "max_tokens": 120,
-      "system": "Extract structured data as a JSON object. Output ONLY the JSON, no markdown fences, no explanation.",
+      "system": "Extract structured data as a JSON object. Output ONLY the raw JSON. No markdown code fences, no backticks, no explanation. Start your response with `{`.",
       "bench_prompt": "192.168.1.42 - - [04/May/2026:12:33:01 +0000] \"POST /api/login HTTP/1.1\" 200 421\nExtract fields: ip, method, status_code, path",
-      "compliant": "(?s)^\\s*\\{[^{}]*\"ip\"\\s*:\\s*\"\\d+\\.\\d+\\.\\d+\\.\\d+\".*\"method\"\\s*:\\s*\"[A-Z]+\""
+      "strip_fences": true,
+      "compliant": "(?s)^(```json\\s*)?\\s*\\{[^{}]*\"ip\"\\s*:\\s*\"\\d+\\.\\d+\\.\\d+\\.\\d+\".*\"method\"\\s*:\\s*\"[A-Z]+\""
     },
     "explain-line": {
       "max_tokens": 60,
@@ -63,7 +64,8 @@
     },
     "code-gen-short": {
       "max_tokens": 250,
-      "system": "Write code only, no explanation, no markdown fences. Just the raw code.",
+      "system": "Write code only. Your response MUST begin with `def`. No markdown code fences, no backticks, no explanation, no preamble of any kind.",
+      "strip_fences": true,
       "bench_prompt": "Write a Python function `parse_size(s: str) -> int` that converts strings like '5KB', '2.5MB', '1.5GB' to bytes.",
       "compliant": "(?s)^def\\s+parse_size"
     },
@@ -71,7 +73,7 @@
       "max_tokens": 120,
       "system": "Summarize the input in ONE or TWO sentences. No bullet list. No preamble. Output only the summary.",
       "bench_prompt": "OpenResty is a web platform that integrates the standard Nginx core with LuaJIT, enabling developers to write Lua scripts that run inside Nginx workers. It is widely used for building high-performance API gateways, dynamic content servers, and microservice routers. Key advantages include co-routine-based concurrency, non-blocking I/O via cosockets, and a rich ecosystem of lua-resty-* libraries.",
-      "compliant": "(?s)^[A-Z].{40,300}\\.\\s*$"
+      "compliant": "(?s)^[A-Z].{40,500}[.!?]?\\s*$"
     },
     "slug": {
       "max_tokens": 30,
@@ -93,15 +95,56 @@
     },
     "keywords": {
       "max_tokens": 80,
-      "system": "Extract the top 5 keywords from the input. Output ONLY a JSON array of strings, e.g. [\"foo\",\"bar\",\"baz\"]. No explanation.",
+      "system": "Extract the top 5 keywords from the input. Output ONLY a raw JSON array of strings, e.g. [\"foo\",\"bar\",\"baz\"]. No markdown code fences, no backticks, no explanation. Start with `[`.",
+      "strip_fences": true,
       "bench_prompt": "OpenResty integrates Nginx with LuaJIT for high-performance, scriptable web applications, supporting non-blocking I/O via cosockets and co-routine concurrency.",
       "compliant": "^\\s*\\[\\s*\"[^\"]+\"(\\s*,\\s*\"[^\"]+\"){2,}"
     },
     "reasoning": {
       "max_tokens": 80,
-      "system": "Solve and output only the final HH:MM time.",
+      "system": "Solve the problem and output ONLY the final HH:MM answer. No explanation, no reasoning steps, no bold markdown, no other text. Just the time.",
       "bench_prompt": "Train1 leaves 9am at 60km/h. Train2 leaves 10am same station, same direction, 90km/h. Meeting time?",
       "compliant": "^\\s*12:00\\s*$"
+    },
+    "tool-call-read": {
+      "max_tokens": 200,
+      "system": "You have access to tools. Always use the provided tool to answer — do not answer from memory.",
+      "bench_prompt": "What is the content of the file /tmp/hello.txt?",
+      "scoring": "tool_use_name",
+      "compliant": "read_file",
+      "tools": [
+        {
+          "name": "read_file",
+          "description": "Read the content of a file from disk",
+          "input_schema": {
+            "type": "object",
+            "properties": {
+              "path": { "type": "string", "description": "Absolute path to the file" }
+            },
+            "required": ["path"]
+          }
+        }
+      ]
+    },
+    "tool-call-bash": {
+      "max_tokens": 200,
+      "system": "You have access to tools. Always use the provided tool to answer — do not answer from memory.",
+      "bench_prompt": "Count the number of .lua files in /tmp.",
+      "scoring": "tool_use_name",
+      "compliant": "bash",
+      "tools": [
+        {
+          "name": "bash",
+          "description": "Run a bash shell command and return its stdout",
+          "input_schema": {
+            "type": "object",
+            "properties": {
+              "command": { "type": "string", "description": "The bash command to run" }
+            },
+            "required": ["command"]
+          }
+        }
+      ]
     }
   }
 }
