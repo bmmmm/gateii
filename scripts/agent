@@ -224,51 +224,76 @@ cmd_run() {
     # active.json + lock cleanup is set in the lock-acquire trap above
 
     local body resp body_only http_code text stop in_tok out_tok dt
-    body=$($JQ -n \
-        --arg model "$picked_model" \
-        --argjson mt "$MAX_TOKENS" \
-        --arg sys "$SYSTEM" \
-        --arg user "$input" \
-        '{model:$model, max_tokens:$mt, temperature:0.2, chat_template_kwargs:{enable_thinking:false}, system:$sys, messages:[{role:"user", content:$user}]}')
-
     local t0=$(/usr/bin/python3 -c 'import time;print(time.time())')
-    resp=$(/usr/bin/curl -s --max-time "$TIMEOUT" \
-        -w "\n__HTTP__%{http_code}" \
-        -X POST "$GATEII_URL/v1/messages" \
-        -H "Content-Type: application/json" \
-        -H "x-api-key: $key" \
-        -H "x-provider: omlx" \
-        -d "$body" 2>&1) || {
-            echo "[agent] curl failed (timeout or network)" >&2
+
+    if [[ "$picked_model" == claude-* ]]; then
+        # Claude CLI path — uses existing Claude Code auth (OAuth/proxy key).
+        # Runs from /tmp so no project CLAUDE.md bleeds into the context.
+        local claude_bin
+        claude_bin=$(command -v claude 2>/dev/null || true)
+        if [ -z "$claude_bin" ]; then
+            echo "[agent] claude CLI not found — cannot route $task to $picked_model" >&2
             append_log "$($JQ -n --arg t "$task" --arg m "$picked_model" --arg s "$started_at" \
-                '{started_at:$s, task:$t, model:$m, error:"curl failed", exit:4}')"
+                '{started_at:$s, task:$t, model:$m, error:"claude CLI not found", exit:4}')"
             exit 4
-        }
+        fi
+        text=$(cd /tmp && "$claude_bin" \
+            --model "$picked_model" \
+            --print "$input" \
+            --system-prompt "$SYSTEM" \
+            --tools "" \
+            --no-session-persistence \
+            --output-format text \
+            2>/dev/null) || true
+        http_code=200; stop="end_turn"; in_tok=0; out_tok=0
+    else
+        # omlx path via gateii
+        body=$($JQ -n \
+            --arg model "$picked_model" \
+            --argjson mt "$MAX_TOKENS" \
+            --arg sys "$SYSTEM" \
+            --arg user "$input" \
+            '{model:$model, max_tokens:$mt, temperature:0.2, chat_template_kwargs:{enable_thinking:false}, system:$sys, messages:[{role:"user", content:$user}]}')
+
+        resp=$(/usr/bin/curl -s --max-time "$TIMEOUT" \
+            -w "\n__HTTP__%{http_code}" \
+            -X POST "$GATEII_URL/v1/messages" \
+            -H "Content-Type: application/json" \
+            -H "x-api-key: $key" \
+            -H "x-provider: omlx" \
+            -d "$body" 2>&1) || {
+                echo "[agent] curl failed (timeout or network)" >&2
+                append_log "$($JQ -n --arg t "$task" --arg m "$picked_model" --arg s "$started_at" \
+                    '{started_at:$s, task:$t, model:$m, error:"curl failed", exit:4}')"
+                exit 4
+            }
+
+        http_code=$(printf '%s' "$resp" | /usr/bin/grep -oE '__HTTP__[0-9]+$' | /usr/bin/grep -oE '[0-9]+$' || echo "?")
+        body_only=$(printf '%s' "$resp" | /usr/bin/sed 's/__HTTP__[0-9]*$//')
+
+        if [ "$http_code" != "200" ]; then
+            echo "[agent] upstream returned HTTP $http_code:" >&2
+            echo "$body_only" >&2
+            append_log "$($JQ -n --arg t "$task" --arg m "$picked_model" --arg s "$started_at" \
+                --argjson dt "0" --argjson http "${http_code:-0}" \
+                '{started_at:$s, task:$t, model:$m, latency_s:$dt, http:$http, exit:5}')"
+            exit 5
+        fi
+
+        text=$(printf '%s' "$body_only" | $JQ -r '.content[0].text // ""')
+        stop=$(printf '%s' "$body_only" | $JQ -r '.stop_reason // "?"')
+        in_tok=$(printf '%s' "$body_only" | $JQ -r '
+            (.usage.input_tokens // 0)
+          + (.usage.cache_creation_input_tokens // 0)
+          + (.usage.cache_read_input_tokens // 0)')
+        out_tok=$(printf '%s' "$body_only" | $JQ -r '.usage.output_tokens // 0')
+    fi
+
     local t1=$(/usr/bin/python3 -c 'import time;print(time.time())')
     dt=$(/usr/bin/python3 -c "print(round($t1-$t0,3))")
 
-    http_code=$(printf '%s' "$resp" | /usr/bin/grep -oE '__HTTP__[0-9]+$' | /usr/bin/grep -oE '[0-9]+$' || echo "?")
-    body_only=$(printf '%s' "$resp" | /usr/bin/sed 's/__HTTP__[0-9]*$//')
-
-    if [ "$http_code" != "200" ]; then
-        echo "[agent] upstream returned HTTP $http_code:" >&2
-        echo "$body_only" >&2
-        append_log "$($JQ -n --arg t "$task" --arg m "$picked_model" --arg s "$started_at" \
-            --argjson dt "$dt" --argjson http "${http_code:-0}" \
-            '{started_at:$s, task:$t, model:$m, latency_s:$dt, http:$http, exit:5}')"
-        exit 5
-    fi
-
-    text=$(printf '%s' "$body_only" | $JQ -r '.content[0].text // ""')
-    stop=$(printf '%s' "$body_only" | $JQ -r '.stop_reason // "?"')
-    in_tok=$(printf '%s' "$body_only" | $JQ -r '
-        (.usage.input_tokens // 0)
-      + (.usage.cache_creation_input_tokens // 0)
-      + (.usage.cache_read_input_tokens // 0)')
-    out_tok=$(printf '%s' "$body_only" | $JQ -r '.usage.output_tokens // 0')
-
     if [ -z "$text" ]; then
-        echo "[agent] empty response from omlx (stop=$stop)" >&2
+        echo "[agent] empty response (model=$picked_model stop=$stop)" >&2
         append_log "$($JQ -n --arg t "$task" --arg m "$picked_model" --arg s "$started_at" \
             --argjson dt "$dt" --arg stop "$stop" \
             '{started_at:$s, task:$t, model:$m, latency_s:$dt, stop:$stop, exit:6, error:"empty response"}')"
