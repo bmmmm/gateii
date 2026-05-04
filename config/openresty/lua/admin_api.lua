@@ -911,6 +911,9 @@ if uri == "/internal/admin/agents" and method == "GET" then
         out.active = cjson.decode(content)
     end
 
+    -- Per-model usage stats aggregated from the FULL log.jsonl (not just last 50)
+    -- so we capture lifetime efficiency per model.
+    local usage = {}  -- model → {runs, passed, latency_sum, last_used_epoch, by_task={}}
     local lf = io.open(AGENTS_DIR .. "/log.jsonl", "r")
     if lf then
         local lines = {}
@@ -918,11 +921,37 @@ if uri == "/internal/admin/agents" and method == "GET" then
             if line ~= "" then table.insert(lines, line) end
         end
         lf:close()
+        -- Aggregate usage from all lines
+        for _, raw in ipairs(lines) do
+            local rec = cjson.decode(raw)
+            if rec and rec.model then
+                local m = rec.model
+                usage[m] = usage[m] or { runs=0, passed=0, latency_sum=0, last_used_at=nil }
+                usage[m].runs = usage[m].runs + 1
+                if rec.exit == 0 then usage[m].passed = usage[m].passed + 1 end
+                usage[m].latency_sum = usage[m].latency_sum + (rec.latency_s or 0)
+                -- ISO date sort works lex; keep latest
+                if not usage[m].last_used_at or (rec.started_at and rec.started_at > usage[m].last_used_at) then
+                    usage[m].last_used_at = rec.started_at
+                end
+            end
+        end
+        -- Recent (last 50) for the table
         local start_idx = math.max(1, #lines - 49)
         for i = start_idx, #lines do
             local rec = cjson.decode(lines[i])
             if rec then table.insert(out.recent, rec) end
         end
+    end
+    -- Convert to output shape (avg latency, pass rate)
+    out.usage = {}
+    for model, u in pairs(usage) do
+        out.usage[model] = {
+            runs        = u.runs,
+            pass_rate   = u.runs > 0 and (u.passed / u.runs) or 0,
+            latency_avg = u.runs > 0 and (u.latency_sum / u.runs) or 0,
+            last_used_at = u.last_used_at,
+        }
     end
 
     local rf = io.open(AGENTS_DIR .. "/routing.json", "r")

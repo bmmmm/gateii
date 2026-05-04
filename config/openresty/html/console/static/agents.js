@@ -122,7 +122,7 @@ function renderHistory(recent) {
   </table>`;
 }
 
-function renderModels(omlx) {
+function renderModels(omlx, usage) {
   const area = $('models-area');
   const meta = $('models-meta');
   if (!omlx || !omlx.models) {
@@ -130,6 +130,7 @@ function renderModels(omlx) {
     meta.textContent = 'omlx unreachable';
     return;
   }
+  usage = usage || {};
   const totalGB = omlx.current_model_memory ? (omlx.current_model_memory / (1024**3)).toFixed(1) : '0.0';
   const maxGB   = omlx.max_model_memory     ? (omlx.max_model_memory     / (1024**3)).toFixed(1) : '?';
   meta.textContent = `${omlx.loaded_count || 0}/${omlx.model_count || 0} loaded · ${totalGB}/${maxGB} GB`;
@@ -153,12 +154,27 @@ function renderModels(omlx) {
     const action = m.loaded
         ? `<button class="btn btn-blue model-act" data-model="${esc(m.id)}" data-action="unload" style="font-size:10px;padding:2px 8px">unload</button>`
         : `<button class="btn btn-blue model-act" data-model="${esc(m.id)}" data-action="load"   style="font-size:10px;padding:2px 8px">load</button>`;
+    // Lifetime usage stats (from log.jsonl)
+    const u = usage[m.id];
+    let usageRows = '';
+    if (u && u.runs > 0) {
+      const passPct = Math.round(u.pass_rate * 100);
+      const passCls = passPct === 100 ? 'c-green' : (passPct >= 70 ? '' : 'c-red');
+      usageRows =
+        `<b>runs</b><span>${u.runs}</span>` +
+        `<b>avg latency</b><span>${u.latency_avg.toFixed(2)}s</span>` +
+        `<b>pass</b><span class="${passCls}">${passPct}%</span>` +
+        (u.last_used_at ? `<b>last run</b><span>${esc(u.last_used_at)}</span>` : '');
+    } else {
+      usageRows = '<b>runs</b><span style="opacity:.5">never used (yet)</span>';
+    }
     return `<div class="${cls}">
       <div class="id">${esc(m.id)} ${badge}</div>
       <div class="gb">${sizeGB} GB · ${esc(m.config_model_type || '?')} · ctx ${ctx}</div>
       <div class="meta">
         <b>thinking</b><span>${thinking}</span>
         <b>last call</b><span>${lastAccess}</span>
+        ${usageRows}
       </div>
       <div style="margin-top:8px;text-align:right">${action}</div>
     </div>`;
@@ -239,7 +255,7 @@ async function pollAgents() {
     const data = await r.json();
     renderActive(data.active);
     renderHistory(data.recent || []);
-    renderModels(data.omlx_status);
+    renderModels(data.omlx_status, data.usage);
     renderBench(data.bench);
     renderRouting(data.routing);
     _lastOk = Date.now();
