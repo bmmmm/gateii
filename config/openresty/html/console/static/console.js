@@ -20,12 +20,12 @@ const esc = s => String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>
     const overlay = document.createElement('div');
     overlay.id = 'auth-overlay';
     overlay.className = 'diag-overlay';
-    overlay.innerHTML = `<div class="diag-modal" style="max-width:420px" onclick="event.stopPropagation()">
-      <div class="diag-head"><h3>Admin Login</h3></div>
+    overlay.innerHTML = `<div class="diag-modal" style="max-width:420px" role="dialog" aria-modal="true" aria-labelledby="auth-title" onclick="event.stopPropagation()">
+      <div class="diag-head"><h3 id="auth-title">Admin Login</h3></div>
       <div class="diag-body" style="padding:14px 16px">
-        <p style="margin-bottom:10px;font-size:13px;color:var(--dim)">Admin token required for this console.</p>
-        <input type="password" id="auth-token-input" class="input" style="width:100%" autocomplete="off" placeholder="paste ADMIN_TOKEN…">
-        <p id="auth-error" style="color:var(--err);font-size:12px;min-height:1.4em;margin-top:6px"></p>
+        <label for="auth-token-input" style="display:block;margin-bottom:10px;font-size:13px;color:var(--dim)">Admin token required for this console.</label>
+        <input type="password" id="auth-token-input" class="input" style="width:100%" autocomplete="off" aria-describedby="auth-error" placeholder="paste ADMIN_TOKEN…">
+        <p id="auth-error" style="color:var(--err);font-size:12px;min-height:1.4em;margin-top:6px" aria-live="polite"></p>
         <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:6px">
           <button class="btn btn-danger" id="auth-cancel">Cancel</button>
           <button class="btn btn-primary" id="auth-submit">Login</button>
@@ -154,13 +154,48 @@ const esc = s => String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>
   })();
 })();
 
-function toast(msg, isError) {
+// Toasts queue and fade in sequence so a burst of parallel actions (e.g.
+// Unload-All firing N requests) doesn't collapse to "only the last
+// message visible". Each toast holds for ~2.4s, errors for 3.5s.
+// Identical consecutive messages coalesce so a flurry of duplicate
+// validation errors doesn't pile up.
+//
+// Repeated *error* toasts are also rate-limited per (key) bucket so a
+// proxy outage doesn't fire one toast every poll-cycle (15s overview,
+// 2s agents) for as long as the outage lasts. Pass `errorKey` to opt in
+// — same key within 20 s gets dropped silently.
+const _toastQueue = [];
+let _toastShowing = false;
+const _errorToastSeen = new Map();   // key → last-shown epoch ms
+const ERROR_TOAST_BACKOFF_MS = 20000;
+function toast(msg, isError, errorKey) {
   const t = $('toast');
   if (!t) return;
-  t.textContent = msg;
-  t.className = 'toast show' + (isError ? ' error' : '');
-  clearTimeout(t._tid);
-  t._tid = setTimeout(() => t.className = 'toast', 3000);
+  if (isError && errorKey) {
+    const last = _errorToastSeen.get(errorKey) || 0;
+    if (Date.now() - last < ERROR_TOAST_BACKOFF_MS) return;
+    _errorToastSeen.set(errorKey, Date.now());
+  }
+  const last = _toastQueue[_toastQueue.length - 1]
+    || (_toastShowing ? { msg: t.textContent, err: t.classList.contains('error') } : null);
+  if (last && last.msg === msg && last.err === !!isError) return;
+  _toastQueue.push({ msg, err: !!isError });
+  _drainToasts();
+}
+function _drainToasts() {
+  if (_toastShowing) return;
+  const next = _toastQueue.shift();
+  if (!next) return;
+  const t = $('toast');
+  if (!t) return;
+  _toastShowing = true;
+  t.textContent = next.msg;
+  t.className = 'toast show' + (next.err ? ' error' : '');
+  const hold = next.err ? 3500 : 2400;
+  setTimeout(() => {
+    t.className = 'toast';
+    setTimeout(() => { _toastShowing = false; _drainToasts(); }, 300);
+  }, hold);
 }
 
 // Shared tab navigation — single source of truth so adding/renaming a
@@ -235,10 +270,23 @@ async function withBusy(btn, fn) {
   finally { if (el && !wasDisabled) el.disabled = false; }
 }
 
+// Compact human number with K/M/G suffix. G threshold added in pass 4
+// because token counters cross 1e9 in steady use ("1124.3M" → "1.1G").
 function fmt(n) {
+  if (n == null || isNaN(n)) return '-';
+  if (n >= 1e9) return (n / 1e9).toFixed(1) + 'G';
   if (n >= 1e6) return (n / 1e6).toFixed(1) + 'M';
   if (n >= 1e3) return (n / 1e3).toFixed(1) + 'K';
   return Math.round(n).toString();
+}
+
+// Format milliseconds as ms / s / m for readability. 11258ms → "11.3s",
+// 75000ms → "1m15s". Used by latency stat-cards.
+function fmtLatencyMs(ms) {
+  if (ms == null || isNaN(ms) || ms < 0) return '-';
+  if (ms < 1000) return Math.round(ms) + 'ms';
+  if (ms < 60000) return (ms / 1000).toFixed(1) + 's';
+  return Math.floor(ms / 60000) + 'm' + Math.round((ms % 60000) / 1000) + 's';
 }
 
 function fmtUSD(n) {
@@ -409,22 +457,46 @@ function initDiagnostics() {
 // Used by every page's refresh() so the per-page logic only owns its own
 // section. Returns the parsed overview object (or null on failure) so the
 // caller can chain off it without an extra fetch.
+// Updates the status pill + mode-tag from /health and /admin/overview.
+// Three-state pill: online (both ok), auth (proxy up but admin endpoint
+// returned 401 — login modal is the user's next step), offline (proxy
+// itself unreachable). The agents tab overrides the pill text to "live"
+// after a successful poll, so the auth state mostly surfaces on overview.
 async function refreshHeader() {
+  let healthOk = false;
   try {
-    const h = await fetch('/health').then(r => r.ok);
-    $('status-pill').className = h ? 'status-pill online' : 'status-pill offline';
-    $('status-text').textContent = h ? 'online' : 'offline';
+    healthOk = await fetch('/health').then(r => r.ok);
   } catch (e) {
     $('status-pill').className = 'status-pill offline';
     $('status-text').textContent = 'error: ' + e.message;
+    return null;
   }
-  let ov = null;
+  if (!healthOk) {
+    $('status-pill').className = 'status-pill offline';
+    $('status-text').textContent = 'offline';
+    return null;
+  }
+  let ov = null, ovStatus = 0;
   try {
-    ov = await fetch('/internal/admin/overview').then(r => r.json());
-    if ($('mode-display')) {
-      $('mode-display').textContent = (ov.proxy_mode || '?').toUpperCase()
-        + (ov.passthrough_user ? ' (' + ov.passthrough_user + ')' : '');
+    const r = await fetch('/internal/admin/overview');
+    ovStatus = r.status;
+    if (r.ok) {
+      ov = await r.json();
+      if ($('mode-display')) {
+        $('mode-display').textContent = (ov.proxy_mode || '?').toUpperCase()
+          + (ov.passthrough_user ? ' (' + ov.passthrough_user + ')' : '');
+      }
     }
   } catch (e) { /* mode-display stays at last value */ }
+  // 401 means proxy is reachable but our session is gone — the global
+  // fetch wrapper has already triggered the login modal, so reflect that
+  // in the pill instead of pretending we're "online".
+  if (ovStatus === 401) {
+    $('status-pill').className = 'status-pill warn';
+    $('status-text').textContent = 'auth required';
+  } else {
+    $('status-pill').className = 'status-pill online';
+    $('status-text').textContent = 'online';
+  }
   return ov;
 }

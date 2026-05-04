@@ -125,8 +125,7 @@ async function loadStats(metrics) {
   setVal('s-req', fmt(req), _prev, 'req');
   setVal('s-tok', fmt(tok), _prev, 'tok');
   setVal('s-cost', fmtUSD(cost), _prev, 'cost');
-  const latStr = lat > 0 ? lat + 'ms' : '-';
-  setVal('s-latency', latStr, _prev, 'lat');
+  setVal('s-latency', fmtLatencyMs(lat), _prev, 'lat');
 
   // Sub-text breakdowns
   $('s-req-detail').textContent = `last ${win} · ${src}`;
@@ -241,8 +240,14 @@ async function serviceAction(btn, service, action) {
           toast('proxy restarting — reloading when /health is back…');
           waitForProxyAndReload();
         } else {
-          // Refresh services list after a short delay so docker has time to update
+          // Multi-stage refresh: docker compose may report old state for
+          // a moment after restart/recreate before the new container is
+          // healthy. A single 1.5s timer often caught the in-between
+          // state. Three samples (immediate, 1.5s, 4s) cover a wider
+          // window — _changed() in loadServices skips redundant renders.
+          loadServices();
           setTimeout(loadServices, 1500);
+          setTimeout(loadServices, 4000);
         }
       } else {
         toast(`${action} ${service} failed: ${result.error || 'HTTP ' + r.status}`, true);
@@ -573,7 +578,9 @@ async function refresh() {
     $('last-refresh').textContent = new Date().toLocaleTimeString();
   } catch (e) {
     if (myEpoch !== _refreshEpoch) return;
-    toast('refresh failed: ' + e.message, true);
+    // Rate-limited: a 15-min proxy outage shouldn't fire 60 separate
+    // toasts at the user — same `errorKey` within 20s is suppressed.
+    toast('refresh failed: ' + e.message, true, 'overview-refresh');
   }
 }
 
