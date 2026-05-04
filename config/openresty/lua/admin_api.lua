@@ -677,50 +677,84 @@ end
 -- compose-ctl), upstream health probe summary. Read-only; same auth
 -- as every other admin endpoint.
 if uri == "/internal/admin/diagnostics" and method == "GET" then
-    local out = {
-        timestamp = os.date("!%Y-%m-%dT%H:%M:%SZ"),
-        proxy_mode = os.getenv("PROXY_MODE") or "apikey",
-        passthrough_user = os.getenv("PASSTHROUGH_USER") or "",
-    }
-
-    -- Shared dict free bytes
-    out.shared_dicts = {
-        counters       = ngx.shared.counters       and ngx.shared.counters:free_space()       or nil,
-        blocking       = ngx.shared.blocking       and ngx.shared.blocking:free_space()       or nil,
-        admin_sessions = ngx.shared.admin_sessions and ngx.shared.admin_sessions:free_space() or nil,
-        auth_cache     = ngx.shared.auth_cache     and ngx.shared.auth_cache:free_space()     or nil,
-    }
-
-    -- Rate-limit window state (raw values from counters dict, not derived)
     local cd = ngx.shared.counters
-    out.rate_limits = {
-        util_5h        = tonumber(cd:get("ratelimit_5h_utilization")),
-        util_7d        = tonumber(cd:get("ratelimit_7d_utilization")),
-        tokens_remaining = tonumber(cd:get("ratelimit_remaining")),
-        tokens_window_max = tonumber(cd:get("tokens_window_limit")),
-        reset_5h_ts    = cd:get("ratelimit_reset_ts"),
-        reset_7d_ts    = cd:get("ratelimit_7d_reset_ts"),
-        fallback_pct   = tonumber(cd:get("ratelimit_fallback_pct")),
-        tokens_expired_last_window = tonumber(cd:get("ratelimit_tokens_expired")),
-    }
 
-    -- Counters totals (last reset = container restart minus persistence)
-    local total_requests, total_errors, total_input, total_output = 0, 0, 0, 0
-    for _, key in ipairs(cd:get_keys(5000) or {}) do
-        if key:find("|requests$",        1, true) then total_requests = total_requests + (cd:get(key) or 0) end
-        if key:find("|errors$",          1, true) then total_errors   = total_errors   + (cd:get(key) or 0) end
-        if key:find("|input$",           1, true) then total_input    = total_input    + (cd:get(key) or 0) end
-        if key:find("|output$",          1, true) then total_output   = total_output   + (cd:get(key) or 0) end
+    -- Soft rate-limit: 6 calls/min/client. Admin auth is the real defense;
+    -- this is a detection-signal cap so a runaway script or a compromised
+    -- session can't hammer the endpoint silently. Returns 429 + Retry-After.
+    local DIAG_RATE_LIMIT_PER_MIN = 6
+    local rl_key = "diag_rl|" .. (ngx.var.remote_addr or "?")
+    local count = cd:incr(rl_key, 1, 0, 60) or 0
+    if count > DIAG_RATE_LIMIT_PER_MIN then
+        ngx.status = 429
+        ngx.header["Retry-After"] = "60"
+        ngx.say(cjson.encode({
+            error = "rate_limit",
+            limit_per_min = DIAG_RATE_LIMIT_PER_MIN,
+            window_seconds = 60,
+        }))
+        return
     end
-    out.totals = {
-        requests = total_requests,
-        upstream_errors = total_errors,
-        input_tokens  = total_input,
-        output_tokens = total_output,
-    }
 
-    -- Services from compose-ctl (best-effort, not fatal if sidecar down)
-    do
+    -- Optional ?include=services,rate_limits,plugins,totals,shared_dicts,proxy
+    -- to scope the response. Useful when piping diagnostics to less-privileged
+    -- tools (monitoring, backup) that don't need image versions / uptimes.
+    local args = ngx.req.get_uri_args()
+    local include_set
+    if args.include and args.include ~= "" then
+        include_set = {}
+        for k in tostring(args.include):gmatch("[^,%s]+") do
+            include_set[k] = true
+        end
+    end
+    local function want(section)
+        return include_set == nil or include_set[section] == true
+    end
+
+    local out = { timestamp = os.date("!%Y-%m-%dT%H:%M:%SZ") }
+
+    if want("proxy") then
+        out.proxy_mode = os.getenv("PROXY_MODE") or "apikey"
+        out.passthrough_user = os.getenv("PASSTHROUGH_USER") or ""
+    end
+
+    if want("shared_dicts") then
+        out.shared_dicts = {
+            counters       = ngx.shared.counters       and ngx.shared.counters:free_space()       or nil,
+            blocking       = ngx.shared.blocking       and ngx.shared.blocking:free_space()       or nil,
+            admin_sessions = ngx.shared.admin_sessions and ngx.shared.admin_sessions:free_space() or nil,
+            auth_cache     = ngx.shared.auth_cache     and ngx.shared.auth_cache:free_space()     or nil,
+        }
+    end
+
+    if want("rate_limits") then
+        out.rate_limits = {
+            util_5h        = tonumber(cd:get("ratelimit_5h_utilization")),
+            util_7d        = tonumber(cd:get("ratelimit_7d_utilization")),
+            tokens_remaining = tonumber(cd:get("ratelimit_remaining")),
+            tokens_window_max = tonumber(cd:get("tokens_window_limit")),
+            reset_5h_ts    = cd:get("ratelimit_reset_ts"),
+            reset_7d_ts    = cd:get("ratelimit_7d_reset_ts"),
+            fallback_pct   = tonumber(cd:get("ratelimit_fallback_pct")),
+            tokens_expired_last_window = tonumber(cd:get("ratelimit_tokens_expired")),
+        }
+    end
+
+    if want("totals") then
+        local total_requests, total_errors, total_input, total_output = 0, 0, 0, 0
+        for _, key in ipairs(cd:get_keys(5000) or {}) do
+            if key:find("|requests$", 1, true) then total_requests = total_requests + (cd:get(key) or 0) end
+            if key:find("|errors$",   1, true) then total_errors   = total_errors   + (cd:get(key) or 0) end
+            if key:find("|input$",    1, true) then total_input    = total_input    + (cd:get(key) or 0) end
+            if key:find("|output$",   1, true) then total_output   = total_output   + (cd:get(key) or 0) end
+        end
+        out.totals = {
+            requests = total_requests, upstream_errors = total_errors,
+            input_tokens = total_input, output_tokens = total_output,
+        }
+    end
+
+    if want("services") then
         local http = require "resty.http"
         local httpc = http.new()
         httpc:set_timeouts(1000, 1000, 3000)
@@ -732,22 +766,18 @@ if uri == "/internal/admin/diagnostics" and method == "GET" then
         end
     end
 
-    -- Plugins — separate "configured" (env var) from "produced output" (the
-    -- /overview endpoint uses git-metrics.txt presence). Runtime container
-    -- state is in the `services` array above; cross-reference for the full
-    -- picture.
-    local git_metrics_file = io.open("/etc/nginx/data/git-metrics.txt", "r")
-    if git_metrics_file then git_metrics_file:close() end
-    out.plugins = {
-        console = { configured = os.getenv("CONSOLE_ENABLED") == "1" },
-        git_tracking = {
-            configured = os.getenv("GIT_TRACKING_ENABLED") == "1",
-            metrics_file_present = git_metrics_file ~= nil,
-        },
-    }
-
-    -- Recent admin login failures (rolling 7d counter)
-    out.admin_login_failures_7d = tonumber(cd:get("admin_login_failures")) or 0
+    if want("plugins") then
+        local gf = io.open("/etc/nginx/data/git-metrics.txt", "r")
+        if gf then gf:close() end
+        out.plugins = {
+            console = { configured = os.getenv("CONSOLE_ENABLED") == "1" },
+            git_tracking = {
+                configured = os.getenv("GIT_TRACKING_ENABLED") == "1",
+                metrics_file_present = gf ~= nil,
+            },
+        }
+        out.admin_login_failures_7d = tonumber(cd:get("admin_login_failures")) or 0
+    end
 
     ngx.say(cjson.encode(out))
     return
