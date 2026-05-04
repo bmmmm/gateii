@@ -85,6 +85,127 @@ def run_bench(force: bool = False):
     return 202, {"status": "started", "force": force}
 
 
+# Auto-unload watcher — periodically polls oMLX /v1/models/status and unloads
+# any model that has been idle longer than its configured TTL. Per-model TTLs
+# live at /workspace/data/agents/idle-config.json:
+#   {"models": {"<id>": {"ttl_seconds": 600, "enabled": true}, ...},
+#    "default_ttl_seconds": 0}     # 0 = disabled by default (omlx own setting wins)
+# Without this we'd need omlx's admin API (separate auth flow) to set the
+# built-in idle timeout per model. This watcher is purely Bearer-auth.
+import urllib.request, urllib.error, threading
+
+OMLX_URL     = os.environ.get("OMLX_URL",     "http://host.docker.internal:8000")
+OMLX_API_KEY = os.environ.get("OMLX_API_KEY", "")
+IDLE_CONFIG  = "/workspace/data/agents/idle-config.json"
+IDLE_TICK_SECONDS = 60
+
+
+def _idle_config():
+    try:
+        with open(IDLE_CONFIG) as f:
+            return json.load(f)
+    except Exception:
+        return {}
+
+
+def _omlx_get(path: str):
+    req = urllib.request.Request(
+        OMLX_URL + path, method="GET",
+        headers={"Authorization": f"Bearer {OMLX_API_KEY}"},
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=5) as r:
+            return r.status, json.loads(r.read().decode())
+    except Exception as e:
+        return 0, {"error": str(e)}
+
+
+def _omlx_unload(model_id: str):
+    req = urllib.request.Request(
+        f"{OMLX_URL}/v1/models/{model_id}/unload", method="POST",
+        headers={"Authorization": f"Bearer {OMLX_API_KEY}"},
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=10) as r:
+            return r.status
+    except Exception:
+        return 0
+
+
+def _enforce_idle():
+    cfg = _idle_config()
+    rules = (cfg.get("models") or {})
+    default_ttl = int(cfg.get("default_ttl_seconds") or 0)
+    if not rules and default_ttl <= 0:
+        return  # nothing configured; let omlx's own setting govern
+
+    code, data = _omlx_get("/v1/models/status")
+    if code != 200:
+        return  # omlx unreachable; try again next tick
+
+    now = time.time()
+    for m in (data.get("models") or []):
+        if not m.get("loaded"):
+            continue
+        rule = rules.get(m["id"]) or {}
+        ttl = int(rule.get("ttl_seconds") or default_ttl)
+        if ttl <= 0 or rule.get("enabled") is False:
+            continue
+        last = m.get("last_access") or 0
+        if last <= 0:
+            continue  # never used since loading
+        if (now - last) >= ttl:
+            print(f"idle-watcher: unload {m['id']} (idle {int(now - last)}s ≥ {ttl}s)", flush=True)
+            _omlx_unload(m["id"])
+
+
+def _idle_watcher_loop():
+    while True:
+        try:
+            _enforce_idle()
+        except Exception as e:
+            print(f"idle-watcher error: {e}", flush=True)
+        time.sleep(IDLE_TICK_SECONDS)
+
+
+def get_idle_config():
+    cfg = _idle_config()
+    cfg.setdefault("models", {})
+    cfg.setdefault("default_ttl_seconds", 0)
+    return 200, cfg
+
+
+def put_idle_config(body: dict):
+    # Validate: models is a dict of {model_id: {ttl_seconds:int, enabled:bool}}
+    models = body.get("models") or {}
+    if not isinstance(models, dict):
+        return 400, {"error": "models must be an object"}
+    cleaned = {}
+    for mid, rule in models.items():
+        if not isinstance(mid, str) or not mid:
+            return 400, {"error": "model id must be non-empty string"}
+        if not isinstance(rule, dict):
+            return 400, {"error": f"rule for {mid} must be an object"}
+        ttl = rule.get("ttl_seconds", 0)
+        if not isinstance(ttl, int) or ttl < 0 or ttl > 86400:
+            return 400, {"error": f"{mid}.ttl_seconds must be int in [0, 86400]"}
+        cleaned[mid] = {
+            "ttl_seconds": ttl,
+            "enabled": bool(rule.get("enabled", True)),
+        }
+    default_ttl = body.get("default_ttl_seconds", 0)
+    if not isinstance(default_ttl, int) or default_ttl < 0 or default_ttl > 86400:
+        return 400, {"error": "default_ttl_seconds must be int in [0, 86400]"}
+    out = {"models": cleaned, "default_ttl_seconds": default_ttl}
+    os.makedirs(os.path.dirname(IDLE_CONFIG), exist_ok=True)
+    tmp = IDLE_CONFIG + ".tmp"
+    with open(tmp, "w") as f:
+        json.dump(out, f, indent=2)
+        f.write("\n")
+    os.replace(tmp, IDLE_CONFIG)
+    return 200, out
+
+
 def list_services():
     """All containers belonging to this compose project (running OR stopped),
     plus any configured services that have no container yet."""
@@ -210,6 +331,8 @@ class Handler(BaseHTTPRequestHandler):
             return self._reply(200, list_services())
         if path == "/health":
             return self._reply(200, {"ok": True, "project": PROJECT})
+        if path == "/idle-config":
+            return self._reply(*get_idle_config())
         return self._reply(404, {"error": f"Not found: {path}"})
 
     def do_POST(self):
@@ -230,6 +353,13 @@ class Handler(BaseHTTPRequestHandler):
             except Exception:
                 req = {}
             return self._reply(*run_bench(force=bool(req.get("force"))))
+        if path == "/idle-config":
+            length = int(self.headers.get("Content-Length", "0") or "0")
+            try:
+                req = json.loads(self.rfile.read(length).decode() or "{}")
+            except Exception:
+                req = {}
+            return self._reply(*put_idle_config(req))
         return self._reply(404, {"error": f"Not found: {self.path}"})
 
     def log_message(self, fmt, *args):
@@ -244,6 +374,10 @@ def main():
         f"compose_cmd={' '.join(COMPOSE_CMD)} port={port}",
         flush=True,
     )
+    # Idle-unload watcher in a daemon thread; outlives nothing — dies with the
+    # main process (sane shutdown via SIGTERM in compose stop).
+    threading.Thread(target=_idle_watcher_loop, daemon=True).start()
+    print(f"compose-ctl: idle watcher started (tick={IDLE_TICK_SECONDS}s)", flush=True)
     HTTPServer(("0.0.0.0", port), Handler).serve_forever()
 
 

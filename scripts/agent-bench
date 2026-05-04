@@ -211,12 +211,24 @@ def ensure_model(model_id: str, status: dict) -> dict:
                 http("POST", f"/v1/models/{m['id']}/unload")
 
     print(f"  ⤴ loading {model_id} ({gb(needed):.1f}GB) — first call will be slow", flush=True)
-    # Trigger load via a tiny request
+    # oMLX has no public /v1/models/<id>/load endpoint via Bearer auth, so we
+    # trigger the load via a tiny throwaway request. omlx loads on first call.
     http("POST", "/v1/messages", {
         "model": model_id, "max_tokens": 1, "chat_template_kwargs": {"enable_thinking": False},
         "messages": [{"role": "user", "content": "."}]
     }, timeout=300)
     return models_status()
+
+
+def unload_after_bench(model_id: str) -> None:
+    """Drop a model from RAM after we're done benching it. Default model stays
+    loaded — the wrapper hits it constantly. Big models (Qwen3.6-35B at 20 GB)
+    leave a lot of headroom when freed; small ones (gemma-4-e2b at 3.5 GB) are
+    cheap to reload anyway."""
+    if model_id == DEFAULT_MODEL:
+        return
+    print(f"  ⤵ unload {model_id} (bench done; default stays loaded)", flush=True)
+    http("POST", f"/v1/models/{model_id}/unload")
 
 
 # ─── benchmark ──────────────────────────────────────────────────────────────
@@ -456,6 +468,10 @@ def main():
         status = ensure_model(model, status)
         trials = 1 if args.quick else args.trials
         all_results.extend(bench_model(model, tasks, trials))
+        # Free RAM before moving to the next model — keeps memory pressure
+        # predictable and matches "bench sequentially, one model at a time".
+        unload_after_bench(model)
+        status = models_status()
 
     # Aggregate + decide
     agg = aggregate(all_results)

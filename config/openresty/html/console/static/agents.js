@@ -183,9 +183,17 @@ function renderModels(omlx, usage) {
     return;
   }
   usage = usage || {};
-  const totalGB = omlx.current_model_memory ? (omlx.current_model_memory / (1024**3)).toFixed(1) : '0.0';
-  const maxGB   = omlx.max_model_memory     ? (omlx.max_model_memory     / (1024**3)).toFixed(1) : '?';
-  meta.textContent = `${omlx.loaded_count || 0}/${omlx.model_count || 0} loaded · ${totalGB}/${maxGB} GB`;
+  const totalBytes = omlx.current_model_memory || 0;
+  const maxBytes   = omlx.max_model_memory     || 0;
+  const totalGB = (totalBytes / (1024**3)).toFixed(1);
+  const maxGB   = maxBytes ? (maxBytes / (1024**3)).toFixed(1) : '?';
+  const fillPct = maxBytes ? Math.round(totalBytes / maxBytes * 100) : 0;
+  // Warning levels: > 80% = orange, > 95% = red. omlx evicts LRU under
+  // pressure but big-model loads can still fail when heads are tight.
+  let metaCls = '', warnNote = '';
+  if (fillPct > 95) { metaCls = 'c-red'; warnNote = ' ⚠ near memory cap — next big load may evict siblings or fail'; }
+  else if (fillPct > 80) { metaCls = 'c-yellow'; warnNote = ' ⚠ tight — consider unloading idle models'; }
+  meta.innerHTML = `<span class="${metaCls}">${omlx.loaded_count || 0}/${omlx.model_count || 0} loaded · ${totalGB}/${maxGB} GB (${fillPct}%)${esc(warnNote)}</span>`;
 
   // Sort: loaded first (last_access desc), then unloaded by id
   const models = (omlx.models || []).slice().sort((a, b) => {
@@ -206,19 +214,41 @@ function renderModels(omlx, usage) {
     const action = m.loaded
         ? `<button class="btn btn-blue model-act" data-model="${esc(m.id)}" data-action="unload" style="font-size:10px;padding:2px 8px">unload</button>`
         : `<button class="btn btn-blue model-act" data-model="${esc(m.id)}" data-action="load"   style="font-size:10px;padding:2px 8px">load</button>`;
-    // Lifetime usage stats (from log.jsonl)
+    // Idle-unload UI — checkbox + dropdown. Per-model TTL stored in
+    // data/agents/idle-config.json by compose-ctl. Off by default.
+    const idleRule = (window._idleConfig && window._idleConfig.models && window._idleConfig.models[m.id]) || {};
+    const idleEnabled = idleRule.enabled !== false && (idleRule.ttl_seconds || 0) > 0;
+    const idleSel = idleRule.ttl_seconds || 0;
+    const idleControls = `
+      <div style="margin-top:6px;display:flex;align-items:center;gap:6px;font-size:11px">
+        <label style="display:flex;align-items:center;gap:4px;cursor:pointer">
+          <input type="checkbox" class="idle-toggle" data-model="${esc(m.id)}" ${idleEnabled ? 'checked' : ''}>
+          <span title="When enabled, compose-ctl unloads this model after the selected idle period (last_access from omlx)">auto-unload after</span>
+        </label>
+        <select class="idle-ttl" data-model="${esc(m.id)}" style="font-size:11px;padding:1px 4px">
+          <option value="300"  ${idleSel===300 ?'selected':''}>5 min</option>
+          <option value="600"  ${idleSel===600 ?'selected':''}>10 min</option>
+          <option value="900"  ${idleSel===900 ?'selected':''}>15 min</option>
+          <option value="1800" ${idleSel===1800?'selected':''}>30 min</option>
+          <option value="3600" ${idleSel===3600?'selected':''}>1 hour</option>
+        </select>
+      </div>`;
+    // Lifetime usage stats from log.jsonl. Distinct from the Bench matrix
+    // below: "ok %" = wrapper calls that exited 0 (curl + omlx both happy);
+    // bench pass-rate = format-compliance of the model's output against a
+    // per-task regex. Different signals, both useful, hence different labels.
     const u = usage[m.id];
     let usageRows = '';
     if (u && u.runs > 0) {
-      const passPct = Math.round(u.pass_rate * 100);
-      const passCls = passPct === 100 ? 'c-green' : (passPct >= 70 ? '' : 'c-red');
+      const okPct = Math.round(u.pass_rate * 100);
+      const okCls = okPct === 100 ? 'c-green' : (okPct >= 70 ? '' : 'c-red');
       usageRows =
-        `<b>runs</b><span>${u.runs}</span>` +
+        `<b>wrapper runs</b><span>${u.runs}</span>` +
         `<b>avg latency</b><span>${u.latency_avg.toFixed(2)}s</span>` +
-        `<b>pass</b><span class="${passCls}">${passPct}%</span>` +
+        `<b title="Fraction of wrapper invocations that exited 0 — separate from the bench format-compliance pass-rate shown in the matrix below.">ok %</b><span class="${okCls}">${okPct}%</span>` +
         (u.last_used_at ? `<b>last run</b><span>${esc(u.last_used_at)}</span>` : '');
     } else {
-      usageRows = '<b>runs</b><span style="opacity:.5">never used (yet)</span>';
+      usageRows = '<b>wrapper runs</b><span style="opacity:.5">never used (yet)</span>';
     }
     return `<div class="${cls}">
       <div class="id">${esc(m.id)} ${badge}</div>
@@ -228,6 +258,7 @@ function renderModels(omlx, usage) {
         <b>last call</b><span>${lastAccess}</span>
         ${usageRows}
       </div>
+      ${idleControls}
       <div style="margin-top:8px;text-align:right">${action}</div>
     </div>`;
   }).join('')}</div>`;
@@ -329,13 +360,46 @@ async function pollAgents() {
   }
 }
 
+async function loadIdleConfig() {
+  try {
+    const r = await fetch('/internal/admin/agents/idle-config');
+    if (r.ok) window._idleConfig = await r.json();
+  } catch {}
+}
+
+async function saveIdleConfig() {
+  // Build the full models map from the current DOM snapshot (every visible
+  // checkbox + select). Sending the full picture is simpler than incremental
+  // patching and matches the PUT-replaces-state contract.
+  const models = {};
+  document.querySelectorAll('.idle-toggle').forEach(cb => {
+    const id = cb.dataset.model;
+    const ttlEl = document.querySelector(`select.idle-ttl[data-model="${id}"]`);
+    const ttl = ttlEl ? parseInt(ttlEl.value, 10) : 0;
+    models[id] = { enabled: cb.checked, ttl_seconds: ttl };
+  });
+  try {
+    const r = await fetch('/internal/admin/agents/idle-config', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ models, default_ttl_seconds: 0 }),
+    });
+    if (r.ok) {
+      window._idleConfig = await r.json();
+      toast('idle-unload config saved');
+    } else {
+      const d = await r.json().catch(() => ({}));
+      toast(d.error || `save failed (HTTP ${r.status})`, true);
+    }
+  } catch (err) { toast('save error: ' + err.message, true); }
+}
+
 function initAgents() {
-  pollAgents();
+  loadIdleConfig().then(() => pollAgents());
   setInterval(pollAgents, POLL_MS);
-  // Delegated click handler — renderModels redraws every poll, so per-button
-  // listeners would be wiped. Listen on the parent once.
   const area = $('models-area');
   if (area) {
+    // Click handler for load/unload buttons
     area.addEventListener('click', e => {
       const btn = e.target.closest('button.model-act');
       if (!btn) return;
@@ -343,6 +407,13 @@ function initAgents() {
       const action = btn.dataset.action;
       if (action === 'unload') unloadModel(model);
       else if (action === 'load') loadModel(model);
+    });
+    // Change handler for idle-config checkbox + dropdown
+    area.addEventListener('change', e => {
+      if (e.target.classList.contains('idle-toggle') ||
+          e.target.classList.contains('idle-ttl')) {
+        saveIdleConfig();
+      }
     });
   }
   $('btn-unload-all')?.addEventListener('click', unloadAll);
