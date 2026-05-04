@@ -303,10 +303,11 @@ async function renderPluginsAndKeys(ov) {
 }
 
 async function loadUsers() {
-  const [usageList, status] = await Promise.all([
-    fetch('/internal/admin/usage-all').then(r => r.json()).catch(() => []),
+  const [usageData, status] = await Promise.all([
+    fetch('/internal/admin/usage-all').then(r => r.json()).catch(() => ({ users: [], truncated: false })),
     fetch('/internal/admin/status').then(r => r.json()).catch(() => ({ blocked: [], limits: [] })),
   ]);
+  const usageList = usageData.users || [];
 
   const blockedList = Array.isArray(status.blocked) ? status.blocked : [];
   const limitsList = Array.isArray(status.limits) ? status.limits : [];
@@ -314,18 +315,17 @@ async function loadUsers() {
   // Distinct usernames across all three sources (a user can appear in
   // multiple — e.g. limited AND active — naive sum would double-count).
   const known = new Set();
-  (usageList || []).forEach(u => u?.user && known.add(u.user));
+  usageList.forEach(u => u?.user && known.add(u.user));
   blockedList.forEach(b => b?.user && known.add(b.user));
   limitsList.forEach(l => l?.user && known.add(l.user));
   $('users-count').textContent = known.size;
   refreshUserPickers([...known].sort());
 
   const barsEl = $('usage-bars');
-  const usageSig = Array.isArray(usageList) ? usageList : [];
-  if (Array.isArray(usageList) && usageList.length > 0) {
+  if (usageList.length > 0) {
     // Skip the rebuild when the usage payload hasn't moved — preserves
     // hover/scroll on the bar list during quiet windows.
-    if (_changed('usage', usageSig)) barsEl.innerHTML = usageList.map(u => {
+    if (_changed('usage', usageList)) barsEl.innerHTML = usageList.map(u => {
       const totalTok = (u.input || 0) + (u.output || 0);
       const tokLimit = u.tokens_limit;
       const reqLimit = u.requests_limit;
@@ -478,7 +478,7 @@ async function blockUser(ev) {
 function getPresetVal(presetId, customId) {
   const sel = $(presetId).value;
   if (sel === '') return null;
-  if (sel === 'custom') return parseInt($(customId).value) || 0;
+  if (sel === 'custom') { const n = parseInt($(customId).value); return isNaN(n) ? null : n; }
   return parseInt(sel);
 }
 

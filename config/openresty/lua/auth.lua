@@ -20,12 +20,12 @@ local CONSOLE_URL        = os.getenv("CONSOLE_URL") or "http://localhost:8888/co
 math.randomseed(ngx.now() * 1000 + ngx.worker.pid())
 
 local function new_request_id()
-    -- 16 random hex chars — collision-safe for request correlation, cheap to generate
-    local b = { string.byte(ngx.var.remote_addr or "", 1, -1) }
+    local first_ip_byte = string.byte(ngx.var.remote_addr or "", 1) or 0
     local t = ngx.now()
-    return string.format("%08x%08x", math.floor(t * 1000) % 0xffffffff,
-        (ngx.worker.pid() * 0x01000193) + (#b > 0 and b[1] or 0)) ..
-        string.format("%04x", math.random(0, 0xffff))
+    return string.format("%08x%08x%04x",
+        math.floor(t * 1000) % 0xffffffff,
+        (ngx.worker.pid() * 0x01000193) + first_ip_byte,
+        math.random(0, 0xffff))
 end
 
 local incoming_rid = ngx.var.http_x_request_id or ""

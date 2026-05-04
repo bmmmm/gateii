@@ -82,7 +82,6 @@ async function loadModel(btn, modelId) {
 async function rerunBench(btn, force) {
   const verb = force ? 'force re-run' : 'smart re-run';
   if (!confirm(`Trigger ${verb} of scripts/agent-bench?\n\nThe bench runs in the compose-ctl sidecar, takes 1–6 min depending on which models need to be (re)benched, and writes data/agents/bench-results.json + routing.json on completion. Currently-running indicator shows "bench:" prefix.`)) return;
-  toast(`bench started (${verb})…`);
   await withBusy(btn, async () => {
     try {
       const r = await fetch('/internal/admin/agents/bench', {
