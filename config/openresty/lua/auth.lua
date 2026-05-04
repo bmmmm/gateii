@@ -2,6 +2,7 @@
 local cjson        = require "cjson.safe"
 local limit_req    = require "resty.limit.req"
 local proxy_config = require "proxy_config"
+local util         = require "util"
 
 local auth_cache    = ngx.shared.auth_cache
 local blocking_dict = ngx.shared.blocking
@@ -40,10 +41,6 @@ if not lim then
     ngx.log(ngx.ERR, "failed to init rate limiter: ", lim_err)
 end
 
--- Sanitize user for key construction — must match tracking.lua's sanitize()
-local function sanitize(s)
-    return (tostring(s or "unknown"):gsub("[:|%s]", "_"):sub(1, 64))
-end
 
 -- TTL until next midnight UTC (+ 60s buffer for clock skew)
 local function ttl_until_midnight()
@@ -123,8 +120,8 @@ else
     -- providers.build_headers() handles the actual format.
     ngx.ctx.upstream_auth_type = "x-api-key"
 end
--- Sanitize user for safe key construction (must match tracking.lua)
-user = sanitize(user)
+-- Sanitize user for safe key construction
+user = util.sanitize(user)
 ngx.ctx.user = user
 
 -- Structured access log (INFO level)
@@ -143,7 +140,8 @@ do
         return reject(429, "Usage limit reached — contact admin to unblock")
     end
 
-    -- 3b. Daily limit checks (atomic via incr return value to avoid TOCTOU races)
+    -- 3b. Daily limit checks
+    -- Soft limit: pre-request check reads combined post-response total; cannot pre-enforce unknown future token count
     local limits_raw = blocking_dict:get("limits|" .. user)
     if limits_raw then
         local limits, decode_err = cjson.decode(limits_raw)
@@ -154,9 +152,7 @@ do
             local day_prefix = "day|" .. user .. "|" .. today
 
             if limits.tokens_per_day then
-                local used_in  = counters:get(day_prefix .. "|input") or 0
-                local used_out = counters:get(day_prefix .. "|output") or 0
-                local used_total = used_in + used_out
+                local used_total = counters:get(day_prefix .. "|total") or 0
                 if used_total >= limits.tokens_per_day then
                     local ttl = ttl_until_midnight()
                     blocking_dict:set("blocked|" .. user, "auto:tokens_per_day", ttl)

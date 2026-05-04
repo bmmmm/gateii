@@ -1,5 +1,6 @@
 -- tracking.lua: token usage counters via shared dicts (no Redis)
 local _M = {}
+local util = require "util"
 
 local counters = ngx.shared.counters
 
@@ -7,24 +8,6 @@ local counters = ngx.shared.counters
 -- Override via COUNTER_RETENTION_DAYS in .env.
 local COUNTER_TTL = (tonumber(os.getenv("COUNTER_RETENTION_DAYS")) or 60) * 86400
 
--- Sanitize key components: pipes are the separator
-local function sanitize(s)
-    return (tostring(s or "unknown"):gsub("[:|%s]", "_"):sub(1, 64))
-end
-
--- Today's UTC date — module-level cache refreshed at most once per 60s.
--- Avoids a C-level os.date() call on every request.
-local _today    = ""
-local _today_ts = 0
-
-local function get_today()
-    local now = ngx.time()
-    if now - _today_ts >= 60 then
-        _today    = os.date("!%Y-%m-%d", now)
-        _today_ts = now
-    end
-    return _today
-end
 
 local function bump(key, value, ttl)
     local _, err = counters:incr(key, value, 0, ttl)
@@ -39,8 +22,8 @@ end
 --          cache_creation=N, cache_read=N }
 function _M.record(user, provider, model, input_tokens, output_tokens, opts)
     -- user is pre-sanitized by auth.lua; provider/model may contain unsafe chars
-    provider = sanitize(provider)
-    model    = sanitize(model)
+    provider = util.sanitize(provider)
+    model    = util.sanitize(model)
     opts = opts or {}
 
     local prefix = user .. "|" .. provider .. "|" .. model
@@ -93,11 +76,11 @@ function _M.record(user, provider, model, input_tokens, output_tokens, opts)
 
     -- Stop reason counter
     if opts.stop_reason and opts.stop_reason ~= ngx.null and opts.stop_reason ~= "" then
-        bump(prefix .. "|stop|" .. sanitize(opts.stop_reason), 1, COUNTER_TTL)
+        bump(prefix .. "|stop|" .. util.sanitize(opts.stop_reason), 1, COUNTER_TTL)
     end
 
     -- Daily counters (for limit checks) — with TTL (25h = 90000s)
-    local today = get_today()
+    local today = util.get_today()
     local day_prefix = "day|" .. user .. "|" .. today
     if input_tokens > 0 then
         counters:incr(day_prefix .. "|input", input_tokens, 0, 90000)
@@ -105,15 +88,20 @@ function _M.record(user, provider, model, input_tokens, output_tokens, opts)
     if output_tokens > 0 then
         counters:incr(day_prefix .. "|output", output_tokens, 0, 90000)
     end
+    -- Combined counter for atomic limit enforcement in auth.lua
+    local combined = (input_tokens or 0) + (output_tokens or 0)
+    if combined > 0 then
+        counters:incr(day_prefix .. "|total", combined, 0, 90000)
+    end
     counters:incr(day_prefix .. "|requests", 1, 0, 90000)
 end
 
 -- Per-effort counters (effort = "none" when request has no output_config.effort).
 -- Writes: user|provider|model|effort|<value>|{requests,input,output}
 function _M.record_effort(user, provider, model, effort, input_tokens, output_tokens)
-    provider = sanitize(provider)
-    model    = sanitize(model)
-    effort   = sanitize(effort)
+    provider = util.sanitize(provider)
+    model    = util.sanitize(model)
+    effort   = util.sanitize(effort)
     local prefix = user .. "|" .. provider .. "|" .. model .. "|effort|" .. effort
     bump(prefix .. "|requests", 1, COUNTER_TTL)
     if input_tokens > 0 then
@@ -127,8 +115,8 @@ end
 -- Per-modality counters (modality = "text" or "vision").
 -- Writes: user|provider|model|modality|<value>|{requests,input,output}
 function _M.record_modality(user, provider, model, has_vision, input_tokens, output_tokens)
-    provider = sanitize(provider)
-    model    = sanitize(model)
+    provider = util.sanitize(provider)
+    model    = util.sanitize(model)
     local modality = has_vision and "vision" or "text"
     local prefix = user .. "|" .. provider .. "|" .. model .. "|modality|" .. modality
     bump(prefix .. "|requests", 1, COUNTER_TTL)

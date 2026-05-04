@@ -194,6 +194,10 @@ for _, key in ipairs(keys) do
     end
 end
 
+-- Report whether the counters dict scan was truncated at MAX_ITER_KEYS
+local keys_count = #keys
+local scan_truncated = keys_count >= MAX_ITER_KEYS
+
 -- Build output
 local lines = {}
 local function add(s)
@@ -528,6 +532,11 @@ end
 if admin_sessions then
     add(string.format('gateii_shared_dict_free_bytes{dict="admin_sessions"} %d', admin_sessions:free_space()))
 end
+
+-- Report whether the counters dict scan hit the MAX_ITER_KEYS limit
+add("# HELP gateii_counters_scan_truncated 1 if the counters dict scan hit MAX_ITER_KEYS limit, 0 otherwise")
+add("# TYPE gateii_counters_scan_truncated gauge")
+add(string.format('gateii_counters_scan_truncated{truncated="%s"} %d', scan_truncated and "true" or "false", keys_count))
 
 -- Local omlx-agent bench export — re-emits the latest scripts/agent-bench
 -- results as gauges so Prometheus stores them permanently (per-task, per-model

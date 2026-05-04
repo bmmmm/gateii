@@ -51,6 +51,23 @@ const esc = s => String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>
       throw err;
     });
   };
+  // Auto-login from ?token= URL parameter (used by headless tests; token stripped from URL after use)
+  const _urlToken = new URLSearchParams(window.location.search).get('token');
+  if (_urlToken) {
+    window._rawFetch('/internal/admin/login', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ token: _urlToken }),
+      credentials: 'include',
+    }).then(r => {
+      if (r.ok) {
+        // Remove token from URL without reload so it doesn't persist in browser history
+        const url = new URL(window.location.href);
+        url.searchParams.delete('token');
+        window.history.replaceState({}, '', url.toString());
+      }
+    });
+  }
 })();
 
 function toast(msg, isError) {

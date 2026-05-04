@@ -47,7 +47,7 @@
     {
       "id": 200,
       "type": "row",
-      "title": "Totals",
+      "title": "Claude Code — Totals",
       "collapsed": false,
       "gridPos": {"x": 0, "y": 0, "w": 24, "h": 1},
       "panels": []
@@ -116,7 +116,7 @@
     {
       "id": 201,
       "type": "row",
-      "title": "Cost Breakdown",
+      "title": "Claude Code — Cost Breakdown",
       "collapsed": false,
       "gridPos": {"x": 0, "y": 5, "w": 24, "h": 1},
       "panels": []
@@ -131,9 +131,15 @@
       "fieldConfig": {
         "defaults": {"unit": "currencyUSD", "decimals": 2, "thresholds": {"mode": "absolute", "steps": [{"color": "blue", "value": null}]}},
         "overrides": [
-          {"matcher": {"id": "byRegexp", "options": "/opus/i"},   "properties": [{"id": "color", "value": {"fixedColor": "#B877D9", "mode": "fixed"}}]},
-          {"matcher": {"id": "byRegexp", "options": "/sonnet/i"}, "properties": [{"id": "color", "value": {"fixedColor": "#5794F2", "mode": "fixed"}}]},
-          {"matcher": {"id": "byRegexp", "options": "/haiku/i"},  "properties": [{"id": "color", "value": {"fixedColor": "#56A64B", "mode": "fixed"}}]}
+          {"matcher": {"id": "byRegexp", "options": "/qwen/i"},    "properties": [{"id": "color", "value": {"fixedColor": "#FF7F00", "mode": "fixed"}}]},
+          {"matcher": {"id": "byRegexp", "options": "/gemma/i"},   "properties": [{"id": "color", "value": {"fixedColor": "#00D4FF", "mode": "fixed"}}]},
+          {"matcher": {"id": "byRegexp", "options": "/llama/i"},   "properties": [{"id": "color", "value": {"fixedColor": "#FFD700", "mode": "fixed"}}]},
+          {"matcher": {"id": "byRegexp", "options": "/phi/i"},     "properties": [{"id": "color", "value": {"fixedColor": "#FF4081", "mode": "fixed"}}]},
+          {"matcher": {"id": "byRegexp", "options": "/mistral/i"}, "properties": [{"id": "color", "value": {"fixedColor": "#F97316", "mode": "fixed"}}]},
+          {"matcher": {"id": "byRegexp", "options": "/deepseek/i"},"properties": [{"id": "color", "value": {"fixedColor": "#A3E635", "mode": "fixed"}}]},
+          {"matcher": {"id": "byRegexp", "options": "/opus/i"},    "properties": [{"id": "color", "value": {"fixedColor": "#B877D9", "mode": "fixed"}}]},
+          {"matcher": {"id": "byRegexp", "options": "/sonnet/i"},  "properties": [{"id": "color", "value": {"fixedColor": "#5794F2", "mode": "fixed"}}]},
+          {"matcher": {"id": "byRegexp", "options": "/haiku/i"},   "properties": [{"id": "color", "value": {"fixedColor": "#56A64B", "mode": "fixed"}}]}
         ]
       },
       "options": {"orientation": "horizontal", "reduceOptions": {"calcs": ["lastNotNull"]}, "displayMode": "gradient"}
@@ -149,9 +155,15 @@
       "fieldConfig": {
         "defaults": {"unit": "currencyUSD", "decimals": 2, "custom": {"lineWidth": 1, "fillOpacity": 80, "stacking": {"mode": "normal"}, "axisLabel": ""}},
         "overrides": [
-          {"matcher": {"id": "byRegexp", "options": "/opus/i"},   "properties": [{"id": "color", "value": {"fixedColor": "#B877D9", "mode": "fixed"}}]},
-          {"matcher": {"id": "byRegexp", "options": "/sonnet/i"}, "properties": [{"id": "color", "value": {"fixedColor": "#5794F2", "mode": "fixed"}}]},
-          {"matcher": {"id": "byRegexp", "options": "/haiku/i"},  "properties": [{"id": "color", "value": {"fixedColor": "#56A64B", "mode": "fixed"}}]}
+          {"matcher": {"id": "byRegexp", "options": "/qwen/i"},    "properties": [{"id": "color", "value": {"fixedColor": "#FF7F00", "mode": "fixed"}}]},
+          {"matcher": {"id": "byRegexp", "options": "/gemma/i"},   "properties": [{"id": "color", "value": {"fixedColor": "#00D4FF", "mode": "fixed"}}]},
+          {"matcher": {"id": "byRegexp", "options": "/llama/i"},   "properties": [{"id": "color", "value": {"fixedColor": "#FFD700", "mode": "fixed"}}]},
+          {"matcher": {"id": "byRegexp", "options": "/phi/i"},     "properties": [{"id": "color", "value": {"fixedColor": "#FF4081", "mode": "fixed"}}]},
+          {"matcher": {"id": "byRegexp", "options": "/mistral/i"}, "properties": [{"id": "color", "value": {"fixedColor": "#F97316", "mode": "fixed"}}]},
+          {"matcher": {"id": "byRegexp", "options": "/deepseek/i"},"properties": [{"id": "color", "value": {"fixedColor": "#A3E635", "mode": "fixed"}}]},
+          {"matcher": {"id": "byRegexp", "options": "/opus/i"},    "properties": [{"id": "color", "value": {"fixedColor": "#B877D9", "mode": "fixed"}}]},
+          {"matcher": {"id": "byRegexp", "options": "/sonnet/i"},  "properties": [{"id": "color", "value": {"fixedColor": "#5794F2", "mode": "fixed"}}]},
+          {"matcher": {"id": "byRegexp", "options": "/haiku/i"},   "properties": [{"id": "color", "value": {"fixedColor": "#56A64B", "mode": "fixed"}}]}
         ]
       },
       "options": {"tooltip": {"mode": "multi"}, "legend": {"displayMode": "table", "placement": "bottom"}, "orientation": "auto", "stacking": "normal", "showValue": "auto", "xTickLabelRotation": -45}
@@ -232,6 +244,74 @@
         ]
       },
       "options": {"showHeader": true, "cellHeight": "sm"}
+    },
+    {
+      "id": 204,
+      "type": "row",
+      "title": "oMLX — Local Agent Usage",
+      "collapsed": false,
+      "gridPos": {"x": 0, "y": 29, "w": 24, "h": 1},
+      "panels": []
+    },
+    {
+      "id": 60,
+      "title": "oMLX Agent Tasks ($window)",
+      "description": "Requests handled by local oMLX models. These have $0 API cost — each task saved is a Haiku call avoided.",
+      "type": "stat",
+      "gridPos": {"x": 0, "y": 30, "w": 6, "h": 4},
+      "datasource": {"type": "prometheus"},
+      "targets": [{"datasource": {"type": "prometheus"}, "expr": "sum(increase(gateii_requests_total{model=~\"(?i)(qwen|gemma|llama|phi|mistral|deepseek).*\"}[$window]))", "legendFormat": "tasks", "instant": true, "refId": "A"}],
+      "fieldConfig": {
+        "defaults": {"unit": "short", "decimals": 0, "color": {"mode": "fixed", "fixedColor": "#FF7F00"}}
+      },
+      "options": {"reduceOptions": {"calcs": ["lastNotNull"]}, "colorMode": "value", "graphMode": "none", "orientation": "auto", "textMode": "auto"}
+    },
+    {
+      "id": 61,
+      "title": "oMLX Tokens ($window)",
+      "description": "Tokens processed locally. Input tokens saved from Anthropic API.",
+      "type": "stat",
+      "gridPos": {"x": 6, "y": 30, "w": 6, "h": 4},
+      "datasource": {"type": "prometheus"},
+      "targets": [{"datasource": {"type": "prometheus"}, "expr": "sum(increase(gateii_tokens_total{type=~\"input|output\",model=~\"(?i)(qwen|gemma|llama|phi|mistral|deepseek).*\"}[$window]))", "legendFormat": "tokens", "instant": true, "refId": "A"}],
+      "fieldConfig": {
+        "defaults": {"unit": "short", "decimals": 0, "color": {"mode": "fixed", "fixedColor": "#00D4FF"}}
+      },
+      "options": {"reduceOptions": {"calcs": ["lastNotNull"]}, "colorMode": "value", "graphMode": "none", "orientation": "auto", "textMode": "auto"}
+    },
+    {
+      "id": 62,
+      "title": "Est. Savings vs Haiku ($window)",
+      "description": "Estimated cost that would have been billed if the same tokens went through Haiku ($0.80/MTok input + $4/MTok output). Actual savings = this value since oMLX costs $0.",
+      "type": "stat",
+      "gridPos": {"x": 12, "y": 30, "w": 12, "h": 4},
+      "datasource": {"type": "prometheus"},
+      "targets": [{"datasource": {"type": "prometheus"}, "expr": "sum(increase(gateii_tokens_total{type=\"input\",model=~\"(?i)(qwen|gemma|llama|phi|mistral|deepseek).*\"}[$window])) * 0.8 / 1e6 + sum(increase(gateii_tokens_total{type=\"output\",model=~\"(?i)(qwen|gemma|llama|phi|mistral|deepseek).*\"}[$window])) * 4 / 1e6", "legendFormat": "saved", "instant": true, "refId": "A"}],
+      "fieldConfig": {
+        "defaults": {"unit": "currencyUSD", "decimals": 3, "color": {"mode": "fixed", "fixedColor": "#56A64B"}}
+      },
+      "options": {"reduceOptions": {"calcs": ["lastNotNull"]}, "colorMode": "value", "graphMode": "none", "orientation": "auto", "textMode": "auto"}
+    },
+    {
+      "id": 63,
+      "title": "oMLX Tasks by Model ($window)",
+      "description": "Request volume breakdown per local model.",
+      "type": "bargauge",
+      "gridPos": {"x": 0, "y": 34, "w": 24, "h": 6},
+      "datasource": {"type": "prometheus"},
+      "targets": [{"datasource": {"type": "prometheus"}, "expr": "sum by (model) (increase(gateii_requests_total{model=~\"(?i)(qwen|gemma|llama|phi|mistral|deepseek).*\"}[$window]))", "legendFormat": "{{model}}", "instant": true, "refId": "A"}],
+      "fieldConfig": {
+        "defaults": {"unit": "short", "decimals": 0, "thresholds": {"mode": "absolute", "steps": [{"color": "blue", "value": null}]}},
+        "overrides": [
+          {"matcher": {"id": "byRegexp", "options": "/qwen/i"},    "properties": [{"id": "color", "value": {"fixedColor": "#FF7F00", "mode": "fixed"}}]},
+          {"matcher": {"id": "byRegexp", "options": "/gemma/i"},   "properties": [{"id": "color", "value": {"fixedColor": "#00D4FF", "mode": "fixed"}}]},
+          {"matcher": {"id": "byRegexp", "options": "/llama/i"},   "properties": [{"id": "color", "value": {"fixedColor": "#FFD700", "mode": "fixed"}}]},
+          {"matcher": {"id": "byRegexp", "options": "/phi/i"},     "properties": [{"id": "color", "value": {"fixedColor": "#FF4081", "mode": "fixed"}}]},
+          {"matcher": {"id": "byRegexp", "options": "/mistral/i"}, "properties": [{"id": "color", "value": {"fixedColor": "#F97316", "mode": "fixed"}}]},
+          {"matcher": {"id": "byRegexp", "options": "/deepseek/i"},"properties": [{"id": "color", "value": {"fixedColor": "#A3E635", "mode": "fixed"}}]}
+        ]
+      },
+      "options": {"orientation": "horizontal", "reduceOptions": {"calcs": ["lastNotNull"]}, "displayMode": "gradient"}
     }
   ]
 }

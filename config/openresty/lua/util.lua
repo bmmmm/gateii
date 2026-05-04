@@ -22,4 +22,26 @@ function _M.atomic_write(path, content)
     return true, nil
 end
 
+-- Sanitize a string for use as a shared-dict key component.
+-- Replaces chars that break key parsing (colon, pipe, whitespace) with "_".
+-- fallback: returned when s is nil/empty (default "unknown").
+function _M.sanitize(s, fallback)
+    fallback = fallback or "unknown"
+    local v = tostring(s or "")
+    if v == "" then return fallback end
+    return (v:gsub("[:|%s]", "_"):sub(1, 64))
+end
+
+-- Today's UTC date string (YYYY-MM-DD), cached per-module with 60s refresh.
+local _today = ""
+local _today_ts = 0
+function _M.get_today()
+    local now = ngx.time()
+    if now - _today_ts >= 60 then
+        _today    = os.date("!%Y-%m-%d", now)
+        _today_ts = now
+    end
+    return _today
+end
+
 return _M

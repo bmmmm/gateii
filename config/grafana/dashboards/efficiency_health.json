@@ -212,7 +212,7 @@
     {
       "id": 102,
       "type": "row",
-      "title": "Quality",
+      "title": "Claude Code — Quality",
       "collapsed": false,
       "gridPos": {"x": 0, "y": 25, "w": 24, "h": 1},
       "panels": []
@@ -228,9 +228,15 @@
       "fieldConfig": {
         "defaults": {"unit": "short", "decimals": 0, "custom": {"lineWidth": 2, "fillOpacity": 5}},
         "overrides": [
-          {"matcher": {"id": "byRegexp", "options": "/opus/i"},   "properties": [{"id": "color", "value": {"fixedColor": "#B877D9", "mode": "fixed"}}]},
-          {"matcher": {"id": "byRegexp", "options": "/sonnet/i"}, "properties": [{"id": "color", "value": {"fixedColor": "#5794F2", "mode": "fixed"}}]},
-          {"matcher": {"id": "byRegexp", "options": "/haiku/i"},  "properties": [{"id": "color", "value": {"fixedColor": "#56A64B", "mode": "fixed"}}]}
+          {"matcher": {"id": "byRegexp", "options": "/qwen/i"},    "properties": [{"id": "color", "value": {"fixedColor": "#FF7F00", "mode": "fixed"}}]},
+          {"matcher": {"id": "byRegexp", "options": "/gemma/i"},   "properties": [{"id": "color", "value": {"fixedColor": "#00D4FF", "mode": "fixed"}}]},
+          {"matcher": {"id": "byRegexp", "options": "/llama/i"},   "properties": [{"id": "color", "value": {"fixedColor": "#FFD700", "mode": "fixed"}}]},
+          {"matcher": {"id": "byRegexp", "options": "/phi/i"},     "properties": [{"id": "color", "value": {"fixedColor": "#FF4081", "mode": "fixed"}}]},
+          {"matcher": {"id": "byRegexp", "options": "/mistral/i"}, "properties": [{"id": "color", "value": {"fixedColor": "#F97316", "mode": "fixed"}}]},
+          {"matcher": {"id": "byRegexp", "options": "/deepseek/i"},"properties": [{"id": "color", "value": {"fixedColor": "#A3E635", "mode": "fixed"}}]},
+          {"matcher": {"id": "byRegexp", "options": "/opus/i"},    "properties": [{"id": "color", "value": {"fixedColor": "#B877D9", "mode": "fixed"}}]},
+          {"matcher": {"id": "byRegexp", "options": "/sonnet/i"},  "properties": [{"id": "color", "value": {"fixedColor": "#5794F2", "mode": "fixed"}}]},
+          {"matcher": {"id": "byRegexp", "options": "/haiku/i"},   "properties": [{"id": "color", "value": {"fixedColor": "#56A64B", "mode": "fixed"}}]}
         ]
       },
       "options": {"tooltip": {"mode": "multi"}, "legend": {"displayMode": "table", "placement": "bottom"}}
@@ -246,9 +252,15 @@
       "fieldConfig": {
         "defaults": {"unit": "short", "decimals": 2, "custom": {"lineWidth": 2, "fillOpacity": 5}},
         "overrides": [
-          {"matcher": {"id": "byRegexp", "options": "/opus/i"},   "properties": [{"id": "color", "value": {"fixedColor": "#B877D9", "mode": "fixed"}}]},
-          {"matcher": {"id": "byRegexp", "options": "/sonnet/i"}, "properties": [{"id": "color", "value": {"fixedColor": "#5794F2", "mode": "fixed"}}]},
-          {"matcher": {"id": "byRegexp", "options": "/haiku/i"},  "properties": [{"id": "color", "value": {"fixedColor": "#56A64B", "mode": "fixed"}}]}
+          {"matcher": {"id": "byRegexp", "options": "/qwen/i"},    "properties": [{"id": "color", "value": {"fixedColor": "#FF7F00", "mode": "fixed"}}]},
+          {"matcher": {"id": "byRegexp", "options": "/gemma/i"},   "properties": [{"id": "color", "value": {"fixedColor": "#00D4FF", "mode": "fixed"}}]},
+          {"matcher": {"id": "byRegexp", "options": "/llama/i"},   "properties": [{"id": "color", "value": {"fixedColor": "#FFD700", "mode": "fixed"}}]},
+          {"matcher": {"id": "byRegexp", "options": "/phi/i"},     "properties": [{"id": "color", "value": {"fixedColor": "#FF4081", "mode": "fixed"}}]},
+          {"matcher": {"id": "byRegexp", "options": "/mistral/i"}, "properties": [{"id": "color", "value": {"fixedColor": "#F97316", "mode": "fixed"}}]},
+          {"matcher": {"id": "byRegexp", "options": "/deepseek/i"},"properties": [{"id": "color", "value": {"fixedColor": "#A3E635", "mode": "fixed"}}]},
+          {"matcher": {"id": "byRegexp", "options": "/opus/i"},    "properties": [{"id": "color", "value": {"fixedColor": "#B877D9", "mode": "fixed"}}]},
+          {"matcher": {"id": "byRegexp", "options": "/sonnet/i"},  "properties": [{"id": "color", "value": {"fixedColor": "#5794F2", "mode": "fixed"}}]},
+          {"matcher": {"id": "byRegexp", "options": "/haiku/i"},   "properties": [{"id": "color", "value": {"fixedColor": "#56A64B", "mode": "fixed"}}]}
         ]
       },
       "options": {"tooltip": {"mode": "multi"}, "legend": {"displayMode": "table", "placement": "bottom"}}
@@ -271,9 +283,15 @@
       "fieldConfig": {
         "defaults": {"unit": "ms", "custom": {"lineWidth": 2, "fillOpacity": 5}},
         "overrides": [
-          {"matcher": {"id": "byRegexp", "options": "/opus/i"},   "properties": [{"id": "color", "value": {"fixedColor": "#B877D9", "mode": "fixed"}}]},
-          {"matcher": {"id": "byRegexp", "options": "/sonnet/i"}, "properties": [{"id": "color", "value": {"fixedColor": "#5794F2", "mode": "fixed"}}]},
-          {"matcher": {"id": "byRegexp", "options": "/haiku/i"},  "properties": [{"id": "color", "value": {"fixedColor": "#56A64B", "mode": "fixed"}}]}
+          {"matcher": {"id": "byRegexp", "options": "/qwen/i"},    "properties": [{"id": "color", "value": {"fixedColor": "#FF7F00", "mode": "fixed"}}]},
+          {"matcher": {"id": "byRegexp", "options": "/gemma/i"},   "properties": [{"id": "color", "value": {"fixedColor": "#00D4FF", "mode": "fixed"}}]},
+          {"matcher": {"id": "byRegexp", "options": "/llama/i"},   "properties": [{"id": "color", "value": {"fixedColor": "#FFD700", "mode": "fixed"}}]},
+          {"matcher": {"id": "byRegexp", "options": "/phi/i"},     "properties": [{"id": "color", "value": {"fixedColor": "#FF4081", "mode": "fixed"}}]},
+          {"matcher": {"id": "byRegexp", "options": "/mistral/i"}, "properties": [{"id": "color", "value": {"fixedColor": "#F97316", "mode": "fixed"}}]},
+          {"matcher": {"id": "byRegexp", "options": "/deepseek/i"},"properties": [{"id": "color", "value": {"fixedColor": "#A3E635", "mode": "fixed"}}]},
+          {"matcher": {"id": "byRegexp", "options": "/opus/i"},    "properties": [{"id": "color", "value": {"fixedColor": "#B877D9", "mode": "fixed"}}]},
+          {"matcher": {"id": "byRegexp", "options": "/sonnet/i"},  "properties": [{"id": "color", "value": {"fixedColor": "#5794F2", "mode": "fixed"}}]},
+          {"matcher": {"id": "byRegexp", "options": "/haiku/i"},   "properties": [{"id": "color", "value": {"fixedColor": "#56A64B", "mode": "fixed"}}]}
         ]
       },
       "options": {"tooltip": {"mode": "multi"}, "legend": {"displayMode": "table", "placement": "bottom"}}
@@ -307,6 +325,75 @@
         "defaults": {"unit": "percentunit", "decimals": 1, "min": 0, "max": 1, "color": {"mode": "fixed", "fixedColor": "#B877D9"}}
       },
       "options": {"reduceOptions": {"calcs": ["lastNotNull"]}, "colorMode": "value", "graphMode": "none", "orientation": "auto", "textMode": "auto"}
+    },
+    {
+      "id": 104,
+      "type": "row",
+      "title": "oMLX Agents — Bench",
+      "collapsed": false,
+      "gridPos": {"x": 0, "y": 43, "w": 24, "h": 1},
+      "panels": []
+    },
+    {
+      "id": 70,
+      "title": "Bench Pass Rate (task × model)",
+      "description": "Pass rate per task/model from last agent-bench run. Green = 1.0 (all trials passed), red = 0.0. Re-emitted as Prometheus gauge after each bench run.",
+      "type": "table",
+      "gridPos": {"x": 0, "y": 44, "w": 14, "h": 10},
+      "datasource": {"type": "prometheus"},
+      "targets": [{"datasource": {"type": "prometheus"}, "expr": "gateii_omlx_bench_pass_rate", "format": "table", "instant": true, "refId": "A"}],
+      "transformations": [
+        {"id": "organize", "options": {"excludeByName": {"Time": true, "__name__": true, "job": true, "instance": true}, "renameByName": {"Value": "Pass Rate"}}}
+      ],
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": [
+          {"matcher": {"id": "byName", "options": "Pass Rate"}, "properties": [
+            {"id": "unit", "value": "percentunit"},
+            {"id": "decimals", "value": 0},
+            {"id": "custom.cellOptions", "value": {"type": "color-background", "mode": "gradient"}},
+            {"id": "color", "value": {"mode": "thresholds"}},
+            {"id": "thresholds", "value": {"mode": "absolute", "steps": [{"color": "red", "value": null}, {"color": "orange", "value": 0.5}, {"color": "green", "value": 0.9}]}}
+          ]}
+        ]
+      },
+      "options": {"showHeader": true, "cellHeight": "sm", "sortBy": [{"displayName": "task"}]}
+    },
+    {
+      "id": 71,
+      "title": "Active Routing (task → model)",
+      "description": "Which model each task currently routes to, from data/agents/routing.json. Updated after each bench run.",
+      "type": "table",
+      "gridPos": {"x": 14, "y": 44, "w": 10, "h": 10},
+      "datasource": {"type": "prometheus"},
+      "targets": [{"datasource": {"type": "prometheus"}, "expr": "gateii_omlx_routing_choice", "format": "table", "instant": true, "refId": "A"}],
+      "transformations": [
+        {"id": "organize", "options": {"excludeByName": {"Time": true, "__name__": true, "job": true, "instance": true, "Value": true}}}
+      ],
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": [
+          {"matcher": {"id": "byName", "options": "model"}, "properties": [
+            {"id": "custom.width", "value": 220},
+            {"id": "custom.cellOptions", "value": {"type": "color-text"}},
+            {"id": "color", "value": {"mode": "fixed", "fixedColor": "#FF7F00"}}
+          ]}
+        ]
+      },
+      "options": {"showHeader": true, "cellHeight": "sm", "sortBy": [{"displayName": "task"}]}
+    },
+    {
+      "id": 72,
+      "title": "Bench Latency p50 by Task (seconds)",
+      "description": "Median latency per task/model from last bench run. Latency difference is the main factor when switching models for a task.",
+      "type": "bargauge",
+      "gridPos": {"x": 0, "y": 54, "w": 24, "h": 6},
+      "datasource": {"type": "prometheus"},
+      "targets": [{"datasource": {"type": "prometheus"}, "expr": "gateii_omlx_bench_latency_seconds{quantile=\"0.5\"}", "legendFormat": "{{task}} / {{model}}", "instant": true, "refId": "A"}],
+      "fieldConfig": {
+        "defaults": {"unit": "s", "decimals": 2, "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "yellow", "value": 2}, {"color": "red", "value": 5}]}}
+      },
+      "options": {"orientation": "horizontal", "reduceOptions": {"calcs": ["lastNotNull"]}, "displayMode": "gradient"}
     }
   ]
 }
