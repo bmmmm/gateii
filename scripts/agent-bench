@@ -46,20 +46,25 @@ RESERVE_GB = 4   # keep this much headroom on top of omlx's own max_model_memory
 DEFAULT_MODEL = "Qwen3.5-9B-MLX-4bit"
 
 
-def load_api_key() -> str:
+def _load_env_key(var: str) -> str:
     env = ROOT / ".env"
     if env.exists():
         for line in env.read_text().splitlines():
-            if line.startswith("OMLX_API_KEY="):
+            if line.startswith(var + "="):
                 v = line.split("=", 1)[1].rstrip("\r").strip()
-                # Strip surrounding quotes (Windows-style or POSIX-style)
                 if len(v) >= 2 and v[0] in '"\'' and v[-1] == v[0]:
                     v = v[1:-1]
                 return v
-    return os.environ.get("OMLX_API_KEY", "")
+    return os.environ.get(var, "")
+
+
+def load_api_key() -> str:
+    return _load_env_key("OMLX_API_KEY")
 
 
 KEY = load_api_key()
+ANTHROPIC_KEY = _load_env_key("ANTHROPIC_API_KEY")
+
 # Direct-to-oMLX calls (model management): Bearer auth.
 OMLX_HEADERS = {"Authorization": f"Bearer {KEY}", "Content-Type": "application/json"}
 # Through-gateii calls (bench /v1/messages): client-key + x-provider header.
@@ -70,12 +75,21 @@ GATEII_HEADERS = {
     "x-provider":    "omlx",
     "Content-Type":  "application/json",
 }
+# Reference model (Claude Haiku) calls: routed through gateii → Anthropic.
+ANTHROPIC_GATEII_HEADERS = {
+    "x-api-key":     ANTHROPIC_KEY,
+    "x-provider":    "anthropic",
+    "Content-Type":  "application/json",
+}
+
+DEFAULT_REFERENCE_MODEL = "claude-haiku-4-5-20251001"
 
 
 def http(method: str, path: str, body: dict | None = None,
-         timeout: int = 120, via_gateii: bool = False):
+         timeout: int = 120, via_gateii: bool = False,
+         headers_override: dict | None = None):
     base    = GATEII_URL if via_gateii else OMLX_URL
-    headers = GATEII_HEADERS if via_gateii else OMLX_HEADERS
+    headers = headers_override if headers_override else (GATEII_HEADERS if via_gateii else OMLX_HEADERS)
     url  = base + path
     data = json.dumps(body).encode() if body else None
     req  = urllib.request.Request(url, method=method, data=data, headers=headers)
@@ -195,23 +209,28 @@ def _clear_active() -> None:
     except FileNotFoundError: pass
 
 
-def call(model: str, task_name: str, trial: int, max_trials: int = 3) -> dict:
+def call(model: str, task_name: str, trial: int, max_trials: int = 3,
+         reference: bool = False) -> dict:
     t = TASKS[task_name]
     _write_active(task_name, model, trial, max_trials)
     body = {
         "model": model,
         "max_tokens": t["max_tokens"],
         "temperature": 0.2,
-        "chat_template_kwargs": {"enable_thinking": False},
         "system": t["system"],
         "messages": [{"role": "user", "content": t["prompt"]}],
     }
+    if not reference:
+        body["chat_template_kwargs"] = {"enable_thinking": False}
+
+    hdrs = ANTHROPIC_GATEII_HEADERS if reference else None
     t0 = time.time()
     # Bench trials go THROUGH gateii so they're counted in metrics. Falls
     # back to direct oMLX if gateii is down or unreachable — bench still
     # produces results, just won't appear in the per-user counters.
-    code, resp = http("POST", "/v1/messages", body, timeout=180, via_gateii=True)
-    if code == 0:
+    code, resp = http("POST", "/v1/messages", body, timeout=180, via_gateii=True,
+                      headers_override=hdrs)
+    if code == 0 and not reference:
         # gateii unreachable — retry direct so bench still produces data
         print(f"    (gateii unreachable; falling back to direct oMLX for {task_name}/{trial})", flush=True)
         code, resp = http("POST", "/v1/messages", body, timeout=180, via_gateii=False)
@@ -239,12 +258,13 @@ def call(model: str, task_name: str, trial: int, max_trials: int = 3) -> dict:
     )
 
 
-def bench_model(model: str, tasks: list[str], trials: int) -> list[dict]:
+def bench_model(model: str, tasks: list[str], trials: int,
+                reference: bool = False) -> list[dict]:
     results = []
     for task in tasks:
         runs = []
         for i in range(trials):
-            r = call(model, task, i + 1, trials)
+            r = call(model, task, i + 1, trials, reference=reference)
             runs.append(r)
             mark = "✓" if r["compliant"] else "✗"
             print(f"    {mark} {task:22s} trial {i+1}/{trials}  {r['latency_s']:>5.2f}s  out={r['tokens_out']}", flush=True)
@@ -272,12 +292,26 @@ def aggregate(results: list[dict]) -> dict:
     return agg
 
 
+def _reference_already_benched(prev: dict, model: str) -> bool:
+    """Skip reference model if today's results already exist."""
+    if not prev or "results" not in prev:
+        return False
+    today = time.strftime("%Y-%m-%d")
+    return (prev.get("started_at", "")[:10] == today
+            and any(r.get("model") == model for r in prev["results"]))
+
+
 def pick_routing(agg: dict) -> dict:
-    """For each task pick the (model) with highest pass_rate, ties broken by latency."""
+    """For each task pick the best local model.
+    Reference-only models (claude-*) are excluded — they're comparison-only,
+    not candidates for the wrapper's routing table."""
     routing = {}
     for task, models in agg.items():
+        local = {m: s for m, s in models.items() if not m.startswith("claude-")}
+        if not local:
+            continue
         ranked = sorted(
-            models.items(),
+            local.items(),
             key=lambda kv: (-kv[1]["pass_rate"], kv[1]["latency_p50"]),
         )
         best_model, best_stats = ranked[0]
@@ -340,6 +374,10 @@ def main():
     ap.add_argument("--task", help="bench only this task name")
     ap.add_argument("--force", action="store_true",
                     help="re-bench all models even if results exist (overrides --smart, the default)")
+    ap.add_argument("--no-reference", action="store_true",
+                    help="skip reference model (claude-haiku) even if ANTHROPIC_API_KEY is set")
+    ap.add_argument("--reference-model", default=DEFAULT_REFERENCE_MODEL,
+                    help=f"reference model to bench (default: {DEFAULT_REFERENCE_MODEL})")
     args = ap.parse_args()
 
     if not KEY:
@@ -417,6 +455,24 @@ def main():
         # predictable and matches "bench sequentially, one model at a time".
         unload_after_bench(model)
         status = models_status()
+
+    # Reference model bench (Claude Haiku via gateii → Anthropic).
+    # Skipped for --quick, --no-reference, or if ANTHROPIC_API_KEY is not set.
+    ref_model = args.reference_model
+    if ANTHROPIC_KEY and not args.no_reference and not args.quick:
+        if _reference_already_benched(prev, ref_model) and not args.force:
+            skipped.append(ref_model)
+            print(f"\n=== {ref_model} (reference) — SKIP (already benched today; --force to override) ===",
+                  flush=True)
+        else:
+            ref_tasks = tasks_full  # reference always runs full suite
+            ref_trials = args.trials
+            print(f"\n=== {ref_model} (reference, via gateii→Anthropic) — "
+                  f"{len(ref_tasks)} task(s) × {ref_trials} trial(s) ===", flush=True)
+            all_results.extend(bench_model(ref_model, ref_tasks, ref_trials, reference=True))
+        model_created[ref_model] = 0  # no omlx timestamp for Anthropic models
+    elif not ANTHROPIC_KEY and not args.no_reference and not args.quick:
+        print("\n  (reference model skipped — ANTHROPIC_API_KEY not set)", flush=True)
 
     # Aggregate + decide
     agg = aggregate(all_results)
