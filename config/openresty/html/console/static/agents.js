@@ -3,6 +3,22 @@
 
 const POLL_MS = 2000;
 
+// Per-section "last rendered payload" cache. We poll every 2s but the
+// data rarely changes — re-rendering identical HTML thrashes the DOM,
+// kills hover/focus state, and snaps open <select> dropdowns shut. By
+// stringifying the input + skipping the renderer when unchanged we get
+// a smooth UI without touching the poll cadence.
+//
+// `active` is intentionally exempt: it carries an elapsed-seconds
+// counter that has to update every tick.
+const _sig = {};
+function _changed(section, payload) {
+  const next = JSON.stringify(payload);
+  if (_sig[section] === next) return false;
+  _sig[section] = next;
+  return true;
+}
+
 function relTime(epoch) {
   if (!epoch) return '?';
   const dt = Math.max(0, Math.floor(Date.now() / 1000 - epoch));
@@ -21,69 +37,75 @@ function shortModel(m) {
     .replace(/-it-4bit$/, '');     // gemma-4-e2b-it-4bit → gemma-4-e2b
 }
 
-async function unloadModel(modelId) {
+async function unloadModel(btn, modelId) {
   if (!confirm(`Unload ${modelId}?\n\nNext request to it will trigger a cold reload (~30-60s for big models).`)) return;
-  try {
-    const r = await fetch('/internal/admin/models', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ action: 'unload', model: modelId }),
-    });
-    if (r.ok) {
-      toast(`unloaded ${modelId}`);
-      pollAgents();
-    } else {
-      const d = await r.json().catch(() => ({}));
-      toast((d.error && (d.error.message || d.error)) || `unload failed (HTTP ${r.status})`, true);
+  await withBusy(btn, async () => {
+    try {
+      const r = await fetch('/internal/admin/models', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'unload', model: modelId }),
+      });
+      if (r.ok) {
+        toast(`unloaded ${modelId}`);
+        pollAgents();
+      } else {
+        const d = await r.json().catch(() => ({}));
+        toast((d.error && (d.error.message || d.error)) || `unload failed (HTTP ${r.status})`, true);
+      }
+    } catch (err) {
+      toast('unload error: ' + err.message, true);
     }
-  } catch (err) {
-    toast('unload error: ' + err.message, true);
-  }
+  });
 }
 
-async function loadModel(modelId) {
+async function loadModel(btn, modelId) {
   toast(`loading ${modelId}…`);
-  try {
-    const r = await fetch('/internal/admin/models', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ action: 'load', model: modelId }),
-    });
-    if (r.ok) { toast(`loaded ${modelId}`); pollAgents(); }
-    else {
-      const d = await r.json().catch(() => ({}));
-      toast((d.error && (d.error.message || d.error)) || `load failed (HTTP ${r.status})`, true);
+  await withBusy(btn, async () => {
+    try {
+      const r = await fetch('/internal/admin/models', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'load', model: modelId }),
+      });
+      if (r.ok) { toast(`loaded ${modelId}`); pollAgents(); }
+      else {
+        const d = await r.json().catch(() => ({}));
+        toast((d.error && (d.error.message || d.error)) || `load failed (HTTP ${r.status})`, true);
+      }
+    } catch (err) {
+      toast('load error: ' + err.message, true);
     }
-  } catch (err) {
-    toast('load error: ' + err.message, true);
-  }
+  });
 }
 
-async function rerunBench(force) {
+async function rerunBench(btn, force) {
   const verb = force ? 'force re-run' : 'smart re-run';
   if (!confirm(`Trigger ${verb} of scripts/agent-bench?\n\nThe bench runs in the compose-ctl sidecar, takes 1–6 min depending on which models need to be (re)benched, and writes data/agents/bench-results.json + routing.json on completion. Currently-running indicator shows "bench:" prefix.`)) return;
   toast(`bench started (${verb})…`);
-  try {
-    const r = await fetch('/internal/admin/agents/bench', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ force: !!force }),
-    });
-    const data = await r.json().catch(() => ({}));
-    if (r.ok && data.status === 'started') {
-      toast('bench started — watch the "Currently running" card');
-      pollAgents();
-    } else if (r.status === 409) {
-      toast(data.error || 'bench already in progress', true);
-    } else {
-      toast(data.error || `bench start failed (HTTP ${r.status})`, true);
+  await withBusy(btn, async () => {
+    try {
+      const r = await fetch('/internal/admin/agents/bench', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ force: !!force }),
+      });
+      const data = await r.json().catch(() => ({}));
+      if (r.ok && data.status === 'started') {
+        toast('bench started — watch the "Currently running" card');
+        pollAgents();
+      } else if (r.status === 409) {
+        toast(data.error || 'bench already in progress', true);
+      } else {
+        toast(data.error || `bench start failed (HTTP ${r.status})`, true);
+      }
+    } catch (err) {
+      toast('bench start error: ' + err.message, true);
     }
-  } catch (err) {
-    toast('bench start error: ' + err.message, true);
-  }
+  });
 }
 
-async function unloadAll() {
+async function unloadAll(ev) {
   // Pull current loaded set from the shared cached omlx_status (last poll).
   const data = window._lastAgentsData;
   const loaded = (data && data.omlx_status && data.omlx_status.models || []).filter(m => m.loaded);
@@ -93,19 +115,21 @@ async function unloadAll() {
   }
   if (!confirm(`Unload all ${loaded.length} loaded models?\n\n${loaded.map(m => '• ' + m.id).join('\n')}\n\nNext request to any of them will trigger a cold reload (~30-60s for big ones).`)) return;
   toast(`unloading ${loaded.length} model(s)…`);
-  const results = await Promise.all(loaded.map(m =>
-    fetch('/internal/admin/models', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ action: 'unload', model: m.id }),
-    }).then(r => ({ model: m.id, ok: r.ok, status: r.status }))
-      .catch(err => ({ model: m.id, ok: false, error: err.message }))
-  ));
-  const ok = results.filter(r => r.ok).length;
-  const fail = results.length - ok;
-  if (fail === 0) toast(`unloaded ${ok}/${results.length}`);
-  else toast(`unloaded ${ok}/${results.length} — ${fail} failed`, true);
-  pollAgents();
+  await withBusy(ev?.currentTarget, async () => {
+    const results = await Promise.all(loaded.map(m =>
+      fetch('/internal/admin/models', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'unload', model: m.id }),
+      }).then(r => ({ model: m.id, ok: r.ok, status: r.status }))
+        .catch(err => ({ model: m.id, ok: false, error: err.message }))
+    ));
+    const ok = results.filter(r => r.ok).length;
+    const fail = results.length - ok;
+    if (fail === 0) toast(`unloaded ${ok}/${results.length}`);
+    else toast(`unloaded ${ok}/${results.length} — ${fail} failed`, true);
+    pollAgents();
+  });
 }
 
 function renderActive(active) {
@@ -337,11 +361,19 @@ async function pollAgents() {
     if (!r.ok) throw new Error('HTTP ' + r.status);
     const data = await r.json();
     window._lastAgentsData = data;   // exposed for unloadAll() / debug
+    // Active card has a live elapsed counter — render every tick.
     renderActive(data.active);
-    renderHistory(data.recent || []);
-    renderModels(data.omlx_status, data.usage);
-    renderBench(data.bench);
-    renderRouting(data.routing);
+    // Other sections: skip the render if the underlying payload is byte-
+    // identical to the last render. Avoids tearing down hover/focus and
+    // snapping open <select> dropdowns shut every 2 s.
+    if (_changed('history', data.recent || []))
+      renderHistory(data.recent || []);
+    if (_changed('models', { o: data.omlx_status, u: data.usage, c: window._idleConfig }))
+      renderModels(data.omlx_status, data.usage);
+    if (_changed('bench', data.bench))
+      renderBench(data.bench);
+    if (_changed('routing', data.routing))
+      renderRouting(data.routing);
     _lastOk = Date.now();
     const pill = $('status-pill'), txt = $('status-text');
     if (pill && txt) {
@@ -405,8 +437,8 @@ function initAgents() {
       if (!btn) return;
       const model = btn.dataset.model;
       const action = btn.dataset.action;
-      if (action === 'unload') unloadModel(model);
-      else if (action === 'load') loadModel(model);
+      if (action === 'unload') unloadModel(btn, model);
+      else if (action === 'load') loadModel(btn, model);
     });
     // Change handler for idle-config checkbox + dropdown
     area.addEventListener('change', e => {
@@ -417,6 +449,6 @@ function initAgents() {
     });
   }
   $('btn-unload-all')?.addEventListener('click', unloadAll);
-  $('btn-rerun-bench')?.addEventListener('click', () => rerunBench(false));
-  $('btn-rerun-bench-force')?.addEventListener('click', () => rerunBench(true));
+  $('btn-rerun-bench')?.addEventListener('click', e => rerunBench(e.currentTarget, false));
+  $('btn-rerun-bench-force')?.addEventListener('click', e => rerunBench(e.currentTarget, true));
 }

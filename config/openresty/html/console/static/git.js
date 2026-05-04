@@ -77,7 +77,7 @@ async function saveConfig() {
   }
 }
 
-async function saveSettings() {
+async function saveSettings(ev) {
   _config.default_author = $('default-author').value.trim();
   const intv = parseInt($('interval').value, 10);
   if (isNaN(intv) || intv < 30) return toast('Interval must be ≥ 30 seconds', true);
@@ -91,13 +91,15 @@ async function saveSettings() {
     if (v) pa[k] = v;
   }
   _config.platform_authors = pa;
-  try {
-    await saveConfig();
-    toast('Settings saved');
-  } catch (e) { toast('Save failed: ' + e.message, true); }
+  await withBusy(ev?.currentTarget, async () => {
+    try {
+      await saveConfig();
+      toast('Settings saved');
+    } catch (e) { toast('Save failed: ' + e.message, true); }
+  });
 }
 
-async function addRepo() {
+async function addRepo(ev) {
   const path = $('new-path').value.trim();
   const alias = $('new-alias').value.trim();
   const author = $('new-author').value.trim();
@@ -111,30 +113,34 @@ async function addRepo() {
   if (author) entry.author = author;
   if (platform) entry.platform = platform;
   _config.repos.push(entry);
-  try {
-    await saveConfig();
-    toast('Added ' + (alias || path));
-    $('new-path').value = ''; $('new-alias').value = ''; $('new-author').value = '';
-    $('new-platform').value = '';
-    renderRepos();
-  } catch (e) {
-    _config.repos.pop();
-    toast('Add failed: ' + e.message, true);
-  }
+  await withBusy(ev?.currentTarget, async () => {
+    try {
+      await saveConfig();
+      toast('Added ' + (alias || path));
+      $('new-path').value = ''; $('new-alias').value = ''; $('new-author').value = '';
+      $('new-platform').value = '';
+      renderRepos();
+    } catch (e) {
+      _config.repos.pop();
+      toast('Add failed: ' + e.message, true);
+    }
+  });
 }
 
-async function removeRepo(idx) {
+async function removeRepo(btn, idx) {
   const removed = _config.repos[idx];
   _config.repos.splice(idx, 1);
-  try {
-    await saveConfig();
-    toast('Removed ' + (removed.alias || removed.path));
-    renderRepos();
-  } catch (e) {
-    _config.repos.splice(idx, 0, removed);
-    toast('Remove failed: ' + e.message, true);
-    renderRepos();
-  }
+  await withBusy(btn, async () => {
+    try {
+      await saveConfig();
+      toast('Removed ' + (removed.alias || removed.path));
+      renderRepos();
+    } catch (e) {
+      _config.repos.splice(idx, 0, removed);
+      toast('Remove failed: ' + e.message, true);
+      renderRepos();
+    }
+  });
 }
 
 async function refresh() {
@@ -153,7 +159,7 @@ function initGit() {
   $('repos-list').addEventListener('click', e => {
     const btn = e.target.closest('button[data-idx]');
     if (!btn) return;
-    removeRepo(parseInt(btn.dataset.idx, 10));
+    removeRepo(btn, parseInt(btn.dataset.idx, 10));
   });
   refresh();
   setInterval(refresh, 30000);

@@ -2,6 +2,7 @@
 local cjson = require "cjson.safe"
 local counters = ngx.shared.counters
 local blocking_dict = ngx.shared.blocking
+local rl_events = ngx.shared.rl_events
 
 -- Cap dict scans so a runaway counter dict can't stall the /metrics endpoint.
 -- Matches admin_api.lua for consistency.
@@ -123,8 +124,8 @@ for _, key in ipairs(keys) do
     -- Skip daily counters
     if key:sub(1, 4) == "day|" then
         -- skip
-    elseif key:sub(1, 15) == "ratelimit_wait|" then
-        -- key format: ratelimit_wait|user|model|limit_type
+    elseif not rl_events and key:sub(1, 15) == "ratelimit_wait|" then
+        -- fallback: scan from counters when rl_events dict not yet provisioned
         local rl_user, rl_model, rl_ltype = key:match("^ratelimit_wait|([^|]+)|([^|]+)|(.+)$")
         if rl_user then
             local val = counters:get(key) or 0
@@ -132,8 +133,8 @@ for _, key in ipairs(keys) do
                 'gateii_rate_limit_wait_seconds{user="%s",model="%s",limit_type="%s"} %d',
                 escape_label(rl_user), escape_label(rl_model), escape_label(rl_ltype), val)
         end
-    elseif key:sub(1, 17) == "ratelimit_tokens|" then
-        -- key format: ratelimit_tokens|user|model|limit_type
+    elseif not rl_events and key:sub(1, 17) == "ratelimit_tokens|" then
+        -- fallback: scan from counters when rl_events dict not yet provisioned
         local rl_user, rl_model, rl_ltype = key:match("^ratelimit_tokens|([^|]+)|([^|]+)|(.+)$")
         if rl_user then
             local val = counters:get(key) or 0
@@ -189,6 +190,30 @@ for _, key in ipairs(keys) do
                 local mkey = upm .. "|" .. parts[5]
                 if not modality_usage[mkey] then modality_usage[mkey] = {} end
                 modality_usage[mkey][parts[6]] = counters:get(key) or 0
+            end
+        end
+    end
+end
+
+-- Dedicated rl_events scan (small dict, unlimited get_keys(0) — safe because dict is 1m)
+if rl_events then
+    local rl_keys = rl_events:get_keys(0) or {}
+    for _, key in ipairs(rl_keys) do
+        if key:sub(1, 15) == "ratelimit_wait|" then
+            local rl_user, rl_model, rl_ltype = key:match("^ratelimit_wait|([^|]+)|([^|]+)|(.+)$")
+            if rl_user then
+                local val = rl_events:get(key) or 0
+                rl_wait_lines[#rl_wait_lines+1] = string.format(
+                    'gateii_rate_limit_wait_seconds{user="%s",model="%s",limit_type="%s"} %d',
+                    escape_label(rl_user), escape_label(rl_model), escape_label(rl_ltype), val)
+            end
+        elseif key:sub(1, 17) == "ratelimit_tokens|" then
+            local rl_user, rl_model, rl_ltype = key:match("^ratelimit_tokens|([^|]+)|([^|]+)|(.+)$")
+            if rl_user then
+                local val = rl_events:get(key) or 0
+                rl_tokens_lines[#rl_tokens_lines+1] = string.format(
+                    'gateii_rate_limit_tokens_at_hit{user="%s",model="%s",limit_type="%s"} %d',
+                    escape_label(rl_user), escape_label(rl_model), escape_label(rl_ltype), val)
             end
         end
     end
@@ -531,6 +556,13 @@ if blocking_free then
 end
 if admin_sessions then
     add(string.format('gateii_shared_dict_free_bytes{dict="admin_sessions"} %d', admin_sessions:free_space()))
+end
+if rl_events then
+    add(string.format('gateii_shared_dict_free_bytes{dict="rl_events"} %d', rl_events:free_space()))
+end
+local or_cache_dict = ngx.shared.or_cache
+if or_cache_dict then
+    add(string.format('gateii_shared_dict_free_bytes{dict="or_cache"} %d', or_cache_dict:free_space()))
 end
 
 -- Report whether the counters dict scan hit the MAX_ITER_KEYS limit

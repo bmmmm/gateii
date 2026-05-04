@@ -1,16 +1,34 @@
 {
   "id": null,
   "uid": "gateii-ops",
-  "title": "gateii — Operations",
-  "tags": ["gateii", "ops"],
+  "title": "gateii \u2014 Operations",
+  "tags": [
+    "gateii",
+    "ops"
+  ],
   "timezone": "browser",
   "schemaVersion": 38,
   "refresh": "30s",
-  "time": {"from": "now-1h", "to": "now"},
-  "description": "Live operations view — last hour of traffic, errors, and security events. Rate-limit window state lives on the Efficiency & Health dashboard.",
+  "time": {
+    "from": "now-1h",
+    "to": "now"
+  },
+  "description": "Live operations view \u2014 last hour of traffic, errors, and security events. Rate-limit window state lives on the Efficiency & Health dashboard.",
   "links": [
-    {"title": "Cost & Usage", "type": "link", "url": "/d/gateii-cost", "icon": "dollar", "targetBlank": false},
-    {"title": "Efficiency & Health", "type": "link", "url": "/d/gateii-eff", "icon": "cloud", "targetBlank": false}
+    {
+      "title": "Cost & Usage",
+      "type": "link",
+      "url": "/d/gateii-cost",
+      "icon": "dollar",
+      "targetBlank": false
+    },
+    {
+      "title": "Efficiency & Health",
+      "type": "link",
+      "url": "/d/gateii-eff",
+      "icon": "cloud",
+      "targetBlank": false
+    }
   ],
   "templating": {
     "list": [
@@ -18,12 +36,18 @@
         "name": "model",
         "label": "Model",
         "type": "query",
-        "datasource": {"type": "prometheus"},
+        "datasource": {
+          "type": "prometheus"
+        },
         "query": "label_values(gateii_requests_total, model)",
         "refresh": 2,
         "includeAll": true,
         "multi": true,
-        "current": {"selected": true, "text": "All", "value": "$__all"}
+        "current": {
+          "selected": true,
+          "text": "All",
+          "value": "$__all"
+        }
       }
     ]
   },
@@ -31,218 +55,928 @@
     {
       "id": 300,
       "type": "row",
-      "title": "Circuit Breaker",
+      "title": "Status",
       "collapsed": false,
-      "gridPos": {"x": 0, "y": 0, "w": 24, "h": 1},
+      "gridPos": {
+        "x": 0,
+        "y": 0,
+        "w": 24,
+        "h": 1
+      },
       "panels": []
     },
     {
       "id": 1,
       "title": "Circuit Breaker State (now)",
-      "description": "Auto-protects upstream APIs from repeated failures. CLOSED = normal, requests pass through. OPEN = 5 consecutive 5xx/timeouts tripped the breaker; new requests fail fast (503) instead of hammering a broken upstream. HALF_OPEN = cooldown elapsed, one probe request is sent to test recovery — success reverts to CLOSED, failure reopens.",
+      "description": "Auto-protects upstream APIs from repeated failures. CLOSED = normal, requests pass through. OPEN = 5 consecutive 5xx/timeouts tripped the breaker; new requests fail fast (503) instead of hammering a broken upstream. HALF_OPEN = cooldown elapsed, one probe request is sent to test recovery \u2014 success reverts to CLOSED, failure reopens.",
       "type": "stat",
-      "gridPos": {"x": 0, "y": 1, "w": 8, "h": 4},
-      "datasource": {"type": "prometheus"},
-      "targets": [{"datasource": {"type": "prometheus"}, "expr": "gateii_circuit_state", "legendFormat": "{{provider}}", "instant": true, "refId": "A"}],
+      "gridPos": {
+        "x": 0,
+        "y": 1,
+        "w": 8,
+        "h": 3
+      },
+      "datasource": {
+        "type": "prometheus"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus"
+          },
+          "expr": "gateii_circuit_state",
+          "legendFormat": "{{provider}}",
+          "instant": true,
+          "refId": "A"
+        }
+      ],
       "fieldConfig": {
         "defaults": {
           "unit": "short",
           "mappings": [
-            {"type": "value", "options": {"0": {"text": "CLOSED", "color": "green"}, "1": {"text": "HALF_OPEN", "color": "yellow"}, "2": {"text": "OPEN", "color": "red"}}}
+            {
+              "type": "value",
+              "options": {
+                "0": {
+                  "text": "CLOSED",
+                  "color": "green"
+                },
+                "1": {
+                  "text": "HALF_OPEN",
+                  "color": "yellow"
+                },
+                "2": {
+                  "text": "OPEN",
+                  "color": "red"
+                }
+              }
+            }
           ],
-          "color": {"mode": "thresholds"},
-          "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "yellow", "value": 1}, {"color": "red", "value": 2}]}
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 1
+              },
+              {
+                "color": "red",
+                "value": 2
+              }
+            ]
+          }
         }
       },
-      "options": {"reduceOptions": {"calcs": ["lastNotNull"]}, "colorMode": "background", "graphMode": "none", "orientation": "auto", "textMode": "value_and_name"}
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ]
+        },
+        "colorMode": "background",
+        "graphMode": "none",
+        "orientation": "auto",
+        "textMode": "value_and_name"
+      }
     },
     {
       "id": 2,
       "title": "Consecutive Failures (now)",
       "type": "stat",
-      "gridPos": {"x": 8, "y": 1, "w": 8, "h": 4},
-      "datasource": {"type": "prometheus"},
-      "targets": [{"datasource": {"type": "prometheus"}, "expr": "gateii_circuit_failures", "legendFormat": "{{provider}}", "instant": true, "refId": "A"}],
+      "gridPos": {
+        "x": 8,
+        "y": 1,
+        "w": 8,
+        "h": 3
+      },
+      "datasource": {
+        "type": "prometheus"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus"
+          },
+          "expr": "gateii_circuit_failures",
+          "legendFormat": "{{provider}}",
+          "instant": true,
+          "refId": "A"
+        }
+      ],
       "fieldConfig": {
         "defaults": {
-          "unit": "short", "decimals": 0,
-          "color": {"mode": "thresholds"},
-          "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "yellow", "value": 1}, {"color": "red", "value": 3}]}
+          "unit": "short",
+          "decimals": 0,
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 1
+              },
+              {
+                "color": "red",
+                "value": 3
+              }
+            ]
+          }
         }
       },
-      "options": {"reduceOptions": {"calcs": ["lastNotNull"]}, "colorMode": "value", "graphMode": "none", "orientation": "auto", "textMode": "auto"}
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ]
+        },
+        "colorMode": "value",
+        "graphMode": "none",
+        "orientation": "auto",
+        "textMode": "auto"
+      }
     },
     {
       "id": 3,
       "title": "Circuit Open Seconds (now)",
       "description": "Seconds since circuit last opened. 0 when currently closed.",
       "type": "stat",
-      "gridPos": {"x": 16, "y": 1, "w": 8, "h": 4},
-      "datasource": {"type": "prometheus"},
-      "targets": [{"datasource": {"type": "prometheus"}, "expr": "gateii_circuit_open_seconds or vector(0)", "legendFormat": "{{provider}}", "instant": true, "refId": "A"}],
+      "gridPos": {
+        "x": 16,
+        "y": 1,
+        "w": 8,
+        "h": 3
+      },
+      "datasource": {
+        "type": "prometheus"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus"
+          },
+          "expr": "gateii_circuit_open_seconds or vector(0)",
+          "legendFormat": "{{provider}}",
+          "instant": true,
+          "refId": "A"
+        }
+      ],
       "fieldConfig": {
         "defaults": {
-          "unit": "s", "decimals": 0,
-          "color": {"mode": "thresholds"},
-          "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "orange", "value": 1}, {"color": "red", "value": 60}]}
+          "unit": "s",
+          "decimals": 0,
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "orange",
+                "value": 1
+              },
+              {
+                "color": "red",
+                "value": 60
+              }
+            ]
+          }
         }
       },
-      "options": {"reduceOptions": {"calcs": ["lastNotNull"]}, "colorMode": "value", "graphMode": "none", "orientation": "auto", "textMode": "auto"}
-    },
-    {
-      "id": 301,
-      "type": "row",
-      "title": "Security & Auth",
-      "collapsed": false,
-      "gridPos": {"x": 0, "y": 5, "w": 24, "h": 1},
-      "panels": []
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ]
+        },
+        "colorMode": "value",
+        "graphMode": "none",
+        "orientation": "auto",
+        "textMode": "auto"
+      }
     },
     {
       "id": 4,
       "title": "Blocked Users (now)",
       "type": "stat",
-      "gridPos": {"x": 0, "y": 6, "w": 8, "h": 4},
-      "datasource": {"type": "prometheus"},
-      "targets": [{"datasource": {"type": "prometheus"}, "expr": "sum(gateii_user_blocked) or vector(0)", "legendFormat": "Blocked", "instant": true, "refId": "A"}],
+      "gridPos": {
+        "x": 0,
+        "y": 4,
+        "w": 8,
+        "h": 3
+      },
+      "datasource": {
+        "type": "prometheus"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus"
+          },
+          "expr": "sum(gateii_user_blocked) or vector(0)",
+          "legendFormat": "Blocked",
+          "instant": true,
+          "refId": "A"
+        }
+      ],
       "fieldConfig": {
         "defaults": {
-          "unit": "short", "decimals": 0,
-          "color": {"mode": "thresholds"},
-          "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "red", "value": 1}]}
+          "unit": "short",
+          "decimals": 0,
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 1
+              }
+            ]
+          }
         }
       },
-      "options": {"reduceOptions": {"calcs": ["lastNotNull"]}, "colorMode": "background", "graphMode": "none", "orientation": "auto", "textMode": "auto"}
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ]
+        },
+        "colorMode": "background",
+        "graphMode": "none",
+        "orientation": "auto",
+        "textMode": "auto"
+      }
     },
     {
       "id": 5,
       "title": "Admin Sessions Active (now)",
       "description": "Current HttpOnly admin sessions. Each session expires after 1h.",
       "type": "stat",
-      "gridPos": {"x": 8, "y": 6, "w": 8, "h": 4},
-      "datasource": {"type": "prometheus"},
-      "targets": [{"datasource": {"type": "prometheus"}, "expr": "gateii_admin_sessions_active", "legendFormat": "Sessions", "instant": true, "refId": "A"}],
+      "gridPos": {
+        "x": 8,
+        "y": 4,
+        "w": 8,
+        "h": 3
+      },
+      "datasource": {
+        "type": "prometheus"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus"
+          },
+          "expr": "gateii_admin_sessions_active",
+          "legendFormat": "Sessions",
+          "instant": true,
+          "refId": "A"
+        }
+      ],
       "fieldConfig": {
         "defaults": {
-          "unit": "short", "decimals": 0,
-          "color": {"mode": "thresholds"},
-          "thresholds": {"mode": "absolute", "steps": [{"color": "blue", "value": null}, {"color": "yellow", "value": 5}, {"color": "red", "value": 20}]}
+          "unit": "short",
+          "decimals": 0,
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "blue",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 5
+              },
+              {
+                "color": "red",
+                "value": 20
+              }
+            ]
+          }
         }
       },
-      "options": {"reduceOptions": {"calcs": ["lastNotNull"]}, "colorMode": "value", "graphMode": "none", "orientation": "auto", "textMode": "auto"}
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ]
+        },
+        "colorMode": "value",
+        "graphMode": "none",
+        "orientation": "auto",
+        "textMode": "auto"
+      }
     },
     {
       "id": 6,
       "title": "Admin Login Failures (24h)",
       "description": "Rejected admin logins with wrong token. Sudden spikes = potential brute-force attempt.",
       "type": "stat",
-      "gridPos": {"x": 16, "y": 6, "w": 8, "h": 4},
-      "datasource": {"type": "prometheus"},
-      "targets": [{"datasource": {"type": "prometheus"}, "expr": "increase(gateii_admin_login_failures_total[24h])", "legendFormat": "Failures 24h", "instant": true, "refId": "A"}],
+      "gridPos": {
+        "x": 16,
+        "y": 4,
+        "w": 8,
+        "h": 3
+      },
+      "datasource": {
+        "type": "prometheus"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus"
+          },
+          "expr": "increase(gateii_admin_login_failures_total[24h])",
+          "legendFormat": "Failures 24h",
+          "instant": true,
+          "refId": "A"
+        }
+      ],
       "fieldConfig": {
         "defaults": {
-          "unit": "short", "decimals": 0,
-          "color": {"mode": "thresholds"},
-          "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "orange", "value": 5}, {"color": "red", "value": 20}]}
+          "unit": "short",
+          "decimals": 0,
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "orange",
+                "value": 5
+              },
+              {
+                "color": "red",
+                "value": 20
+              }
+            ]
+          }
         }
       },
-      "options": {"reduceOptions": {"calcs": ["lastNotNull"]}, "colorMode": "value", "graphMode": "none", "orientation": "auto", "textMode": "auto"}
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ]
+        },
+        "colorMode": "value",
+        "graphMode": "none",
+        "orientation": "auto",
+        "textMode": "auto"
+      }
     },
     {
       "id": 302,
       "type": "row",
       "title": "Rate-Limit Events (last 30d)",
       "collapsed": true,
-      "gridPos": {"x": 0, "y": 10, "w": 24, "h": 1},
+      "gridPos": {
+        "x": 0,
+        "y": 7,
+        "w": 24,
+        "h": 1
+      },
       "panels": [
         {
           "id": 32,
           "title": "429 Hit Events",
           "description": "Per-user rate-limit hits over the last 30 days. Empty = no 429s tripped (good!). For current 5h/7d quota state, see Efficiency & Health.",
           "type": "table",
-          "gridPos": {"x": 0, "y": 11, "w": 24, "h": 5},
-          "datasource": {"type": "prometheus"},
+          "gridPos": {
+            "x": 0,
+            "y": 11,
+            "w": 24,
+            "h": 5
+          },
+          "datasource": {
+            "type": "prometheus"
+          },
           "targets": [
-            {"datasource": {"type": "prometheus"}, "expr": "gateii_rate_limit_tokens_at_hit", "format": "table", "instant": true, "refId": "A"},
-            {"datasource": {"type": "prometheus"}, "expr": "gateii_rate_limit_wait_seconds", "format": "table", "instant": true, "refId": "B"}
+            {
+              "datasource": {
+                "type": "prometheus"
+              },
+              "expr": "gateii_rate_limit_tokens_at_hit",
+              "format": "table",
+              "instant": true,
+              "refId": "A"
+            },
+            {
+              "datasource": {
+                "type": "prometheus"
+              },
+              "expr": "gateii_rate_limit_wait_seconds",
+              "format": "table",
+              "instant": true,
+              "refId": "B"
+            }
           ],
           "transformations": [
-            {"id": "merge", "options": {}},
-            {"id": "organize", "options": {"excludeByName": {"Time": true, "__name__": true, "job": true, "instance": true}, "renameByName": {"Value #A": "Tokens at Hit", "Value #B": "Wait (s)"}}},
-            {"id": "sortBy", "options": {"fields": {}, "sort": [{"field": "Wait (s)", "desc": true}]}}
+            {
+              "id": "merge",
+              "options": {}
+            },
+            {
+              "id": "organize",
+              "options": {
+                "excludeByName": {
+                  "Time": true,
+                  "__name__": true,
+                  "job": true,
+                  "instance": true
+                },
+                "renameByName": {
+                  "Value #A": "Tokens at Hit",
+                  "Value #B": "Wait (s)"
+                }
+              }
+            },
+            {
+              "id": "sortBy",
+              "options": {
+                "fields": {},
+                "sort": [
+                  {
+                    "field": "Wait (s)",
+                    "desc": true
+                  }
+                ]
+              }
+            }
           ],
           "fieldConfig": {
-            "defaults": {"unit": "short", "decimals": 0},
+            "defaults": {
+              "unit": "short",
+              "decimals": 0
+            },
             "overrides": [
-              {"matcher": {"id": "byName", "options": "Wait (s)"}, "properties": [{"id": "unit", "value": "s"}, {"id": "custom.cellOptions", "value": {"type": "color-text"}}, {"id": "color", "value": {"mode": "continuous-GrYlRd"}}]},
-              {"matcher": {"id": "byName", "options": "Tokens at Hit"}, "properties": [{"id": "custom.cellOptions", "value": {"type": "color-text"}}, {"id": "color", "value": {"mode": "continuous-BlPu"}}]}
+              {
+                "matcher": {
+                  "id": "byName",
+                  "options": "Wait (s)"
+                },
+                "properties": [
+                  {
+                    "id": "unit",
+                    "value": "s"
+                  },
+                  {
+                    "id": "custom.cellOptions",
+                    "value": {
+                      "type": "color-text"
+                    }
+                  },
+                  {
+                    "id": "color",
+                    "value": {
+                      "mode": "continuous-GrYlRd"
+                    }
+                  }
+                ]
+              },
+              {
+                "matcher": {
+                  "id": "byName",
+                  "options": "Tokens at Hit"
+                },
+                "properties": [
+                  {
+                    "id": "custom.cellOptions",
+                    "value": {
+                      "type": "color-text"
+                    }
+                  },
+                  {
+                    "id": "color",
+                    "value": {
+                      "mode": "continuous-BlPu"
+                    }
+                  }
+                ]
+              }
             ]
           },
-          "options": {"showHeader": true, "cellHeight": "sm"}
+          "options": {
+            "showHeader": true,
+            "cellHeight": "sm"
+          }
         }
       ]
     },
     {
       "id": 303,
       "type": "row",
-      "title": "Claude Code — Traffic",
+      "title": "Claude Code \u2014 Traffic",
       "collapsed": false,
-      "gridPos": {"x": 0, "y": 11, "w": 24, "h": 1},
+      "gridPos": {
+        "x": 0,
+        "y": 8,
+        "w": 24,
+        "h": 1
+      },
       "panels": []
     },
     {
       "id": 8,
       "title": "Requests per Minute (1h)",
-      "description": "Traffic indicator — request volume per model over the last hour. Pairs with the latency panel: high req/min + high latency = upstream stressed.",
+      "description": "Traffic indicator \u2014 request volume per model over the last hour. Pairs with the latency panel: high req/min + high latency = upstream stressed.",
       "type": "timeseries",
-      "gridPos": {"x": 0, "y": 12, "w": 12, "h": 8},
-      "datasource": {"type": "prometheus"},
-      "targets": [{"datasource": {"type": "prometheus"}, "expr": "sum by (model) (rate(gateii_requests_total{model=~\"$model\"}[1m])) * 60", "legendFormat": "{{model}}", "refId": "A"}],
+      "gridPos": {
+        "x": 0,
+        "y": 9,
+        "w": 12,
+        "h": 8
+      },
+      "datasource": {
+        "type": "prometheus"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus"
+          },
+          "expr": "sum by (model) (rate(gateii_requests_total{model=~\"$model\"}[1m])) * 60",
+          "legendFormat": "{{model}}",
+          "refId": "A"
+        }
+      ],
       "fieldConfig": {
-        "defaults": {"unit": "short", "custom": {"lineWidth": 2, "fillOpacity": 10}},
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "lineWidth": 2,
+            "fillOpacity": 10
+          }
+        },
         "overrides": [
-          {"matcher": {"id": "byRegexp", "options": "/qwen/i"},    "properties": [{"id": "color", "value": {"fixedColor": "#FF7F00", "mode": "fixed"}}]},
-          {"matcher": {"id": "byRegexp", "options": "/gemma/i"},   "properties": [{"id": "color", "value": {"fixedColor": "#00D4FF", "mode": "fixed"}}]},
-          {"matcher": {"id": "byRegexp", "options": "/llama/i"},   "properties": [{"id": "color", "value": {"fixedColor": "#FFD700", "mode": "fixed"}}]},
-          {"matcher": {"id": "byRegexp", "options": "/phi/i"},     "properties": [{"id": "color", "value": {"fixedColor": "#FF4081", "mode": "fixed"}}]},
-          {"matcher": {"id": "byRegexp", "options": "/mistral/i"}, "properties": [{"id": "color", "value": {"fixedColor": "#F97316", "mode": "fixed"}}]},
-          {"matcher": {"id": "byRegexp", "options": "/deepseek/i"},"properties": [{"id": "color", "value": {"fixedColor": "#A3E635", "mode": "fixed"}}]},
-          {"matcher": {"id": "byRegexp", "options": "/opus/i"},    "properties": [{"id": "color", "value": {"fixedColor": "#B877D9", "mode": "fixed"}}]},
-          {"matcher": {"id": "byRegexp", "options": "/sonnet/i"},  "properties": [{"id": "color", "value": {"fixedColor": "#5794F2", "mode": "fixed"}}]},
-          {"matcher": {"id": "byRegexp", "options": "/haiku/i"},   "properties": [{"id": "color", "value": {"fixedColor": "#56A64B", "mode": "fixed"}}]}
+          {
+            "matcher": {
+              "id": "byRegexp",
+              "options": "/qwen/i"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "#FF7F00",
+                  "mode": "fixed"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byRegexp",
+              "options": "/gemma/i"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "#00D4FF",
+                  "mode": "fixed"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byRegexp",
+              "options": "/llama/i"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "#FFD700",
+                  "mode": "fixed"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byRegexp",
+              "options": "/phi/i"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "#FF4081",
+                  "mode": "fixed"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byRegexp",
+              "options": "/mistral/i"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "#F97316",
+                  "mode": "fixed"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byRegexp",
+              "options": "/deepseek/i"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "#A3E635",
+                  "mode": "fixed"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byRegexp",
+              "options": "/opus/i"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "#B877D9",
+                  "mode": "fixed"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byRegexp",
+              "options": "/sonnet/i"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "#5794F2",
+                  "mode": "fixed"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byRegexp",
+              "options": "/haiku/i"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "#56A64B",
+                  "mode": "fixed"
+                }
+              }
+            ]
+          }
         ]
       },
-      "options": {"tooltip": {"mode": "multi"}, "legend": {"displayMode": "table", "placement": "bottom"}}
+      "options": {
+        "tooltip": {
+          "mode": "multi"
+        },
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom"
+        }
+      }
     },
     {
       "id": 9,
       "title": "Avg Latency by Model (1h)",
-      "description": "Performance indicator — average upstream latency per model over the last hour (computed from cumulative duration / request count). Pairs with requests/min.",
+      "description": "Performance indicator \u2014 average upstream latency per model over the last hour (computed from cumulative duration / request count). Pairs with requests/min.",
       "type": "timeseries",
-      "gridPos": {"x": 12, "y": 12, "w": 12, "h": 8},
-      "datasource": {"type": "prometheus"},
-      "targets": [{"datasource": {"type": "prometheus"}, "expr": "sum by (model) (rate(gateii_request_duration_ms_total{model=~\"$model\"}[5m])) / clamp_min(sum by (model) (rate(gateii_requests_total{model=~\"$model\"}[5m])), 1)", "legendFormat": "{{model}}", "refId": "A"}],
+      "gridPos": {
+        "x": 12,
+        "y": 9,
+        "w": 12,
+        "h": 8
+      },
+      "datasource": {
+        "type": "prometheus"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus"
+          },
+          "expr": "sum by (model) (rate(gateii_request_duration_ms_total{model=~\"$model\"}[5m])) / clamp_min(sum by (model) (rate(gateii_requests_total{model=~\"$model\"}[5m])), 1)",
+          "legendFormat": "{{model}}",
+          "refId": "A"
+        }
+      ],
       "fieldConfig": {
-        "defaults": {"unit": "ms", "custom": {"lineWidth": 2, "fillOpacity": 5}},
+        "defaults": {
+          "unit": "ms",
+          "custom": {
+            "lineWidth": 2,
+            "fillOpacity": 5
+          }
+        },
         "overrides": [
-          {"matcher": {"id": "byRegexp", "options": "/qwen/i"},    "properties": [{"id": "color", "value": {"fixedColor": "#FF7F00", "mode": "fixed"}}]},
-          {"matcher": {"id": "byRegexp", "options": "/gemma/i"},   "properties": [{"id": "color", "value": {"fixedColor": "#00D4FF", "mode": "fixed"}}]},
-          {"matcher": {"id": "byRegexp", "options": "/llama/i"},   "properties": [{"id": "color", "value": {"fixedColor": "#FFD700", "mode": "fixed"}}]},
-          {"matcher": {"id": "byRegexp", "options": "/phi/i"},     "properties": [{"id": "color", "value": {"fixedColor": "#FF4081", "mode": "fixed"}}]},
-          {"matcher": {"id": "byRegexp", "options": "/mistral/i"}, "properties": [{"id": "color", "value": {"fixedColor": "#F97316", "mode": "fixed"}}]},
-          {"matcher": {"id": "byRegexp", "options": "/deepseek/i"},"properties": [{"id": "color", "value": {"fixedColor": "#A3E635", "mode": "fixed"}}]},
-          {"matcher": {"id": "byRegexp", "options": "/opus/i"},    "properties": [{"id": "color", "value": {"fixedColor": "#B877D9", "mode": "fixed"}}]},
-          {"matcher": {"id": "byRegexp", "options": "/sonnet/i"},  "properties": [{"id": "color", "value": {"fixedColor": "#5794F2", "mode": "fixed"}}]},
-          {"matcher": {"id": "byRegexp", "options": "/haiku/i"},   "properties": [{"id": "color", "value": {"fixedColor": "#56A64B", "mode": "fixed"}}]}
+          {
+            "matcher": {
+              "id": "byRegexp",
+              "options": "/qwen/i"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "#FF7F00",
+                  "mode": "fixed"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byRegexp",
+              "options": "/gemma/i"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "#00D4FF",
+                  "mode": "fixed"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byRegexp",
+              "options": "/llama/i"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "#FFD700",
+                  "mode": "fixed"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byRegexp",
+              "options": "/phi/i"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "#FF4081",
+                  "mode": "fixed"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byRegexp",
+              "options": "/mistral/i"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "#F97316",
+                  "mode": "fixed"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byRegexp",
+              "options": "/deepseek/i"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "#A3E635",
+                  "mode": "fixed"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byRegexp",
+              "options": "/opus/i"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "#B877D9",
+                  "mode": "fixed"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byRegexp",
+              "options": "/sonnet/i"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "#5794F2",
+                  "mode": "fixed"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byRegexp",
+              "options": "/haiku/i"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "#56A64B",
+                  "mode": "fixed"
+                }
+              }
+            ]
+          }
         ]
       },
-      "options": {"tooltip": {"mode": "multi"}, "legend": {"displayMode": "table", "placement": "bottom"}}
+      "options": {
+        "tooltip": {
+          "mode": "multi"
+        },
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom"
+        }
+      }
     },
     {
       "id": 306,
       "type": "row",
-      "title": "oMLX — Local Agents",
+      "title": "oMLX \u2014 Local Agents",
       "collapsed": false,
-      "gridPos": {"x": 0, "y": 20, "w": 24, "h": 1},
+      "gridPos": {
+        "x": 0,
+        "y": 17,
+        "w": 24,
+        "h": 1
+      },
       "panels": []
     },
     {
@@ -250,144 +984,691 @@
       "title": "oMLX Requests/min (1h)",
       "description": "Request volume from local oMLX agent tasks. Color key: Qwen=#FF7F00 Gemma=#00D4FF LLaMA=#FFD700 Phi=#FF4081 Mistral=#F97316 DeepSeek=#A3E635",
       "type": "timeseries",
-      "gridPos": {"x": 0, "y": 21, "w": 12, "h": 8},
-      "datasource": {"type": "prometheus"},
-      "targets": [{"datasource": {"type": "prometheus"}, "expr": "sum by (model) (rate(gateii_requests_total{model=~\"(?i)(qwen|gemma|llama|phi|mistral|deepseek).*\"}[1m])) * 60", "legendFormat": "{{model}}", "refId": "A"}],
+      "gridPos": {
+        "x": 0,
+        "y": 18,
+        "w": 12,
+        "h": 8
+      },
+      "datasource": {
+        "type": "prometheus"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus"
+          },
+          "expr": "sum by (model) (rate(gateii_requests_total{model=~\"(?i)(qwen|gemma|llama|phi|mistral|deepseek).*\"}[1m])) * 60",
+          "legendFormat": "{{model}}",
+          "refId": "A"
+        }
+      ],
       "fieldConfig": {
-        "defaults": {"unit": "short", "custom": {"lineWidth": 2, "fillOpacity": 10}},
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "lineWidth": 2,
+            "fillOpacity": 10
+          }
+        },
         "overrides": [
-          {"matcher": {"id": "byRegexp", "options": "/qwen/i"},    "properties": [{"id": "color", "value": {"fixedColor": "#FF7F00", "mode": "fixed"}}]},
-          {"matcher": {"id": "byRegexp", "options": "/gemma/i"},   "properties": [{"id": "color", "value": {"fixedColor": "#00D4FF", "mode": "fixed"}}]},
-          {"matcher": {"id": "byRegexp", "options": "/llama/i"},   "properties": [{"id": "color", "value": {"fixedColor": "#FFD700", "mode": "fixed"}}]},
-          {"matcher": {"id": "byRegexp", "options": "/phi/i"},     "properties": [{"id": "color", "value": {"fixedColor": "#FF4081", "mode": "fixed"}}]},
-          {"matcher": {"id": "byRegexp", "options": "/mistral/i"}, "properties": [{"id": "color", "value": {"fixedColor": "#F97316", "mode": "fixed"}}]},
-          {"matcher": {"id": "byRegexp", "options": "/deepseek/i"},"properties": [{"id": "color", "value": {"fixedColor": "#A3E635", "mode": "fixed"}}]}
+          {
+            "matcher": {
+              "id": "byRegexp",
+              "options": "/qwen/i"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "#FF7F00",
+                  "mode": "fixed"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byRegexp",
+              "options": "/gemma/i"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "#00D4FF",
+                  "mode": "fixed"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byRegexp",
+              "options": "/llama/i"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "#FFD700",
+                  "mode": "fixed"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byRegexp",
+              "options": "/phi/i"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "#FF4081",
+                  "mode": "fixed"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byRegexp",
+              "options": "/mistral/i"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "#F97316",
+                  "mode": "fixed"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byRegexp",
+              "options": "/deepseek/i"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "#A3E635",
+                  "mode": "fixed"
+                }
+              }
+            ]
+          }
         ]
       },
-      "options": {"tooltip": {"mode": "multi"}, "legend": {"displayMode": "table", "placement": "bottom"}}
+      "options": {
+        "tooltip": {
+          "mode": "multi"
+        },
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom"
+        }
+      }
     },
     {
       "id": 51,
       "title": "oMLX Avg Latency (1h)",
-      "description": "Average upstream latency for local oMLX model responses. Expected range: 100ms–3s depending on model size and prompt length. Much lower than Anthropic API latency.",
+      "description": "Average upstream latency for local oMLX model responses. Expected range: 100ms\u20133s depending on model size and prompt length. Much lower than Anthropic API latency.",
       "type": "timeseries",
-      "gridPos": {"x": 12, "y": 21, "w": 12, "h": 8},
-      "datasource": {"type": "prometheus"},
-      "targets": [{"datasource": {"type": "prometheus"}, "expr": "sum by (model) (rate(gateii_request_duration_ms_total{model=~\"(?i)(qwen|gemma|llama|phi|mistral|deepseek).*\"}[5m])) / clamp_min(sum by (model) (rate(gateii_requests_total{model=~\"(?i)(qwen|gemma|llama|phi|mistral|deepseek).*\"}[5m])), 1)", "legendFormat": "{{model}}", "refId": "A"}],
+      "gridPos": {
+        "x": 12,
+        "y": 18,
+        "w": 12,
+        "h": 8
+      },
+      "datasource": {
+        "type": "prometheus"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus"
+          },
+          "expr": "sum by (model) (rate(gateii_request_duration_ms_total{model=~\"(?i)(qwen|gemma|llama|phi|mistral|deepseek).*\"}[5m])) / clamp_min(sum by (model) (rate(gateii_requests_total{model=~\"(?i)(qwen|gemma|llama|phi|mistral|deepseek).*\"}[5m])), 1)",
+          "legendFormat": "{{model}}",
+          "refId": "A"
+        }
+      ],
       "fieldConfig": {
-        "defaults": {"unit": "ms", "custom": {"lineWidth": 2, "fillOpacity": 5}},
+        "defaults": {
+          "unit": "ms",
+          "custom": {
+            "lineWidth": 2,
+            "fillOpacity": 5
+          }
+        },
         "overrides": [
-          {"matcher": {"id": "byRegexp", "options": "/qwen/i"},    "properties": [{"id": "color", "value": {"fixedColor": "#FF7F00", "mode": "fixed"}}]},
-          {"matcher": {"id": "byRegexp", "options": "/gemma/i"},   "properties": [{"id": "color", "value": {"fixedColor": "#00D4FF", "mode": "fixed"}}]},
-          {"matcher": {"id": "byRegexp", "options": "/llama/i"},   "properties": [{"id": "color", "value": {"fixedColor": "#FFD700", "mode": "fixed"}}]},
-          {"matcher": {"id": "byRegexp", "options": "/phi/i"},     "properties": [{"id": "color", "value": {"fixedColor": "#FF4081", "mode": "fixed"}}]},
-          {"matcher": {"id": "byRegexp", "options": "/mistral/i"}, "properties": [{"id": "color", "value": {"fixedColor": "#F97316", "mode": "fixed"}}]},
-          {"matcher": {"id": "byRegexp", "options": "/deepseek/i"},"properties": [{"id": "color", "value": {"fixedColor": "#A3E635", "mode": "fixed"}}]}
+          {
+            "matcher": {
+              "id": "byRegexp",
+              "options": "/qwen/i"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "#FF7F00",
+                  "mode": "fixed"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byRegexp",
+              "options": "/gemma/i"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "#00D4FF",
+                  "mode": "fixed"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byRegexp",
+              "options": "/llama/i"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "#FFD700",
+                  "mode": "fixed"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byRegexp",
+              "options": "/phi/i"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "#FF4081",
+                  "mode": "fixed"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byRegexp",
+              "options": "/mistral/i"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "#F97316",
+                  "mode": "fixed"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byRegexp",
+              "options": "/deepseek/i"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "#A3E635",
+                  "mode": "fixed"
+                }
+              }
+            ]
+          }
         ]
       },
-      "options": {"tooltip": {"mode": "multi"}, "legend": {"displayMode": "table", "placement": "bottom"}}
+      "options": {
+        "tooltip": {
+          "mode": "multi"
+        },
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom"
+        }
+      }
     },
     {
       "id": 304,
       "type": "row",
       "title": "Errors & Stop Reasons",
-      "collapsed": false,
-      "gridPos": {"x": 0, "y": 29, "w": 24, "h": 1},
-      "panels": []
-    },
-    {
-      "id": 10,
-      "title": "Error Rate (1h)",
-      "description": "Fraction of requests with non-2xx upstream response.",
-      "type": "timeseries",
-      "gridPos": {"x": 0, "y": 30, "w": 12, "h": 8},
-      "datasource": {"type": "prometheus"},
-      "targets": [{"datasource": {"type": "prometheus"}, "expr": "sum(rate(gateii_upstream_errors_total{model=~\"$model\"}[5m])) / sum(rate(gateii_requests_total{model=~\"$model\"}[5m]))", "legendFormat": "error rate", "refId": "A"}],
-      "fieldConfig": {
-        "defaults": {"unit": "percentunit", "decimals": 2, "min": 0, "max": 1, "custom": {"lineWidth": 2, "fillOpacity": 20}, "color": {"mode": "fixed", "fixedColor": "#E02F44"}}
+      "collapsed": true,
+      "gridPos": {
+        "x": 0,
+        "y": 26,
+        "w": 24,
+        "h": 1
       },
-      "options": {"tooltip": {"mode": "multi"}, "legend": {"displayMode": "list", "placement": "bottom"}}
-    },
-    {
-      "id": 11,
-      "title": "Status Code Breakdown (1h)",
-      "description": "Upstream response classes (2xx = OK, 429 = rate-limited, 4xx/5xx = errors).",
-      "type": "timeseries",
-      "gridPos": {"x": 12, "y": 30, "w": 12, "h": 8},
-      "datasource": {"type": "prometheus"},
-      "targets": [{"datasource": {"type": "prometheus"}, "expr": "sum by (status_class) (rate(gateii_upstream_status_code_total{model=~\"$model\"}[1m]))", "legendFormat": "{{status_class}}", "refId": "A"}],
-      "fieldConfig": {
-        "defaults": {"unit": "reqps", "custom": {"lineWidth": 2, "fillOpacity": 30, "stacking": {"mode": "normal"}}},
-        "overrides": [
-          {"matcher": {"id": "byName", "options": "2xx"}, "properties": [{"id": "color", "value": {"fixedColor": "#56A64B", "mode": "fixed"}}]},
-          {"matcher": {"id": "byName", "options": "3xx"}, "properties": [{"id": "color", "value": {"fixedColor": "#5794F2", "mode": "fixed"}}]},
-          {"matcher": {"id": "byName", "options": "4xx"}, "properties": [{"id": "color", "value": {"fixedColor": "#FF9830", "mode": "fixed"}}]},
-          {"matcher": {"id": "byName", "options": "429"}, "properties": [{"id": "color", "value": {"fixedColor": "#F2495C", "mode": "fixed"}}]},
-          {"matcher": {"id": "byName", "options": "5xx"}, "properties": [{"id": "color", "value": {"fixedColor": "#E02F44", "mode": "fixed"}}]}
-        ]
-      },
-      "options": {"tooltip": {"mode": "multi"}, "legend": {"displayMode": "table", "placement": "bottom"}}
-    },
-    {
-      "id": 12,
-      "title": "Stop Reason Distribution (1h)",
-      "description": "end_turn = completed | tool_use = tools called | max_tokens = truncated",
-      "type": "bargauge",
-      "gridPos": {"x": 0, "y": 38, "w": 24, "h": 6},
-      "datasource": {"type": "prometheus"},
-      "targets": [{"datasource": {"type": "prometheus"}, "expr": "sum by (reason) (increase(gateii_stop_reason_total{model=~\"$model\"}[1h]))", "legendFormat": "{{reason}}", "instant": true, "refId": "A"}],
-      "fieldConfig": {
-        "defaults": {"unit": "short", "thresholds": {"mode": "absolute", "steps": [{"color": "blue", "value": null}]}},
-        "overrides": [
-          {"matcher": {"id": "byRegexp", "options": "/end_turn/i"},   "properties": [{"id": "color", "value": {"fixedColor": "#56A64B", "mode": "fixed"}}]},
-          {"matcher": {"id": "byRegexp", "options": "/tool_use/i"},   "properties": [{"id": "color", "value": {"fixedColor": "#5794F2", "mode": "fixed"}}]},
-          {"matcher": {"id": "byRegexp", "options": "/max_tokens/i"}, "properties": [{"id": "color", "value": {"fixedColor": "#E02F44", "mode": "fixed"}}]}
-        ]
-      },
-      "options": {"orientation": "horizontal", "reduceOptions": {"calcs": ["lastNotNull"]}, "displayMode": "gradient"}
+      "panels": [
+        {
+          "id": 10,
+          "title": "Error Rate (1h)",
+          "description": "Fraction of requests with non-2xx upstream response.",
+          "type": "timeseries",
+          "gridPos": {
+            "x": 0,
+            "y": 27,
+            "w": 12,
+            "h": 8
+          },
+          "datasource": {
+            "type": "prometheus"
+          },
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus"
+              },
+              "expr": "sum(rate(gateii_upstream_errors_total{model=~\"$model\"}[5m])) / sum(rate(gateii_requests_total{model=~\"$model\"}[5m]))",
+              "legendFormat": "error rate",
+              "refId": "A"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "unit": "percentunit",
+              "decimals": 2,
+              "min": 0,
+              "max": 1,
+              "custom": {
+                "lineWidth": 2,
+                "fillOpacity": 20
+              },
+              "color": {
+                "mode": "fixed",
+                "fixedColor": "#E02F44"
+              }
+            }
+          },
+          "options": {
+            "tooltip": {
+              "mode": "multi"
+            },
+            "legend": {
+              "displayMode": "list",
+              "placement": "bottom"
+            }
+          }
+        },
+        {
+          "id": 11,
+          "title": "Status Code Breakdown (1h)",
+          "description": "Upstream response classes (2xx = OK, 429 = rate-limited, 4xx/5xx = errors).",
+          "type": "timeseries",
+          "gridPos": {
+            "x": 12,
+            "y": 27,
+            "w": 12,
+            "h": 8
+          },
+          "datasource": {
+            "type": "prometheus"
+          },
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus"
+              },
+              "expr": "sum by (status_class) (rate(gateii_upstream_status_code_total{model=~\"$model\"}[1m]))",
+              "legendFormat": "{{status_class}}",
+              "refId": "A"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "unit": "reqps",
+              "custom": {
+                "lineWidth": 2,
+                "fillOpacity": 30,
+                "stacking": {
+                  "mode": "normal"
+                }
+              }
+            },
+            "overrides": [
+              {
+                "matcher": {
+                  "id": "byName",
+                  "options": "2xx"
+                },
+                "properties": [
+                  {
+                    "id": "color",
+                    "value": {
+                      "fixedColor": "#56A64B",
+                      "mode": "fixed"
+                    }
+                  }
+                ]
+              },
+              {
+                "matcher": {
+                  "id": "byName",
+                  "options": "3xx"
+                },
+                "properties": [
+                  {
+                    "id": "color",
+                    "value": {
+                      "fixedColor": "#5794F2",
+                      "mode": "fixed"
+                    }
+                  }
+                ]
+              },
+              {
+                "matcher": {
+                  "id": "byName",
+                  "options": "4xx"
+                },
+                "properties": [
+                  {
+                    "id": "color",
+                    "value": {
+                      "fixedColor": "#FF9830",
+                      "mode": "fixed"
+                    }
+                  }
+                ]
+              },
+              {
+                "matcher": {
+                  "id": "byName",
+                  "options": "429"
+                },
+                "properties": [
+                  {
+                    "id": "color",
+                    "value": {
+                      "fixedColor": "#F2495C",
+                      "mode": "fixed"
+                    }
+                  }
+                ]
+              },
+              {
+                "matcher": {
+                  "id": "byName",
+                  "options": "5xx"
+                },
+                "properties": [
+                  {
+                    "id": "color",
+                    "value": {
+                      "fixedColor": "#E02F44",
+                      "mode": "fixed"
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          "options": {
+            "tooltip": {
+              "mode": "multi"
+            },
+            "legend": {
+              "displayMode": "table",
+              "placement": "bottom"
+            }
+          }
+        },
+        {
+          "id": 12,
+          "title": "Stop Reason Distribution (1h)",
+          "description": "end_turn = completed | tool_use = tools called | max_tokens = truncated",
+          "type": "bargauge",
+          "gridPos": {
+            "x": 0,
+            "y": 35,
+            "w": 24,
+            "h": 6
+          },
+          "datasource": {
+            "type": "prometheus"
+          },
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus"
+              },
+              "expr": "sum by (reason) (increase(gateii_stop_reason_total{model=~\"$model\"}[1h]))",
+              "legendFormat": "{{reason}}",
+              "instant": true,
+              "refId": "A"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "unit": "short",
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "blue",
+                    "value": null
+                  }
+                ]
+              }
+            },
+            "overrides": [
+              {
+                "matcher": {
+                  "id": "byRegexp",
+                  "options": "/end_turn/i"
+                },
+                "properties": [
+                  {
+                    "id": "color",
+                    "value": {
+                      "fixedColor": "#56A64B",
+                      "mode": "fixed"
+                    }
+                  }
+                ]
+              },
+              {
+                "matcher": {
+                  "id": "byRegexp",
+                  "options": "/tool_use/i"
+                },
+                "properties": [
+                  {
+                    "id": "color",
+                    "value": {
+                      "fixedColor": "#5794F2",
+                      "mode": "fixed"
+                    }
+                  }
+                ]
+              },
+              {
+                "matcher": {
+                  "id": "byRegexp",
+                  "options": "/max_tokens/i"
+                },
+                "properties": [
+                  {
+                    "id": "color",
+                    "value": {
+                      "fixedColor": "#E02F44",
+                      "mode": "fixed"
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          "options": {
+            "orientation": "horizontal",
+            "reduceOptions": {
+              "calcs": [
+                "lastNotNull"
+              ]
+            },
+            "displayMode": "gradient"
+          }
+        }
+      ]
     },
     {
       "id": 305,
       "type": "row",
       "title": "System Health",
       "collapsed": false,
-      "gridPos": {"x": 0, "y": 44, "w": 24, "h": 1},
+      "gridPos": {
+        "x": 0,
+        "y": 27,
+        "w": 24,
+        "h": 1
+      },
       "panels": []
     },
     {
       "id": 13,
       "title": "Shared Dict Free Bytes (now)",
-      "description": "Remaining space in each nginx shared dictionary. Low values = risk of eviction. counters dict holds per-user/model token counters + OR comparison cache — most likely to fill up.",
+      "description": "Remaining space in each nginx shared dictionary. Low values = risk of eviction. counters dict holds per-user/model token counters + OR comparison cache \u2014 most likely to fill up.",
       "type": "bargauge",
-      "gridPos": {"x": 0, "y": 45, "w": 16, "h": 6},
-      "datasource": {"type": "prometheus"},
-      "targets": [{"datasource": {"type": "prometheus"}, "expr": "gateii_shared_dict_free_bytes", "legendFormat": "{{dict}}", "instant": true, "refId": "A"}],
-      "fieldConfig": {
-        "defaults": {"unit": "bytes", "thresholds": {"mode": "absolute", "steps": [{"color": "red", "value": null}, {"color": "orange", "value": 102400}, {"color": "green", "value": 512000}]}}
+      "gridPos": {
+        "x": 0,
+        "y": 28,
+        "w": 16,
+        "h": 6
       },
-      "options": {"orientation": "horizontal", "reduceOptions": {"calcs": ["lastNotNull"]}, "displayMode": "gradient"}
+      "datasource": {
+        "type": "prometheus"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus"
+          },
+          "expr": "gateii_shared_dict_free_bytes",
+          "legendFormat": "{{dict}}",
+          "instant": true,
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "bytes",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "red",
+                "value": null
+              },
+              {
+                "color": "orange",
+                "value": 102400
+              },
+              {
+                "color": "green",
+                "value": 512000
+              }
+            ]
+          }
+        }
+      },
+      "options": {
+        "orientation": "horizontal",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ]
+        },
+        "displayMode": "gradient"
+      }
     },
     {
       "id": 52,
       "title": "Counters Dict Used %",
       "description": "Fill level of the counters shared dict (total: 10 MiB). Above 80% = increase lua_shared_dict counters in nginx.conf + force-recreate openresty.",
       "type": "gauge",
-      "gridPos": {"x": 16, "y": 45, "w": 8, "h": 6},
-      "datasource": {"type": "prometheus"},
-      "targets": [{"datasource": {"type": "prometheus"}, "expr": "(10485760 - gateii_shared_dict_free_bytes{dict=\"counters\"}) / 10485760", "legendFormat": "fill %", "instant": true, "refId": "A"}],
+      "gridPos": {
+        "x": 16,
+        "y": 28,
+        "w": 8,
+        "h": 6
+      },
+      "datasource": {
+        "type": "prometheus"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus"
+          },
+          "expr": "(10485760 - gateii_shared_dict_free_bytes{dict=\"counters\"}) / 10485760",
+          "legendFormat": "fill %",
+          "instant": true,
+          "refId": "A"
+        }
+      ],
       "fieldConfig": {
         "defaults": {
-          "unit": "percentunit", "decimals": 1, "min": 0, "max": 1,
-          "color": {"mode": "thresholds"},
-          "thresholds": {"mode": "absolute", "steps": [
-            {"color": "green", "value": null},
-            {"color": "yellow", "value": 0.6},
-            {"color": "orange", "value": 0.8},
-            {"color": "red", "value": 0.9}
-          ]}
+          "unit": "percentunit",
+          "decimals": 1,
+          "min": 0,
+          "max": 1,
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 0.6
+              },
+              {
+                "color": "orange",
+                "value": 0.8
+              },
+              {
+                "color": "red",
+                "value": 0.9
+              }
+            ]
+          }
         }
       },
-      "options": {"reduceOptions": {"calcs": ["lastNotNull"]}, "orientation": "auto", "showThresholdLabels": false, "showThresholdMarkers": true}
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ]
+        },
+        "orientation": "auto",
+        "showThresholdLabels": false,
+        "showThresholdMarkers": true
+      }
     }
   ]
 }

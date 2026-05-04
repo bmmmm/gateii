@@ -3,6 +3,7 @@ local _M = {}
 local util = require "util"
 
 local counters = ngx.shared.counters
+local rl_events = ngx.shared.rl_events
 
 -- TTL for lifetime (per-user/provider/model) counters. Default: 60 days.
 -- Override via COUNTER_RETENTION_DAYS in .env.
@@ -143,12 +144,20 @@ local RL_EVENT_TTL = 86400 * 30
 
 function _M.set_rate_limit_wait(user, model, limit_type, seconds)
     local key = "ratelimit_wait|" .. user .. "|" .. model .. "|" .. limit_type
-    dict_set(key, seconds, RL_EVENT_TTL)
+    local d = rl_events or counters
+    local ok, err = d:set(key, seconds, RL_EVENT_TTL)
+    if not ok then
+        ngx.log(ngx.ERR, "tracking: set_rate_limit_wait failed key=", key, " err=", tostring(err))
+    end
 end
 
 function _M.set_rate_limit_tokens_at_hit(user, model, limit_type, tokens)
     local key = "ratelimit_tokens|" .. user .. "|" .. model .. "|" .. limit_type
-    dict_set(key, tokens, RL_EVENT_TTL)
+    local d = rl_events or counters
+    local ok, err = d:set(key, tokens, RL_EVENT_TTL)
+    if not ok then
+        ngx.log(ngx.ERR, "tracking: set_rate_limit_tokens_at_hit failed key=", key, " err=", tostring(err))
+    end
 end
 
 -- Store current remaining tokens for the rate limit window

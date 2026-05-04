@@ -69,9 +69,9 @@ body{
 .stats{display:grid;grid-template-columns:repeat(5,1fr);gap:10px}
 .stat-card{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:18px 16px;text-align:center;transition:border-color .2s}
 .stat-card:hover{border-color:var(--border-bright)}
-.stat-val{font-family:var(--font-display);font-size:1.85rem;font-weight:700;line-height:1.1;color:var(--accent);transition:color .3s}
+.stat-val{font-family:var(--font-display);font-size:1.85rem;font-weight:700;line-height:1.1;color:var(--accent);transition:color .3s;font-variant-numeric:tabular-nums;min-height:1.1em;display:inline-block;min-width:3ch}
 .stat-label{font-size:11px;color:var(--dim);letter-spacing:.1em;margin-top:6px;text-transform:uppercase;font-weight:500}
-.stat-sub{font-size:10px;color:var(--dim);margin-top:3px;font-style:italic;min-height:1em}
+.stat-sub{font-size:10px;color:var(--dim);margin-top:3px;font-style:italic;min-height:1.4em;font-variant-numeric:tabular-nums}
 .c-green{color:var(--accent)}.c-yellow{color:var(--warn)}.c-red{color:var(--err)}.c-blue{color:var(--blue)}
 
 /* Panels */
@@ -101,6 +101,9 @@ tr:hover td{background:var(--accent-subtle)}
   background:var(--bg);color:var(--fg);border:1px solid var(--border);outline:none;transition:border-color .15s;
 }
 .input:focus{border-color:var(--accent-dim)}
+.input:focus-visible,select.input:focus-visible{outline:2px solid var(--accent);outline-offset:1px;border-color:var(--accent)}
+.btn:focus-visible,.tab:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+button:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
 .input::placeholder{color:#4a5a4e}
 .input-sm{width:100px}
 select.input{cursor:pointer;-webkit-appearance:none;padding-right:28px;
@@ -108,6 +111,7 @@ select.input{cursor:pointer;-webkit-appearance:none;padding-right:28px;
   background-repeat:no-repeat;background-position:right 10px center;
 }
 .btn{font-family:var(--font-mono);font-size:12px;font-weight:600;padding:6px 16px;border-radius:var(--radius);cursor:pointer;letter-spacing:.04em;transition:all .15s;border:1px solid}
+.btn:disabled,button:disabled{opacity:.55;cursor:wait;pointer-events:none}
 .btn-primary{background:var(--accent-subtle);color:var(--accent);border-color:var(--accent-dim)}
 .btn-primary:hover{background:#33ff6625;border-color:var(--accent)}
 .btn-danger{background:#ff4d4d10;color:var(--err);border-color:#ff4d4d30}

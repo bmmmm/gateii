@@ -191,7 +191,7 @@ async function refreshCompare() {
 }
 
 function initCompare() {
-  $('btn-refresh').addEventListener('click', refreshCompare);
+  $('btn-refresh').addEventListener('click', e => withBusy(e.currentTarget, refreshCompare));
   refreshCompare();
   setInterval(refreshCompare, 60000);
 }
