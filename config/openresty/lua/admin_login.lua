@@ -16,7 +16,7 @@ if uri == "/internal/admin/logout" then
     end
     -- Delete session from shared dict if cookie present
     local cookie_header = ngx.var.http_cookie or ""
-    local session_id = cookie_header:match("admin_session=([a-f0-9]+)")
+    local session_id = cookie_header:match("admin_session=([a-f0-9]{32,128})")
     if session_id then
         sessions:delete(session_id)
     end
