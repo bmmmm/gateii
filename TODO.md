@@ -37,10 +37,7 @@ Orchestrator: distribute to agents when prioritized.
   directly to oMLX. Two paths exercise different auth + bench results don't
   appear in gateii's per-user metrics. Single ingress would simplify.
 
-- **Single source of truth for task definitions**
-  System prompts + max_tokens are duplicated in `scripts/agent` (bash) and
-  `scripts/agent-bench` (python). Move to `config/agents/tasks.json`, both
-  consume via jq / `json.load`. Drift risk grows with each new task.
+- ~~Single source of truth for task definitions~~ ✅ Done — `config/agents/tasks.json`
 
 ## Defense in depth
 
