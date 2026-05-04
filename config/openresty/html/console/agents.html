@@ -173,6 +173,7 @@
   <div class="sec-head">
     <h2>Models</h2>
     <div class="controls">
+      <button class="btn btn-blue" id="btn-unload-all" style="font-size:11px;padding:3px 10px;margin-right:8px">Unload all</button>
       <span style="color:var(--dim);font-size:11px" id="models-meta">omlx unreachable</span>
     </div>
   </div>
@@ -208,7 +209,9 @@
 
   <div class="footer">
     Last refresh <span id="last-refresh">-</span> &middot; auto-refresh 2s
-    &middot; Source: data/agents/{active.json, log.jsonl, routing.json}
+    &middot; Sources: data/agents/{active.json, log.jsonl, routing.json, bench-results.json}
+    + live <code>omlx /v1/models/status</code>
+    &middot; <a href="#" id="footer-diag">diagnostics</a>
   </div>
 </div>
 

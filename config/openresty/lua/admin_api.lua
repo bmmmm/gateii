@@ -791,6 +791,106 @@ if uri == "/internal/admin/diagnostics" and method == "GET" then
         out.admin_login_failures_7d = tonumber(cd:get("admin_login_failures")) or 0
     end
 
+    -- Agents-page diagnostics: omlx connectivity + bench/routing freshness +
+    -- log volume + active state. Each section answers a likely "why doesn't
+    -- the agents tab show what I expect?" question.
+    if want("agents") then
+        local AGENTS_DIR = "/etc/nginx/data/agents"
+        local function file_meta(path)
+            local f = io.open(path, "r")
+            if not f then return { present = false } end
+            local size = f:seek("end") or 0
+            f:close()
+            local m = { present = true, size = size }
+            return m
+        end
+        local function jsonl_count(path)
+            local f = io.open(path, "r")
+            if not f then return 0 end
+            local n = 0
+            for _ in f:lines() do n = n + 1 end
+            f:close()
+            return n
+        end
+
+        out.agents = {
+            omlx_url           = os.getenv("OMLX_URL")     or "(unset)",
+            omlx_api_key_set   = (os.getenv("OMLX_API_KEY") or "") ~= "",
+            files = {
+                ["active.json"]       = file_meta(AGENTS_DIR .. "/active.json"),
+                ["log.jsonl"]         = file_meta(AGENTS_DIR .. "/log.jsonl"),
+                ["routing.json"]      = file_meta(AGENTS_DIR .. "/routing.json"),
+                ["bench-results.json"]= file_meta(AGENTS_DIR .. "/bench-results.json"),
+                ["bench-report.md"]   = file_meta(AGENTS_DIR .. "/bench-report.md"),
+                ["lock.d (held)"]     = file_meta(AGENTS_DIR .. "/lock.d"),
+            },
+            log_run_count = jsonl_count(AGENTS_DIR .. "/log.jsonl"),
+        }
+
+        -- Bench freshness
+        local bf = io.open(AGENTS_DIR .. "/bench-results.json", "r")
+        if bf then
+            local b = cjson.decode(bf:read("*a")) or {}
+            bf:close()
+            local models = {}
+            for _, r in ipairs(b.results or {}) do models[r.model or "?"] = (models[r.model or "?"] or 0) + 1 end
+            local mlist = {}
+            for m in pairs(models) do table.insert(mlist, m) end
+            table.sort(mlist)
+            out.agents.bench = {
+                generated_at    = b.started_at,
+                trials_per_cell = b.trials_per_cell,
+                total_trials    = #(b.results or {}),
+                models_present  = mlist,
+                skipped_models  = b.skipped_models or {},
+                model_created   = b.model_created or {},
+            }
+        end
+
+        -- Routing freshness
+        local rf = io.open(AGENTS_DIR .. "/routing.json", "r")
+        if rf then
+            local r = cjson.decode(rf:read("*a")) or {}
+            rf:close()
+            local rcount = 0
+            for _ in pairs(r.routes or {}) do rcount = rcount + 1 end
+            out.agents.routing = {
+                generated_at  = r.generated_at,
+                default_model = r.default_model,
+                route_count   = rcount,
+            }
+        end
+
+        -- omlx live probe (3s timeout)
+        local http_ok, http = pcall(require, "resty.http")
+        if http_ok then
+            local omlx_url = os.getenv("OMLX_URL") or "http://host.docker.internal:8000"
+            local omlx_key = os.getenv("OMLX_API_KEY") or ""
+            local httpc = http.new()
+            httpc:set_timeout(3000)
+            local res, err = httpc:request_uri(omlx_url .. "/v1/models/status", {
+                method = "GET", headers = { ["Authorization"] = "Bearer " .. omlx_key },
+            })
+            if res and res.status == 200 then
+                local s = cjson.decode(res.body) or {}
+                out.agents.omlx = {
+                    reachable        = true,
+                    loaded_count     = s.loaded_count,
+                    model_count      = s.model_count,
+                    current_model_gb = s.current_model_memory and (s.current_model_memory / (1024^3)) or 0,
+                    max_model_gb     = s.max_model_memory     and (s.max_model_memory     / (1024^3)) or 0,
+                }
+            else
+                out.agents.omlx = {
+                    reachable = false,
+                    error     = (res and ("HTTP " .. res.status)) or err or "unknown",
+                }
+            end
+        else
+            out.agents.omlx = { reachable = false, error = "lua-resty-http unavailable" }
+        end
+    end
+
     ngx.say(cjson.encode(out))
     return
 end

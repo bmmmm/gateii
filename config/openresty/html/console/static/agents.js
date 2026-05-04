@@ -56,6 +56,30 @@ async function loadModel(modelId) {
   }
 }
 
+async function unloadAll() {
+  // Pull current loaded set from the shared cached omlx_status (last poll).
+  const data = window._lastAgentsData;
+  const loaded = (data && data.omlx_status && data.omlx_status.models || []).filter(m => m.loaded);
+  if (loaded.length === 0) {
+    toast('no models loaded — nothing to do');
+    return;
+  }
+  if (!confirm(`Unload all ${loaded.length} loaded models?\n\n${loaded.map(m => '• ' + m.id).join('\n')}\n\nNext request to any of them will trigger a cold reload (~30-60s for big ones).`)) return;
+  toast(`unloading ${loaded.length} model(s)…`);
+  const results = await Promise.all(loaded.map(m =>
+    fetch('/internal/admin/models', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'unload', model: m.id }),
+    }).then(r => r.json().catch(() => ({}))).then(d => ({ model: m.id, ok: d.status === 'ok', error: d.error }))
+  ));
+  const ok = results.filter(r => r.ok).length;
+  const fail = results.length - ok;
+  if (fail === 0) toast(`unloaded ${ok}/${results.length}`);
+  else toast(`unloaded ${ok}/${results.length} — ${fail} failed`, true);
+  pollAgents();
+}
+
 function renderActive(active) {
   const area = $('active-area');
   const count = $('active-count');
@@ -253,6 +277,7 @@ async function pollAgents() {
     const r = await fetch('/internal/admin/agents');
     if (!r.ok) throw new Error('HTTP ' + r.status);
     const data = await r.json();
+    window._lastAgentsData = data;   // exposed for unloadAll() / debug
     renderActive(data.active);
     renderHistory(data.recent || []);
     renderModels(data.omlx_status, data.usage);
@@ -292,4 +317,6 @@ function initAgents() {
       else if (action === 'load') loadModel(model);
     });
   }
+  $('btn-unload-all')?.addEventListener('click', unloadAll);
+  $('footer-diag')?.addEventListener('click', e => { e.preventDefault(); showDiagnostics(); });
 }
