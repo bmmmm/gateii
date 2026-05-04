@@ -89,7 +89,7 @@ overrides (e.g. company proxies) are left alone.
 | `config/openresty/lua/handler.lua` | Proxy to upstream, SSE token parsing, header forwarding |
 | `config/openresty/lua/tracking.lua` | Shared dict counters (tokens, latency, errors, stop_reason) |
 | `config/openresty/lua/metrics.lua` | Prometheus exposition format from shared dicts; defensive expired-window guards (emit 0 util when reset_ts in past) |
-| `config/openresty/lua/admin_api.lua` | HTTP admin API: block/unblock/limit, /keys, /addkey, /overview, /providers, /llm-prices, /openrouter-models, /health, /git-tracking (GET/PUT), /services/* (proxied to compose-ctl) |
+| `config/openresty/lua/admin_api.lua` | HTTP admin API: block/unblock/limit, /keys, /addkey, /overview, /providers, /llm-prices, /openrouter-models, /health, /git-tracking (GET/PUT), /services/* (proxied to compose-ctl), /agents (live state + bench matrix + omlx /v1/models/status passthrough) |
 | `config/openresty/lua/providers/anthropic.lua` | Anthropic header building, token extraction |
 | `config/openresty/lua/providers.json` | Multi-provider pricing config, active provider selector |
 | `config/openresty/nginx.conf` | Env whitelist, shared dicts, routes, /internal/prometheus proxy, /console/* router, /console/static MIME map |
@@ -101,8 +101,12 @@ overrides (e.g. company proxies) are left alone.
 | `config/openresty/lua/util.lua` | Shared primitives — currently `atomic_write(path, content)` |
 | `config/openresty/lua/circuit_breaker.lua` | Per-upstream breaker for repeated failures |
 | `config/openresty/lua/rl_persist.lua` | Persist rate-limit gauges to `data/ratelimit_state.json` (loaded on worker-0 startup, flushed every 30s) — survives container restarts |
-| `config/openresty/html/console/{index,compare,git}.html` | Three-tab console — Overview / Compare / Git. Shared CSS+JS in `static/` |
-| `config/openresty/lua/console_serve.lua` | Routes `/console/`, `/console/compare`, `/console/git` to their HTML files; sets CSP |
+| `config/openresty/html/console/{index,compare,git,agents}.html` | Four-tab console — Overview / Compare / Git / Agents. Shared CSS+JS in `static/` |
+| `config/openresty/lua/console_serve.lua` | Routes `/console/`, `/console/compare`, `/console/git`, `/console/agents` to their HTML files; sets CSP |
+| `config/openresty/lua/providers/omlx.lua` | Local oMLX provider — Anthropic-format upstream (`/v1/messages`); token extraction sums input+cache_creation+cache_read |
+| `scripts/agent` | Wrapper that POSTs simple tasks to gateii→omlx; per-task system prompts + max_tokens; mkdir-lock for max-1 concurrency; writes `data/agents/{active.json,log.jsonl}` |
+| `scripts/agent-bench` | Self-adapting benchmark: discovers loaded models, evicts to fit memory budget, runs N trials per (task, model), writes `data/agents/{bench-results.json,bench-report.md,routing.json}` |
+| `scripts/statusline-omlx.sh`, `scripts/statusline-compose.sh` | Optional Claude Code statusLine indicator + composer for non-claudii setups (claudii integrates natively via `data/agents/active.json`) |
 | `scripts/compose-ctl.py` | Sidecar HTTP control plane — start/stop/restart/recreate any compose service via Console Services panel. Mounts docker socket; whitelisted to services in this compose project |
 | `scripts/git-tracking.sh` | Plugin script: reads `data/git-tracking.json` if present (per-repo author + platform), else falls back to filesystem scan. Auto-detects platform from `git remote -v` if not pinned |
 
@@ -160,6 +164,64 @@ Allow-listed in `.claude/settings.local.json` so it runs without a
 permission prompt; pair Bash calls with `dangerouslyDisableSandbox: true`
 because the curl hits localhost (sandbox rule unaffected by the allow-list,
 see `feedback_smoke_test_sandbox_bypass.md`).
+
+## Local agents (omlx)
+
+Optional layer for routing simple tasks (commit messages, summaries, doc
+comments, structured extractions, …) to a local Apple-Silicon LLM instead
+of burning Claude API tokens on them.
+
+**Install omlx** (one-time, host-side):
+```bash
+brew tap jundot/omlx https://github.com/jundot/omlx
+brew install omlx
+omlx serve --model-dir ~/.omlx/models    # or via the desktop app
+# Admin web-UI: http://localhost:8000/admin   (download / load / unload models)
+# OpenAPI:      http://localhost:8000/openapi.json
+```
+
+omlx exposes both the OpenAI (`/v1/chat/completions`) and Anthropic
+(`/v1/messages`) APIs. gateii routes through the Anthropic path, so the
+provider patch in `config/openresty/lua/providers/omlx.lua` reuses
+`anthropic.extract_tokens`. The oMLX usage quirk: real input lands in
+`cache_creation_input_tokens` (with `input_tokens=0`); the lua sums all
+three input fields.
+
+**Use the wrapper:**
+```bash
+echo "<input>" | scripts/agent run <task>
+scripts/agent tasks                   # list available tasks
+scripts/agent list                    # currently running + last 10 records
+```
+
+Tasks: `commit-msg summarize-file classify-yesno rename doc-comment
+extract-json explain-line refactor-suggestion ambiguity-check unix-recipe
+code-gen-short`. Each pins its own system prompt + max_tokens cap. Lock is
+mkdir-based (`data/agents/lock.d`), max 1 concurrent agent.
+
+**Bench-driven model picker:**
+```bash
+scripts/agent-bench                   # default: full suite on Qwen3.5-9B
+                                       # + small models, comparison-only on big
+scripts/agent-bench --quick           # 1 trial, default model only
+scripts/agent-bench --task TASK       # single task, all models
+```
+
+Writes `data/agents/{bench-results.json, bench-report.md, routing.json}`.
+The wrapper consults `routing.json` and switches *away* from the default
+model only on a *qualitative* win (default fails, candidate passes 100%) —
+ignores marginal latency advantages so we don't burn 15-21 GB of RAM for
+an 80 ms saving.
+
+**Visualization:** Console tab at `http://localhost:8888/console/agents`
+shows live active agent, recent runs, model-load state (calls oMLX's
+`/v1/models/status`), and the full bench matrix (task × model heatmap).
+
+**Statusline integration:** the data file `data/agents/active.json` is
+the source of truth for "what's running right now". Display logic belongs
+in `~/offline_coding/claudii` (claudii owns the statusLine command), not
+in gateii. `scripts/statusline-omlx.sh` and `scripts/statusline-compose.sh`
+are kept as fallbacks for non-claudii setups.
 
 ## Do not
 - Read or commit `.env` (contains API keys)
