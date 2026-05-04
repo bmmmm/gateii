@@ -55,20 +55,30 @@ end
 
 local function track_rl_429(res, u, m, pname)
     local h = res.headers or {}
-    -- Map representative-claim to limit_type label
-    local claim = h["anthropic-ratelimit-unified-representative-claim"]
+    -- Derive which limit was hit from the same unified headers sent on every response.
+    -- Neither a "representative-claim" nor a generic "-unified-reset" header exists;
+    -- Anthropic sends per-window utilization/reset headers (same as on 200 responses).
+    local util_5h  = tonumber(h["anthropic-ratelimit-unified-5h-utilization"])
+    local reset_5h = tonumber(h["anthropic-ratelimit-unified-5h-reset"])
+    local util_7d  = tonumber(h["anthropic-ratelimit-unified-7d-utilization"])
+    local reset_7d = tonumber(h["anthropic-ratelimit-unified-7d-reset"])
+
+    -- Which window is exhausted? Higher utilization wins; default "5h" when ambiguous.
     local limit_type = "unknown"
-    if claim == "five_hour" then limit_type = "5h"
-    elseif claim == "7d"    then limit_type = "weekly"
+    if util_5h or util_7d then
+        local u5 = util_5h or 0
+        local u7 = util_7d or 0
+        limit_type = (u7 > u5) and "7d" or "5h"
     end
-    -- Reset Unix timestamp → seconds to wait; fall back to retry-after
-    local reset_unix = tonumber(h["anthropic-ratelimit-unified-reset"])
-    local retry_after
-    if reset_unix then
-        retry_after = math.max(0, reset_unix - ngx.time())
-    else
-        retry_after = tonumber(h["retry-after"]) or 0
+
+    -- Seconds until the exhausted window resets; fall back to Retry-After header.
+    local retry_after = tonumber(h["retry-after"]) or 0
+    if limit_type == "7d" and reset_7d then
+        retry_after = math.max(0, reset_7d - ngx.time())
+    elseif reset_5h then
+        retry_after = math.max(0, reset_5h - ngx.time())
     end
+
     local hit_tokens = 0
     local cd = ngx.shared.counters
     if cd and u and m then
@@ -78,6 +88,10 @@ local function track_rl_429(res, u, m, pname)
             if v then hit_tokens = hit_tokens + v end
         end
     end
+    ngx.log(ngx.INFO, "[rid=", rid, "] rl_429 user=", tostring(u),
+            " model=", tostring(m), " limit=", limit_type,
+            " wait=", retry_after, "s tokens=", hit_tokens,
+            " util_5h=", tostring(util_5h), " util_7d=", tostring(util_7d))
     tracking.set_rate_limit_wait(u or "unknown", m or "unknown", limit_type, retry_after)
     tracking.set_rate_limit_tokens_at_hit(u or "unknown", m or "unknown", limit_type, hit_tokens)
 end

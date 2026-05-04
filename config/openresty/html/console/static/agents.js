@@ -354,12 +354,20 @@ function renderRouting(routing) {
   }).join('');
 }
 
-let _lastOk = 0;
+// Epoch-guard: every poll bumps the counter. After awaits we check we're
+// still the latest generation — a late response from a previous poll won't
+// overwrite a fresher one. Cheap fix for the "stacked requests arrive out
+// of order" failure mode without having to thread AbortControllers through
+// every fetch.
+let _pollEpoch = 0;
 async function pollAgents() {
+  const myEpoch = ++_pollEpoch;
   try {
     const r = await fetch('/internal/admin/agents');
+    if (myEpoch !== _pollEpoch) return;   // newer poll already in flight
     if (!r.ok) throw new Error('HTTP ' + r.status);
     const data = await r.json();
+    if (myEpoch !== _pollEpoch) return;
     window._lastAgentsData = data;   // exposed for unloadAll() / debug
     // Active card has a live elapsed counter — render every tick.
     renderActive(data.active);
@@ -374,7 +382,6 @@ async function pollAgents() {
       renderBench(data.bench);
     if (_changed('routing', data.routing))
       renderRouting(data.routing);
-    _lastOk = Date.now();
     const pill = $('status-pill'), txt = $('status-text');
     if (pill && txt) {
       pill.classList.remove('offline');
@@ -383,6 +390,7 @@ async function pollAgents() {
     }
     $('last-refresh').textContent = new Date().toLocaleTimeString();
   } catch (err) {
+    if (myEpoch !== _pollEpoch) return;
     const pill = $('status-pill'), txt = $('status-text');
     if (pill && txt) {
       pill.classList.remove('online');

@@ -456,151 +456,13 @@
       }
     },
     {
-      "id": 302,
-      "type": "row",
-      "title": "Rate-Limit Events (last 30d)",
-      "collapsed": true,
-      "gridPos": {
-        "x": 0,
-        "y": 7,
-        "w": 24,
-        "h": 1
-      },
-      "panels": [
-        {
-          "id": 32,
-          "title": "429 Hit Events",
-          "description": "Per-user rate-limit hits over the last 30 days. Empty = no 429s tripped (good!). For current 5h/7d quota state, see Efficiency & Health.",
-          "type": "table",
-          "gridPos": {
-            "x": 0,
-            "y": 11,
-            "w": 24,
-            "h": 5
-          },
-          "datasource": {
-            "type": "prometheus"
-          },
-          "targets": [
-            {
-              "datasource": {
-                "type": "prometheus"
-              },
-              "expr": "gateii_rate_limit_tokens_at_hit",
-              "format": "table",
-              "instant": true,
-              "refId": "A"
-            },
-            {
-              "datasource": {
-                "type": "prometheus"
-              },
-              "expr": "gateii_rate_limit_wait_seconds",
-              "format": "table",
-              "instant": true,
-              "refId": "B"
-            }
-          ],
-          "transformations": [
-            {
-              "id": "merge",
-              "options": {}
-            },
-            {
-              "id": "organize",
-              "options": {
-                "excludeByName": {
-                  "Time": true,
-                  "__name__": true,
-                  "job": true,
-                  "instance": true
-                },
-                "renameByName": {
-                  "Value #A": "Tokens at Hit",
-                  "Value #B": "Wait (s)"
-                }
-              }
-            },
-            {
-              "id": "sortBy",
-              "options": {
-                "fields": {},
-                "sort": [
-                  {
-                    "field": "Wait (s)",
-                    "desc": true
-                  }
-                ]
-              }
-            }
-          ],
-          "fieldConfig": {
-            "defaults": {
-              "unit": "short",
-              "decimals": 0
-            },
-            "overrides": [
-              {
-                "matcher": {
-                  "id": "byName",
-                  "options": "Wait (s)"
-                },
-                "properties": [
-                  {
-                    "id": "unit",
-                    "value": "s"
-                  },
-                  {
-                    "id": "custom.cellOptions",
-                    "value": {
-                      "type": "color-text"
-                    }
-                  },
-                  {
-                    "id": "color",
-                    "value": {
-                      "mode": "continuous-GrYlRd"
-                    }
-                  }
-                ]
-              },
-              {
-                "matcher": {
-                  "id": "byName",
-                  "options": "Tokens at Hit"
-                },
-                "properties": [
-                  {
-                    "id": "custom.cellOptions",
-                    "value": {
-                      "type": "color-text"
-                    }
-                  },
-                  {
-                    "id": "color",
-                    "value": {
-                      "mode": "continuous-BlPu"
-                    }
-                  }
-                ]
-              }
-            ]
-          },
-          "options": {
-            "showHeader": true,
-            "cellHeight": "sm"
-          }
-        }
-      ]
-    },
-    {
       "id": 303,
       "type": "row",
       "title": "Claude Code \u2014 Traffic",
       "collapsed": false,
       "gridPos": {
         "x": 0,
-        "y": 8,
+        "y": 7,
         "w": 24,
         "h": 1
       },
@@ -613,7 +475,7 @@
       "type": "timeseries",
       "gridPos": {
         "x": 0,
-        "y": 9,
+        "y": 8,
         "w": 12,
         "h": 8
       },
@@ -793,7 +655,7 @@
       "type": "timeseries",
       "gridPos": {
         "x": 12,
-        "y": 9,
+        "y": 8,
         "w": 12,
         "h": 8
       },
@@ -973,7 +835,7 @@
       "collapsed": false,
       "gridPos": {
         "x": 0,
-        "y": 17,
+        "y": 16,
         "w": 24,
         "h": 1
       },
@@ -986,7 +848,7 @@
       "type": "timeseries",
       "gridPos": {
         "x": 0,
-        "y": 18,
+        "y": 17,
         "w": 12,
         "h": 8
       },
@@ -1121,7 +983,7 @@
       "type": "timeseries",
       "gridPos": {
         "x": 12,
-        "y": 18,
+        "y": 17,
         "w": 12,
         "h": 8
       },
@@ -1250,13 +1112,151 @@
       }
     },
     {
+      "id": 305,
+      "type": "row",
+      "title": "System Health",
+      "collapsed": false,
+      "gridPos": {
+        "x": 0,
+        "y": 25,
+        "w": 24,
+        "h": 1
+      },
+      "panels": []
+    },
+    {
+      "id": 13,
+      "title": "Shared Dict Free Bytes (now)",
+      "description": "Remaining space in each nginx shared dictionary. Low values = risk of eviction. counters dict holds per-user/model token counters + OR comparison cache \u2014 most likely to fill up.",
+      "type": "bargauge",
+      "gridPos": {
+        "x": 0,
+        "y": 26,
+        "w": 16,
+        "h": 6
+      },
+      "datasource": {
+        "type": "prometheus"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus"
+          },
+          "expr": "gateii_shared_dict_free_bytes",
+          "legendFormat": "{{dict}}",
+          "instant": true,
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "bytes",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "red",
+                "value": null
+              },
+              {
+                "color": "orange",
+                "value": 102400
+              },
+              {
+                "color": "green",
+                "value": 512000
+              }
+            ]
+          }
+        }
+      },
+      "options": {
+        "orientation": "horizontal",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ]
+        },
+        "displayMode": "gradient"
+      }
+    },
+    {
+      "id": 52,
+      "title": "Counters Dict Used %",
+      "description": "Fill level of the counters shared dict (total: 10 MiB). Above 80% = increase lua_shared_dict counters in nginx.conf + force-recreate openresty.",
+      "type": "gauge",
+      "gridPos": {
+        "x": 16,
+        "y": 26,
+        "w": 8,
+        "h": 6
+      },
+      "datasource": {
+        "type": "prometheus"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus"
+          },
+          "expr": "(10485760 - gateii_shared_dict_free_bytes{dict=\"counters\"}) / 10485760",
+          "legendFormat": "fill %",
+          "instant": true,
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "decimals": 1,
+          "min": 0,
+          "max": 1,
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 0.6
+              },
+              {
+                "color": "orange",
+                "value": 0.8
+              },
+              {
+                "color": "red",
+                "value": 0.9
+              }
+            ]
+          }
+        }
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ]
+        },
+        "orientation": "auto",
+        "showThresholdLabels": false,
+        "showThresholdMarkers": true
+      }
+    },
+    {
       "id": 304,
       "type": "row",
       "title": "Errors & Stop Reasons",
       "collapsed": true,
       "gridPos": {
         "x": 0,
-        "y": 26,
+        "y": 32,
         "w": 24,
         "h": 1
       },
@@ -1533,142 +1533,142 @@
       ]
     },
     {
-      "id": 305,
+      "id": 302,
       "type": "row",
-      "title": "System Health",
-      "collapsed": false,
+      "title": "Rate-Limit Events (last 30d)",
+      "collapsed": true,
       "gridPos": {
         "x": 0,
-        "y": 27,
+        "y": 33,
         "w": 24,
         "h": 1
       },
-      "panels": []
-    },
-    {
-      "id": 13,
-      "title": "Shared Dict Free Bytes (now)",
-      "description": "Remaining space in each nginx shared dictionary. Low values = risk of eviction. counters dict holds per-user/model token counters + OR comparison cache \u2014 most likely to fill up.",
-      "type": "bargauge",
-      "gridPos": {
-        "x": 0,
-        "y": 28,
-        "w": 16,
-        "h": 6
-      },
-      "datasource": {
-        "type": "prometheus"
-      },
-      "targets": [
+      "panels": [
         {
+          "id": 32,
+          "title": "429 Hit Events",
+          "description": "Per-user rate-limit hits over the last 30 days. Empty = no 429s tripped (good!). For current 5h/7d quota state, see Efficiency & Health.",
+          "type": "table",
+          "gridPos": {
+            "x": 0,
+            "y": 11,
+            "w": 24,
+            "h": 5
+          },
           "datasource": {
             "type": "prometheus"
           },
-          "expr": "gateii_shared_dict_free_bytes",
-          "legendFormat": "{{dict}}",
-          "instant": true,
-          "refId": "A"
-        }
-      ],
-      "fieldConfig": {
-        "defaults": {
-          "unit": "bytes",
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus"
+              },
+              "expr": "gateii_rate_limit_tokens_at_hit",
+              "format": "table",
+              "instant": true,
+              "refId": "A"
+            },
+            {
+              "datasource": {
+                "type": "prometheus"
+              },
+              "expr": "gateii_rate_limit_wait_seconds",
+              "format": "table",
+              "instant": true,
+              "refId": "B"
+            }
+          ],
+          "transformations": [
+            {
+              "id": "merge",
+              "options": {}
+            },
+            {
+              "id": "organize",
+              "options": {
+                "excludeByName": {
+                  "Time": true,
+                  "__name__": true,
+                  "job": true,
+                  "instance": true
+                },
+                "renameByName": {
+                  "Value #A": "Tokens at Hit",
+                  "Value #B": "Wait (s)"
+                }
+              }
+            },
+            {
+              "id": "sortBy",
+              "options": {
+                "fields": {},
+                "sort": [
+                  {
+                    "field": "Wait (s)",
+                    "desc": true
+                  }
+                ]
+              }
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "unit": "short",
+              "decimals": 0
+            },
+            "overrides": [
               {
-                "color": "red",
-                "value": null
+                "matcher": {
+                  "id": "byName",
+                  "options": "Wait (s)"
+                },
+                "properties": [
+                  {
+                    "id": "unit",
+                    "value": "s"
+                  },
+                  {
+                    "id": "custom.cellOptions",
+                    "value": {
+                      "type": "color-text"
+                    }
+                  },
+                  {
+                    "id": "color",
+                    "value": {
+                      "mode": "continuous-GrYlRd"
+                    }
+                  }
+                ]
               },
               {
-                "color": "orange",
-                "value": 102400
-              },
-              {
-                "color": "green",
-                "value": 512000
+                "matcher": {
+                  "id": "byName",
+                  "options": "Tokens at Hit"
+                },
+                "properties": [
+                  {
+                    "id": "custom.cellOptions",
+                    "value": {
+                      "type": "color-text"
+                    }
+                  },
+                  {
+                    "id": "color",
+                    "value": {
+                      "mode": "continuous-BlPu"
+                    }
+                  }
+                ]
               }
             ]
+          },
+          "options": {
+            "showHeader": true,
+            "cellHeight": "sm"
           }
         }
-      },
-      "options": {
-        "orientation": "horizontal",
-        "reduceOptions": {
-          "calcs": [
-            "lastNotNull"
-          ]
-        },
-        "displayMode": "gradient"
-      }
-    },
-    {
-      "id": 52,
-      "title": "Counters Dict Used %",
-      "description": "Fill level of the counters shared dict (total: 10 MiB). Above 80% = increase lua_shared_dict counters in nginx.conf + force-recreate openresty.",
-      "type": "gauge",
-      "gridPos": {
-        "x": 16,
-        "y": 28,
-        "w": 8,
-        "h": 6
-      },
-      "datasource": {
-        "type": "prometheus"
-      },
-      "targets": [
-        {
-          "datasource": {
-            "type": "prometheus"
-          },
-          "expr": "(10485760 - gateii_shared_dict_free_bytes{dict=\"counters\"}) / 10485760",
-          "legendFormat": "fill %",
-          "instant": true,
-          "refId": "A"
-        }
-      ],
-      "fieldConfig": {
-        "defaults": {
-          "unit": "percentunit",
-          "decimals": 1,
-          "min": 0,
-          "max": 1,
-          "color": {
-            "mode": "thresholds"
-          },
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "green",
-                "value": null
-              },
-              {
-                "color": "yellow",
-                "value": 0.6
-              },
-              {
-                "color": "orange",
-                "value": 0.8
-              },
-              {
-                "color": "red",
-                "value": 0.9
-              }
-            ]
-          }
-        }
-      },
-      "options": {
-        "reduceOptions": {
-          "calcs": [
-            "lastNotNull"
-          ]
-        },
-        "orientation": "auto",
-        "showThresholdLabels": false,
-        "showThresholdMarkers": true
-      }
+      ]
     }
   ]
 }
