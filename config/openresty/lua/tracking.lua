@@ -51,8 +51,8 @@ function _M.record(user, provider, model, input_tokens, output_tokens, opts)
         bump(prefix .. "|latency_ms_sum", math.floor(opts.latency_ms + 0.5), COUNTER_TTL)
     end
 
-    -- Upstream error count (status != 200)
-    if opts.status and opts.status ~= 200 then
+    -- Upstream error count (4xx/5xx — 2xx/3xx are not errors)
+    if opts.status and opts.status >= 400 then
         bump(prefix .. "|errors", 1, COUNTER_TTL)
     end
 
@@ -180,12 +180,12 @@ function _M.set_rate_limit_tokens_expired(tokens)
 end
 
 -- Store utilization fractions from unified rate limit headers (0.0–1.0)
-function _M.set_rate_limit_5h_utilization(util)
-    dict_set("ratelimit_5h_utilization", util)
+function _M.set_rate_limit_5h_utilization(fraction)
+    dict_set("ratelimit_5h_utilization", fraction)
 end
 
-function _M.set_rate_limit_7d_utilization(util)
-    dict_set("ratelimit_7d_utilization", util)
+function _M.set_rate_limit_7d_utilization(fraction)
+    dict_set("ratelimit_7d_utilization", fraction)
 end
 
 -- 7d window reset RFC3339 timestamp

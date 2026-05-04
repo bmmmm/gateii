@@ -67,8 +67,9 @@ local HEALTH_CHECK_READ_MS    = tonumber(os.getenv("HEALTH_CHECK_READ_MS"))    o
 if ADMIN_TOKEN == "" and PROXY_MODE == "apikey" then
     -- Fail-closed: apikey mode without token exposes keys.json/limits.json
     -- mutations to anyone on the admin network. Require a token.
-    -- Passthrough mode: no token intentionally allowed — read-only console
-    -- access on the Docker network is the intended zero-config single-user path.
+    -- Passthrough mode: no server-side secrets are stored (no upstream keys in keys.json),
+    -- so mutations (git-tracking config, service restarts) carry no credential risk.
+    -- Intended for single-user zero-config local setups on a trusted Docker network.
     ngx.status = 503
     ngx.say('{"error":"Admin API disabled — set ADMIN_TOKEN in .env"}')
     return ngx.exit(503)
@@ -108,12 +109,18 @@ local LIMITS_FILE = "/etc/nginx/data/limits.json"
 local MAX_ITER_KEYS = 5000
 
 
--- Read keys.json, return table (may be empty)
+-- Read keys.json. Returns (table, nil) on success, (nil, err_string) on failure.
+-- Never returns {} as fallback — callers must handle nil to avoid wiping the file.
 local function read_keys_file()
     local f = io.open("/etc/nginx/data/keys.json", "r")
-    if not f then return {} end
+    if not f then return {}, nil end  -- file not yet created → empty is valid
     local raw = f:read("*a"); f:close()
-    return cjson.decode(raw) or {}
+    local decoded, err = cjson.decode(raw)
+    if decoded == nil then
+        ngx.log(ngx.ERR, "admin_api: keys.json parse error — ", tostring(err))
+        return nil, "keys.json unparseable"
+    end
+    return decoded, nil
 end
 
 -- Validate user param from request args; send 400 and return nil on missing
@@ -297,10 +304,13 @@ end
 
 -- GET /internal/admin/keys — list all proxy keys (masked)
 if uri == "/internal/admin/keys" and method == "GET" then
-    local parsed = read_keys_file()
+    local parsed, rk_err = read_keys_file()
+    if not parsed then
+        ngx.status = 500; ngx.say('{"error":"keys store unreadable: ' .. rk_err .. '"}'); return
+    end
     local keys_data = {}
     for key, entry in pairs(parsed) do
-        local masked_key = key:sub(1, 12) .. "..." .. key:sub(-6)
+        local masked_key = #key > 20 and (key:sub(1, 12) .. "..." .. key:sub(-6)) or (key:sub(1, 6) .. "...")
         local row = { key = masked_key }
         if type(entry) == "table" then
             row.user         = entry.user
@@ -331,7 +341,8 @@ if uri == "/internal/admin/overview" and method == "GET" then
 
     -- Key count
     local key_count = 0
-    for _ in pairs(read_keys_file()) do key_count = key_count + 1 end
+    local kf = read_keys_file()
+    for _ in pairs(kf or {}) do key_count = key_count + 1 end
 
     -- Blocked count
     local blocked_count = 0
@@ -469,7 +480,10 @@ if uri == "/internal/admin/addkey" and method == "POST" then
         ngx.status = 400; ngx.say('{"error":"provider must match ^[a-z][a-z0-9_]+$"}'); return
     end
 
-    local keys_data = read_keys_file()
+    local keys_data, kd_err = read_keys_file()
+    if not keys_data then
+        ngx.status = 500; ngx.say('{"error":"keys store unreadable: ' .. kd_err .. '"}'); return
+    end
     keys_data[key] = {
         user          = user,
         provider      = provider,

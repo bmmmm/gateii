@@ -69,6 +69,9 @@ function _M.load_state()
 end
 
 function _M.start_persist_timer()
+    -- Only worker 0 writes to disk — shared dict is process-wide so all workers
+    -- see the same values; N writers would produce N-fold disk I/O for no gain.
+    if ngx.worker.id() ~= 0 then return end
     local ok, err = ngx.timer.every(PERSIST_INTERVAL_SECONDS, function(premature)
         if premature then return end
         save_state()

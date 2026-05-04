@@ -95,16 +95,27 @@ local function escape_label(s)
     return s:gsub("\\", "\\\\"):gsub('"', '\\"'):gsub("\n", "\\n")
 end
 
--- Parse RFC3339 timestamp to unix seconds. Returns nil on invalid input.
+-- Parse RFC3339 UTC timestamp to unix seconds. Returns nil on invalid input.
+-- Anthropic reset headers carry a Z suffix (UTC). os.time() interprets its table
+-- as LOCAL time, which diverges from UTC whenever TZ != UTC. We instead compute
+-- a UTC epoch directly using the Gregorian day-count formula (no mktime dependency).
 local function parse_rfc3339(ts)
     if type(ts) ~= "string" then return nil end
     local y, mo, d, h, mi, s = ts:match("^(%d+)-(%d+)-(%d+)T(%d+):(%d+):(%d+)")
     if not y then return nil end
-    mo, d, h, mi, s = tonumber(mo), tonumber(d), tonumber(h), tonumber(mi), tonumber(s)
+    y, mo, d, h, mi, s = tonumber(y), tonumber(mo), tonumber(d), tonumber(h), tonumber(mi), tonumber(s)
     if not (mo >= 1 and mo <= 12 and d >= 1 and d <= 31 and h <= 23 and mi <= 59 and s <= 60) then
         return nil
     end
-    return os.time({year=tonumber(y), month=mo, day=d, hour=h, min=mi, sec=s})
+    -- Days since Unix epoch (1970-01-01) using proleptic Gregorian calendar.
+    -- Algorithm: rata die via (153*m+2)/5 month-day accumulation.
+    if mo <= 2 then y = y - 1; mo = mo + 12 end
+    local era   = math.floor(y / 400)
+    local yoe   = y - era * 400
+    local doy   = math.floor((153 * (mo - 3) + 2) / 5) + d - 1
+    local doe   = yoe * 365 + math.floor(yoe / 4) - math.floor(yoe / 100) + doy
+    local days  = era * 146097 + doe - 719468   -- offset to 1970-01-01
+    return days * 86400 + h * 3600 + mi * 60 + s
 end
 
 -- Collect all counter keys and group by user|provider|model
@@ -540,10 +551,10 @@ add(string.format('gateii_admin_login_failures_total %d', counters:get("admin_lo
 add("# HELP gateii_model_pricing_per_mtok Current Anthropic pricing per 1M tokens (USD)")
 add("# TYPE gateii_model_pricing_per_mtok gauge")
 for _, p in ipairs(pricing) do
-    add(string.format('gateii_model_pricing_per_mtok{model="%s",type="input"} %.2f', p.pattern, p.input))
-    add(string.format('gateii_model_pricing_per_mtok{model="%s",type="output"} %.2f', p.pattern, p.output))
-    add(string.format('gateii_model_pricing_per_mtok{model="%s",type="cache_write"} %.2f', p.pattern, p.input * cache_write_mult))
-    add(string.format('gateii_model_pricing_per_mtok{model="%s",type="cache_read"} %.2f', p.pattern, p.input * cache_read_mult))
+    add(string.format('gateii_model_pricing_per_mtok{pattern="%s",type="input"} %.2f', p.pattern, p.input))
+    add(string.format('gateii_model_pricing_per_mtok{pattern="%s",type="output"} %.2f', p.pattern, p.output))
+    add(string.format('gateii_model_pricing_per_mtok{pattern="%s",type="cache_write"} %.2f', p.pattern, p.input * cache_write_mult))
+    add(string.format('gateii_model_pricing_per_mtok{pattern="%s",type="cache_read"} %.2f', p.pattern, p.input * cache_read_mult))
 end
 
 -- Shared dict health (free space in bytes — alert if approaching 0)
@@ -568,7 +579,10 @@ end
 -- Report whether the counters dict scan hit the MAX_ITER_KEYS limit
 add("# HELP gateii_counters_scan_truncated 1 if the counters dict scan hit MAX_ITER_KEYS limit, 0 otherwise")
 add("# TYPE gateii_counters_scan_truncated gauge")
-add(string.format('gateii_counters_scan_truncated{truncated="%s"} %d', scan_truncated and "true" or "false", keys_count))
+add(string.format('gateii_counters_scan_truncated %d', scan_truncated and 1 or 0))
+add("# HELP gateii_counters_keys_scanned Number of counter keys scanned in last metrics scrape")
+add("# TYPE gateii_counters_keys_scanned gauge")
+add(string.format('gateii_counters_keys_scanned %d', keys_count))
 
 -- Local omlx-agent bench export — re-emits the latest scripts/agent-bench
 -- results as gauges so Prometheus stores them permanently (per-task, per-model

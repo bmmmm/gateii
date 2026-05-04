@@ -402,6 +402,11 @@ local tail = {}
 local tail_bytes = 0
 local had_read_err = false
 local reader = res.body_reader
+if not reader then
+    ngx.log(ngx.WARN, "[rid=", rid, "] no body_reader (status=", res.status, ") — skipping stream")
+    httpc:set_keepalive(60000, 32)
+    goto done_streaming
+end
 repeat
     local chunk, read_err = reader(8192)
     if read_err then
@@ -430,6 +435,7 @@ else
     httpc:set_keepalive(60000, 32)
 end
 
+::done_streaming::
 -- Parse SSE events for token tracking — delegate to provider-specific parser.
 -- Concat first chunk with tail; middle of stream (all content deltas) is discarded
 -- since it carries no token-accounting data for any supported provider.

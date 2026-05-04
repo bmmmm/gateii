@@ -19,9 +19,20 @@ local registry = {
 local function is_safe_upstream(url)
     if type(url) ~= "string" then return false end
     if url:sub(1, 8) == "https://" then return true end
-    if url:sub(1, 16) == "http://127.0.0.1"           then return true end
-    if url:sub(1, 16) == "http://localhost"           then return true end
-    if url:sub(1, 27) == "http://host.docker.internal" then return true end
+    -- For local http:// endpoints the character immediately after the host must
+    -- be ":", "/" or end-of-string. A bare prefix match would accept
+    -- http://127.0.0.1.evil.com — the boundary check closes that.
+    local local_prefixes = {
+        "http://127.0.0.1",
+        "http://localhost",
+        "http://host.docker.internal",
+    }
+    for _, prefix in ipairs(local_prefixes) do
+        if url:sub(1, #prefix) == prefix then
+            local next = url:sub(#prefix + 1, #prefix + 1)
+            if next == "" or next == "/" or next == ":" then return true end
+        end
+    end
     return false
 end
 for name, p in pairs(registry) do

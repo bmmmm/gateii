@@ -29,14 +29,19 @@ elseif uri == "/console/agents" or uri == "/console/agents.html" then
 else
     ngx.status = 404
     ngx.header["Content-Type"] = "application/json"
-    ngx.say('{"error":"console page not found: ' .. uri .. '"}')
+    -- Do not reflect uri raw — it is user-controlled and could break JSON
+    local cjson = require "cjson.safe"
+    ngx.say(cjson.encode({ error = "console page not found: " .. uri }))
     return ngx.exit(404)
 end
 
 local f = io.open(html_file, "r")
 if not f then
     ngx.status = 500
-    ngx.say(html_file .. " missing")
+    ngx.header["Content-Type"] = "application/json"
+    -- Do not expose internal paths in the response body
+    ngx.log(ngx.ERR, "console_serve: missing asset ", html_file)
+    ngx.say('{"error":"console asset missing"}')
     return
 end
 local html = f:read("*a"); f:close()

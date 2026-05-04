@@ -85,8 +85,11 @@ _M._consttime_eq = consttime_eq
 local function random_hex(n)
     local raw = resty_random.bytes(n, true)   -- true = cryptographically strong
     if not raw then
-        -- Fall back to /dev/urandom via resty_random without strong flag
-        raw = resty_random.bytes(n) or ""
+        raw = resty_random.bytes(n)  -- non-strong fallback (still /dev/urandom)
+    end
+    if not raw or #raw < n then
+        -- Both paths failed — hard abort; an empty or short key is worse than an error
+        error("bootstrap: random_hex(" .. n .. ") failed — /dev/urandom unavailable", 2)
     end
     return resty_string.to_hex(raw)
 end
@@ -120,9 +123,15 @@ end
 
 local function keys_read()
     local f = io.open(KEYS_FILE, "r")
-    if not f then return {} end
+    if not f then return {}, nil end
     local raw = f:read("*a"); f:close()
-    return cjson.decode(raw) or {}
+    local decoded, err = cjson.decode(raw)
+    if decoded == nil then
+        -- Corrupt JSON — abort rather than returning {} which would wipe all keys on next write
+        ngx.log(ngx.ERR, "bootstrap: keys_read parse error — ", tostring(err), " (file not modified)")
+        return nil, "parse_error"
+    end
+    return decoded, nil
 end
 
 -- Atomic write via temp + rename — survives process crashes mid-write
@@ -132,7 +141,12 @@ local function keys_write(keys)
     local tmp = KEYS_FILE .. ".tmp"
     local f = io.open(tmp, "w")
     if not f then return false, "open_failed" end
-    f:write(encoded); f:close()
+    local ok_w, err_w = f:write(encoded)
+    f:close()
+    if not ok_w then
+        os.remove(tmp)
+        return false, "write_failed: " .. tostring(err_w)
+    end
     local ok, err = os.rename(tmp, KEYS_FILE)
     if not ok then return false, err or "rename_failed" end
     return true
@@ -296,7 +310,10 @@ function _M.handle_exchange()
     -- Atomic: issue key, persist keys.json, drop pending, open confirm session
     local api_key = "sk-proxy-" .. random_hex(16)   -- 32 hex chars
     local now     = ngx.time()
-    local keys    = keys_read()
+    local keys, keys_err = keys_read()
+    if not keys then
+        return json_resp(500, { error = "keys store unavailable: " .. tostring(keys_err) })
+    end
     keys[api_key] = {
         user          = entry.user,
         provider      = entry.provider,
@@ -376,8 +393,12 @@ function _M.handle_confirm()
     else
         -- Rollback: remove the issued key from keys.json + auth_cache
         local keys = keys_read()
-        keys[session.api_key] = nil
-        keys_write(keys)
+        if keys then
+            keys[session.api_key] = nil
+            keys_write(keys)
+        else
+            ngx.log(ngx.ERR, "bootstrap: confirm rollback skipped — keys store unreadable")
+        end
         if ngx.shared.auth_cache then ngx.shared.auth_cache:delete(session.api_key) end
         sessions_dict():delete(ct)
         ngx.log(ngx.NOTICE, "bootstrap: confirm failed → revoked key user=", session.user)
@@ -400,7 +421,9 @@ function _M.sweep()
         -- defensively — an entry may linger if TTL lookup is racy).
         if entry and (entry.expires_at or 0) < now then
             local keys = keys_read()
-            if keys[entry.api_key] then
+            if not keys then
+                ngx.log(ngx.ERR, "bootstrap: sweep skipping revocation — keys store unreadable")
+            elseif keys[entry.api_key] then
                 keys[entry.api_key] = nil
                 keys_write(keys)
                 if ngx.shared.auth_cache then
