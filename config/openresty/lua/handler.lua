@@ -364,10 +364,9 @@ if not ok then
     return
 end
 
-local req_path = path
 local res, req_err = httpc:request({
     method  = ngx.var.request_method,
-    path    = req_path,
+    path    = path,
     body    = body_str,
     headers = upstream_headers,
 })

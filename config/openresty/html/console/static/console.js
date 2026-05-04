@@ -112,7 +112,8 @@ const esc = s => String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>
     }
     return window._rawFetch(url, merged).then(async r => {
       if (r.status === 401 && typeof url === 'string' && !url.includes('/login')) {
-        await _doLogin();
+        const ok = await _doLogin();
+        if (!ok) return r;
         return window._rawFetch(url, merged);
       }
       return r;
@@ -381,8 +382,6 @@ async function promVector(expr) {
     return data.data.result.map(r => ({ labels: r.metric, value: parseFloat(r.value[1]) || 0 }));
   } catch (e) { _promAvailable = false; return null; }
 }
-
-function isPromAvailable() { return _promAvailable; }
 
 // Diagnostics modal — wired by initDiagnostics() (called from each page).
 // Fetches /internal/admin/diagnostics, shows pretty-printed JSON, offers

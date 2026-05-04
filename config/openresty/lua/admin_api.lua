@@ -419,17 +419,7 @@ if uri == "/internal/admin/usage-all" and method == "GET" then
     end
     table.sort(result, function(a, b) return a.user < b.user end)
 
-    if #result == 0 and not truncated then
-        ngx.say('[]')
-    else
-        local payload = cjson.encode(result)
-        if truncated then
-            -- Inject truncated flag: wrap in object so callers can detect partial results
-            ngx.say('{"users":' .. payload .. ',"truncated":true}')
-        else
-            ngx.say(payload)
-        end
-    end
+    ngx.say(cjson.encode({ users = result, truncated = truncated and true or false }))
     return
 end
 

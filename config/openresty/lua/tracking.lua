@@ -84,17 +84,16 @@ function _M.record(user, provider, model, input_tokens, output_tokens, opts)
     local today = util.get_today()
     local day_prefix = "day|" .. user .. "|" .. today
     if input_tokens > 0 then
-        counters:incr(day_prefix .. "|input", input_tokens, 0, 90000)
+        bump(day_prefix .. "|input", input_tokens, 90000)
     end
     if output_tokens > 0 then
-        counters:incr(day_prefix .. "|output", output_tokens, 0, 90000)
+        bump(day_prefix .. "|output", output_tokens, 90000)
     end
-    -- Combined counter for atomic limit enforcement in auth.lua
     local combined = (input_tokens or 0) + (output_tokens or 0)
     if combined > 0 then
-        counters:incr(day_prefix .. "|total", combined, 0, 90000)
+        bump(day_prefix .. "|total", combined, 90000)
     end
-    counters:incr(day_prefix .. "|requests", 1, 0, 90000)
+    bump(day_prefix .. "|requests", 1, 90000)
 end
 
 -- Per-effort counters (effort = "none" when request has no output_config.effort).
@@ -144,7 +143,7 @@ local RL_EVENT_TTL = 86400 * 30
 
 function _M.set_rate_limit_wait(user, model, limit_type, seconds)
     local key = "ratelimit_wait|" .. user .. "|" .. model .. "|" .. limit_type
-    local d = rl_events or counters
+    local d = rl_events
     local ok, err = d:set(key, seconds, RL_EVENT_TTL)
     if not ok then
         ngx.log(ngx.ERR, "tracking: set_rate_limit_wait failed key=", key, " err=", tostring(err))
@@ -153,7 +152,7 @@ end
 
 function _M.set_rate_limit_tokens_at_hit(user, model, limit_type, tokens)
     local key = "ratelimit_tokens|" .. user .. "|" .. model .. "|" .. limit_type
-    local d = rl_events or counters
+    local d = rl_events
     local ok, err = d:set(key, tokens, RL_EVENT_TTL)
     if not ok then
         ngx.log(ngx.ERR, "tracking: set_rate_limit_tokens_at_hit failed key=", key, " err=", tostring(err))
