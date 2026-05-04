@@ -95,7 +95,7 @@
     },
     "keywords": {
       "max_tokens": 80,
-      "system": "Extract the top 5 keywords from the input. Output ONLY a raw JSON array of strings, e.g. [\"foo\",\"bar\",\"baz\"]. No markdown code fences, no backticks, no explanation. Start with `[`.",
+      "system": "Extract the top 5 keywords from the input. Output ONLY a valid JSON array where every element is a double-quoted string. Example: [\"foo\",\"bar\",\"baz\"]. Every element MUST use double quotes. No unquoted values. No markdown code fences, no backticks, no explanation. Start with `[`.",
       "strip_fences": true,
       "bench_prompt": "OpenResty integrates Nginx with LuaJIT for high-performance, scriptable web applications, supporting non-blocking I/O via cosockets and co-routine concurrency.",
       "compliant": "^\\s*\\[\\s*\"[^\"]+\"(\\s*,\\s*\"[^\"]+\"){2,}"
