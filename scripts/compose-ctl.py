@@ -92,7 +92,7 @@ def run_bench(force: bool = False):
 #    "default_ttl_seconds": 0}     # 0 = disabled by default (omlx own setting wins)
 # Without this we'd need omlx's admin API (separate auth flow) to set the
 # built-in idle timeout per model. This watcher is purely Bearer-auth.
-import urllib.request, urllib.error, threading
+import urllib.request, urllib.error  # threading already imported at top
 
 OMLX_URL     = os.environ.get("OMLX_URL",     "http://host.docker.internal:8000")
 OMLX_API_KEY = os.environ.get("OMLX_API_KEY", "")

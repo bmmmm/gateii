@@ -419,5 +419,4 @@ function initAgents() {
   $('btn-unload-all')?.addEventListener('click', unloadAll);
   $('btn-rerun-bench')?.addEventListener('click', () => rerunBench(false));
   $('btn-rerun-bench-force')?.addEventListener('click', () => rerunBench(true));
-  $('footer-diag')?.addEventListener('click', e => { e.preventDefault(); showDiagnostics(); });
 }
