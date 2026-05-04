@@ -214,13 +214,38 @@ ignores marginal latency advantages so we don't burn 15-21 GB of RAM for
 an 80 ms saving.
 
 **Visualization:** Console tab at `http://localhost:8888/console/agents`
-shows live active agent, recent runs, model-load state (calls oMLX's
-`/v1/models/status`), and the full bench matrix (task × model heatmap).
+shows live active agent, recent runs (full log.jsonl tail), per-model
+**load state + lifetime usage stats** (calls oMLX's `/v1/models/status`
+on every poll, aggregates log.jsonl by model for runs / avg-latency /
+pass-rate / last-used), per-model **load/unload buttons** + an
+**Unload all** button, and the full bench matrix (task × model heatmap).
+The footer's "diagnostics" link surfaces `?include=agents` from
+`/internal/admin/diagnostics` (omlx connectivity, file sizes, bench
+freshness, smart-skip log).
+
+**Permanent history:** `metrics.lua` re-emits the latest `bench-results
+.json` + `routing.json` as Prometheus gauges (`gateii_omlx_bench_pass
+_rate{task,model}`, `gateii_omlx_bench_latency_seconds{...}`, `gateii
+_omlx_routing_choice{task,model}`, `gateii_omlx_model_created_timestamp
+_seconds{model}`) so Grafana keeps the time series long after the JSON
+file is overwritten.
+
+**Smart-skip rebench:** `scripts/agent-bench` is `--smart` by default —
+skips models whose previous results exist AND whose omlx-registration
+`created` timestamp is unchanged. Use `--force` to re-run from scratch
+(e.g. after omlx upgrade), `--quick` for a 1-trial smoke test on the
+default model, `--task X` for one task across all models.
+
+**API extensions** (under `/internal/admin/`):
+- `GET  /agents`           — `{active, recent, routing, bench, usage, omlx_status}`
+- `POST /models`           — body `{action:"load|unload",model:"<id>"}`,
+                              proxies to omlx `/v1/models/<id>/(load|unload)`
+- `GET  /diagnostics?include=agents` — see "Visualization" above
 
 **Statusline integration:** the data file `data/agents/active.json` is
-the source of truth for "what's running right now". Display logic belongs
-in `~/offline_coding/claudii` (claudii owns the statusLine command), not
-in gateii. `scripts/statusline-omlx.sh` and `scripts/statusline-compose.sh`
+the source of truth for "what's running right now". Display logic lives
+in `~/offline_coding/claudii` — run `claudii omlx connect` once to wire
+it up. `scripts/statusline-omlx.sh` + `scripts/statusline-compose.sh`
 are kept as fallbacks for non-claudii setups.
 
 ## Do not
