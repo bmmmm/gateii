@@ -13,7 +13,8 @@ const PLATFORM_LABELS = {
   other: 'Other',
 };
 
-let _config = { default_author: '', interval: 300, repos: [] };
+let _config = { default_author: '', interval: 300, platform_authors: {}, repos: [] };
+const PLATFORM_KEYS = ['forgejo', 'github', 'gitlab', 'codeberg', 'gitea', 'bitbucket'];
 
 function platformBadge(platform) {
   if (!platform) return '';
@@ -52,10 +53,15 @@ async function loadConfig() {
   _config = {
     default_author: data.default_author || '',
     interval: data.interval || 300,
+    platform_authors: data.platform_authors && typeof data.platform_authors === 'object' ? data.platform_authors : {},
     repos: Array.isArray(data.repos) ? data.repos : [],
   };
   $('default-author').value = _config.default_author;
   $('interval').value = _config.interval;
+  for (const k of PLATFORM_KEYS) {
+    const el = $('pa-' + k);
+    if (el) el.value = _config.platform_authors[k] || '';
+  }
   renderRepos();
 }
 
@@ -76,6 +82,15 @@ async function saveSettings() {
   const intv = parseInt($('interval').value, 10);
   if (isNaN(intv) || intv < 30) return toast('Interval must be ≥ 30 seconds', true);
   _config.interval = intv;
+  // Collect platform_authors from the per-platform inputs; drop empty entries
+  // so the JSON stays compact and the schema's "key must match pattern" check
+  // doesn't fire on intentionally-blank ones.
+  const pa = {};
+  for (const k of PLATFORM_KEYS) {
+    const v = ($('pa-' + k)?.value || '').trim();
+    if (v) pa[k] = v;
+  }
+  _config.platform_authors = pa;
   try {
     await saveConfig();
     toast('Settings saved');
