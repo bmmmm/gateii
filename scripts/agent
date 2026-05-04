@@ -326,6 +326,94 @@ cmd_run() {
     printf '%s\n' "$text"
 }
 
+cmd_feedback() {
+    # Record whether the last oMLX output was used as-is, lightly improved,
+    # or fully replaced by Claude Code. Feeds production-vs-bench divergence
+    # analysis in `scripts/agent stats`.
+    local task="${1:-}"
+    local verdict="${2:-}"
+    local reason="${3:-}"
+    [ -z "$task" ] || [ -z "$verdict" ] && {
+        echo "usage: scripts/agent feedback <task> used|improved|replaced [reason]" >&2
+        echo "  reason codes: format  content  length  capability" >&2
+        exit 2
+    }
+    case "$verdict" in
+        used|improved|replaced) ;;
+        *) echo "verdict must be: used|improved|replaced" >&2; exit 2 ;;
+    esac
+    local model ts
+    model=$(resolve_model_for_task "$task")
+    ts=$(/bin/date +"%Y-%m-%dT%H:%M:%S")
+    /bin/mkdir -p "$STATE_DIR"
+    append_log "$($JQ -n \
+        --arg s  "$ts" \
+        --arg t  "$task" \
+        --arg m  "$model" \
+        --arg v  "$verdict" \
+        --arg r  "$reason" \
+        '{started_at:$s, task:$t, model:$m, log_type:"feedback", verdict:$v, reason:$r, exit:0}')"
+}
+
+cmd_stats() {
+    # Correction-rate table: how often was oMLX output used/improved/replaced
+    # per task in production. Correction rate = (improved+replaced)/total_feedback.
+    # A rising corr% means the model or prompt needs work for that task.
+    [ ! -f "$LOG_FILE" ] && { echo "No log data yet — run some tasks first."; exit 0; }
+    /usr/bin/python3 - "$LOG_FILE" <<'PYEOF'
+import sys, json, collections
+
+log_file = sys.argv[1]
+runs:     dict[str,int]                             = collections.defaultdict(int)
+feedback: dict[str, dict[str,int]]                  = collections.defaultdict(lambda: collections.defaultdict(int))
+reasons:  dict[str, dict[str,int]]                  = collections.defaultdict(lambda: collections.defaultdict(int))
+
+with open(log_file) as f:
+    for line in f:
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            r = json.loads(line)
+        except Exception:
+            continue
+        task = r.get("task", "")
+        if not task or task == "bench-summary":
+            continue
+        if r.get("log_type") == "feedback":
+            feedback[task][r.get("verdict", "unknown")] += 1
+            if r.get("reason"):
+                reasons[task][r["reason"]] += 1
+        elif r.get("exit") == 0 and "latency_s" in r:
+            runs[task] += 1
+
+all_tasks = sorted(set(list(runs) + list(feedback)))
+if not all_tasks:
+    print("No task data in log yet.")
+    sys.exit(0)
+
+print(f"{'Task':<22} {'Runs':>6} {'Used':>6} {'Impr':>6} {'Repl':>6} {'OK%':>6} {'Corr%':>7}  Reasons")
+print("─" * 90)
+for task in all_tasks:
+    n_runs = runs.get(task, 0)
+    fb     = feedback.get(task, {})
+    n_used = fb.get("used", 0)
+    n_impr = fb.get("improved", 0)
+    n_repl = fb.get("replaced", 0)
+    n_fb   = n_used + n_impr + n_repl
+    ok_s   = f"{int(n_used/n_fb*100)}%"  if n_fb else "—"
+    corr_s = f"{int((n_impr+n_repl)/n_fb*100)}%" if n_fb else "—"
+    top_reasons = ", ".join(
+        f"{v}×{c}" for v, c in
+        sorted(reasons.get(task, {}).items(), key=lambda x: -x[1])[:3]
+    )
+    print(f"{task:<22} {n_runs:>6} {n_used:>6} {n_impr:>6} {n_repl:>6} {ok_s:>6} {corr_s:>7}  {top_reasons}")
+
+print()
+print("Corr% = (improved+replaced) / total_feedback  →  rising = prompt or model needs work")
+PYEOF
+}
+
 cmd_list() {
     if [ -f "$ACTIVE_FILE" ]; then
         local now elapsed task model started preview pid
@@ -385,6 +473,8 @@ cmd_count_tokens() {
 
 case "${1:-}" in
     run)            shift; cmd_run "$@" ;;
+    feedback)       shift; cmd_feedback "$@" ;;
+    stats)          cmd_stats ;;
     tasks)          cmd_tasks ;;
     list)           cmd_list ;;
     count-tokens)   shift; cmd_count_tokens "$@" ;;
