@@ -599,6 +599,250 @@ def render_calibration_report(results: list[dict], started_at: str) -> str:
     return "\n".join(out) + "\n"
 
 
+# ─── auto-review ────────────────────────────────────────────────────────────
+# After every bench run Haiku analyses failures, truncations, high-util cases,
+# and model divergences. Output: data/agents/bench-review.{md,json}.
+
+REVIEW_UTIL_THRESHOLD = 85  # util% at or above this gets reviewed even when passing
+
+REVIEW_SYSTEM = """\
+You are reviewing a benchmark result for an oMLX local LLM deployment on Apple Silicon.
+
+oMLX context:
+- API format: Anthropic /v1/messages
+- Models: Qwen3.5-9B-MLX-4bit (fast, general-purpose), gemma-4-e2b-it-4bit (fast, 3.5 GB),
+  gemma-4-26b-a4b-it-4bit (slow, 15 GB, strong reasoning), Qwen3.6-35B-A3B-4bit (20 GB, high RAM)
+- All bench calls: temperature=0.2, chat_template_kwargs={"enable_thinking": false}
+- Context window: 32768 tokens for all models
+
+Given a task definition and one model's output, diagnose the issue and recommend the \
+most impactful fix.
+
+Output ONLY a valid JSON object — no markdown fences, no text outside the object:
+{
+  "root_cause": "one-line diagnosis",
+  "fix_type": "system_prompt|bench_prompt|max_tokens|compliant_pattern|omlx_setting|model_capability_gap|none",
+  "fix": "specific actionable change, empty string if fix_type is none or capability_gap",
+  "confidence": "high|medium|low"
+}
+
+fix_type guide:
+- system_prompt: the instruction needs rewording or a stronger format constraint
+- bench_prompt: the test input doesn't represent real usage well
+- max_tokens: cap is too low (output gets cut) or unnecessarily generous
+- compliant_pattern: regex is too strict, too loose, or misses valid model variants
+- omlx_setting: temperature / enable_thinking / tool schema design needs changing
+- model_capability_gap: model fundamentally cannot do this task; route elsewhere
+- none: working correctly (e.g. high util but stop=end_turn, output is complete)\
+"""
+
+
+def collect_review_candidates(results: list[dict], agg: dict) -> list[dict]:
+    """Return one representative record per interesting (task, model) case.
+
+    Covers: failures, truncations (stop=length), util >= REVIEW_UTIL_THRESHOLD
+    while passing, and tasks where local models diverge (some pass, others fail).
+    Infrastructure errors (http != 200) are excluded — those are not model issues.
+    """
+    seen: set[tuple] = set()
+
+    def _add(record: dict, reason: str) -> bool:
+        key = (record["task"], record["model"], reason)
+        if key in seen:
+            return False
+        seen.add(key)
+        candidates.append({**record, "_review_reason": reason})
+        return True
+
+    candidates: list[dict] = []
+
+    # 1. Failures and truncations — skip infra errors and skipped tool-use records
+    for r in results:
+        if r.get("stop") in ("skipped",):
+            continue
+        if r.get("http", 200) != 200:
+            continue
+        if r.get("stop") == "length":
+            _add(r, "truncation")
+        elif not r["compliant"]:
+            _add(r, "failure")
+
+    # 2. High-util while passing (cap may be dangerously close to the natural length)
+    for task, models in agg.items():
+        for model, s in models.items():
+            if (s["util_pct"] >= REVIEW_UTIL_THRESHOLD
+                    and s["pass_rate"] == 1.0
+                    and s["trunc_rate"] == 0.0):
+                sample = next(
+                    (r for r in results
+                     if r["task"] == task and r["model"] == model
+                     and r.get("stop") != "skipped" and r.get("http", 200) == 200),
+                    None,
+                )
+                if sample:
+                    _add(sample, "high_util")
+
+    # 3. Divergence: task where ≥1 local model fails and ≥1 passes
+    #    (reference/claude-* excluded — they're not the optimization target)
+    by_task: dict[str, dict[str, float]] = {}
+    for task, models in agg.items():
+        for model, s in models.items():
+            if not model.startswith("claude-"):
+                by_task.setdefault(task, {})[model] = s["pass_rate"]
+    for task, model_rates in by_task.items():
+        rates = list(model_rates.values())
+        if min(rates) < 1.0 and max(rates) == 1.0:
+            for model, rate in model_rates.items():
+                if rate < 1.0:
+                    sample = next(
+                        (r for r in results
+                         if r["task"] == task and r["model"] == model
+                         and not r["compliant"]
+                         and r.get("stop") != "skipped"
+                         and r.get("http", 200) == 200),
+                        None,
+                    )
+                    if sample:
+                        _add(sample, "divergence")
+
+    return candidates
+
+
+def review_candidate(candidate: dict) -> dict:
+    """Call Haiku to analyse one bench record. Returns a structured finding dict."""
+    t = TASKS[candidate["task"]]
+    reason = candidate.get("_review_reason", "failure")
+    max_tok = t["max_tokens"]
+    out_tok = candidate.get("tokens_out", 0)
+    util_pct = int(out_tok / max_tok * 100) if max_tok > 0 else 0
+
+    input_text = (
+        f"Task: {candidate['task']}\n"
+        f"Review reason: {reason}\n"
+        f"System prompt: {t['system']}\n"
+        f"Bench input (first 400 chars): {t['prompt'][:400]}\n"
+        f"Compliant pattern: {t['compliant'].pattern}\n"
+        f"Configured max_tokens: {max_tok}\n"
+        f"---\n"
+        f"Model: {candidate['model']}\n"
+        f"Output (first 400 chars): {candidate['output'][:400]!r}\n"
+        f"Stop reason: {candidate.get('stop', '?')}\n"
+        f"Tokens out: {out_tok}/{max_tok} (util={util_pct}%)\n"
+        f"Compliant: {candidate['compliant']}"
+    )
+    cmd = [
+        CLAUDE_CLI, "--model", "claude-haiku-4-5-20251001",
+        "--print", input_text,
+        "--system-prompt", REVIEW_SYSTEM,
+        "--tools", "",
+        "--no-session-persistence",
+        "--output-format", "text",
+    ]
+    t0 = time.time()
+    try:
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=30, cwd="/tmp")
+        text = result.stdout.strip()
+    except Exception as exc:
+        return _review_error(candidate, reason, f"call failed: {exc}", t0)
+
+    dt = round(time.time() - t0, 2)
+    clean = _strip_fences(text.strip())
+    try:
+        parsed = json.loads(clean)
+    except Exception:
+        # Haiku occasionally adds a sentence before the JSON — extract it
+        m = re.search(r'\{[^{}]*"root_cause"[^{}]*\}', text, re.DOTALL)
+        if m:
+            try:
+                parsed = json.loads(m.group())
+            except Exception:
+                parsed = {"root_cause": text[:200], "fix_type": "unknown",
+                          "fix": "", "confidence": "low"}
+        else:
+            parsed = {"root_cause": text[:200], "fix_type": "unknown",
+                      "fix": "", "confidence": "low"}
+
+    return {
+        "task":            candidate["task"],
+        "model":           candidate["model"],
+        "review_reason":   reason,
+        "compliant":       candidate["compliant"],
+        "output_sample":   candidate["output"][:200],
+        "review":          parsed,
+        "review_latency_s": dt,
+        "reviewer":        "claude-haiku-4-5-20251001",
+    }
+
+
+def _review_error(candidate: dict, reason: str, msg: str, t0: float) -> dict:
+    return {
+        "task":            candidate["task"],
+        "model":           candidate["model"],
+        "review_reason":   reason,
+        "compliant":       candidate["compliant"],
+        "output_sample":   candidate["output"][:200],
+        "review":          {"root_cause": msg, "fix_type": "none", "fix": "", "confidence": "low"},
+        "review_latency_s": round(time.time() - t0, 2),
+        "reviewer":        "claude-haiku-4-5-20251001",
+    }
+
+
+def render_review_report(reviews: list[dict], started_at: str) -> str:
+    FIX_ORDER = [
+        "system_prompt", "bench_prompt", "max_tokens", "compliant_pattern",
+        "omlx_setting", "model_capability_gap", "none", "unknown",
+    ]
+    FIX_LABELS = {
+        "system_prompt":        "System prompt change needed",
+        "bench_prompt":         "Bench prompt change needed",
+        "max_tokens":           "max_tokens adjustment needed",
+        "compliant_pattern":    "Compliant pattern change needed",
+        "omlx_setting":         "oMLX setting change needed",
+        "model_capability_gap": "Model capability gap (route elsewhere)",
+        "none":                 "No action needed",
+        "unknown":              "Undetermined",
+    }
+
+    by_fix: dict[str, list] = {}
+    for r in reviews:
+        ft = r["review"].get("fix_type", "unknown")
+        by_fix.setdefault(ft, []).append(r)
+
+    out = [
+        f"# oMLX Bench Review — {started_at}", "",
+        "Haiku reviewed every failure, truncation, high-util, and divergence case.", "",
+    ]
+
+    actionable = [ft for ft in FIX_ORDER
+                  if ft not in ("none", "unknown") and by_fix.get(ft)]
+    if actionable:
+        out.append("## Actionable findings")
+        out.append("")
+        for ft in actionable:
+            out.append(f"### {FIX_LABELS[ft]}")
+            for r in by_fix[ft]:
+                rv = r["review"]
+                conf = rv.get("confidence", "?")
+                out.append(f"- **{r['task']}** / `{r['model']}` [{r['review_reason']}] conf={conf}")
+                out.append(f"  - Cause: {rv.get('root_cause', '?')}")
+                if rv.get("fix"):
+                    out.append(f"  - Fix: {rv.get('fix')}")
+            out.append("")
+
+    if by_fix.get("none") or by_fix.get("unknown"):
+        out.append("## No action needed")
+        out.append("")
+        for r in by_fix.get("none", []) + by_fix.get("unknown", []):
+            rv = r["review"]
+            out.append(f"- **{r['task']}** / `{r['model']}` [{r['review_reason']}]: {rv.get('root_cause', '?')}")
+        out.append("")
+
+    if not reviews:
+        out.append("_No interesting cases — all tasks passing with comfortable margins._")
+
+    return "\n".join(out)
+
+
 # ─── main ───────────────────────────────────────────────────────────────────
 def _load_existing_results():
     """Return previous bench-results.json (or {}) so --smart can skip cells."""
@@ -645,6 +889,8 @@ def main():
     ap.add_argument("--analyze", action="store_true",
                     help="offline: read bench-results.json and re-run analysis + routing without "
                          "calling any models; useful for post-hoc re-scoring after tasks.json changes")
+    ap.add_argument("--no-review", action="store_true",
+                    help="skip auto-review pass (Haiku analysis of failures/high-util/divergences)")
     args = ap.parse_args()
 
     if args.reference_only and args.no_reference:
@@ -893,6 +1139,53 @@ def main():
 
     print("\n" + report, flush=True)
     print(f"\nWrote: data/agents/bench-results.json, routing.json, bench-report.md", flush=True)
+
+    # Auto-review: Haiku analyses failures, truncations, high-util, and divergences
+    # in parallel. Produces bench-review.{md,json}. Skipped for --quick, --calibrate,
+    # --no-review, or when claude CLI is not on PATH.
+    if CLAUDE_CLI and not args.quick and not args.no_review:
+        candidates = collect_review_candidates(all_results, agg)
+        if candidates:
+            print(f"\n=== Auto-review: {len(candidates)} case(s) → Haiku [parallel] ===", flush=True)
+            reviews: list[dict] = []
+            with ThreadPoolExecutor(max_workers=3) as pool:
+                futures = {pool.submit(review_candidate, c): c for c in candidates}
+                for future in as_completed(futures):
+                    try:
+                        reviews.append(future.result())
+                    except Exception as exc:
+                        pass
+            # Sort findings: actionable first (by fix_type), then no-action
+            FIX_PRIORITY = ["system_prompt", "bench_prompt", "max_tokens",
+                            "compliant_pattern", "omlx_setting",
+                            "model_capability_gap", "none", "unknown"]
+            reviews.sort(key=lambda r: (
+                FIX_PRIORITY.index(r["review"].get("fix_type", "unknown"))
+                if r["review"].get("fix_type", "unknown") in FIX_PRIORITY else 99,
+                r["task"],
+            ))
+            review_report = render_review_report(reviews, started)
+            (DATA_DIR / "bench-review.md").write_text(review_report)
+            (DATA_DIR / "bench-review.json").write_text(json.dumps({
+                "reviewed_at": started,
+                "candidates":  len(candidates),
+                "reviews":     reviews,
+            }, indent=2) + "\n")
+            print(f"Wrote: data/agents/bench-review.md ({len(reviews)} findings)", flush=True)
+            # Print actionable findings inline so they're visible without reading the file
+            actionable = [r for r in reviews
+                          if r["review"].get("fix_type") not in ("none", "unknown")]
+            if actionable:
+                print("", flush=True)
+                for r in actionable:
+                    rv = r["review"]
+                    print(f"  [{rv.get('fix_type')} conf={rv.get('confidence')}] "
+                          f"{r['task']}/{r['model']}: {rv.get('root_cause', '?')}", flush=True)
+                    if rv.get("fix"):
+                        print(f"    → {rv['fix']}", flush=True)
+        else:
+            print("\n(auto-review: no interesting cases — all tasks passing with comfortable margins)",
+                  flush=True)
 
     # Drop one summary line into log.jsonl so the Console "Recent runs" table
     # shows when benches happened (mixed in with normal wrapper invocations).
