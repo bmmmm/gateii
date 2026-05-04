@@ -1105,47 +1105,15 @@ if uri == "/internal/admin/agents" and method == "GET" then
     end
 
     -- Aggregate bench-results.json by (task, model) → pass-rate + p50 latency
-    local bf = io.open(AGENTS_DIR .. "/bench-results.json", "r")
-    if bf then
-        local content = bf:read("*a"); bf:close()
-        local b = safe_decode(content)
-        if b and b.results then
-            local cells = {}  -- key = task .. "|" .. model
-            local tasks_set = {}
-            local models_set = {}
-            for _, r in ipairs(b.results) do
-                local k = (r.task or "?") .. "|" .. (r.model or "?")
-                cells[k] = cells[k] or { runs = 0, passed = 0, lats = {} }
-                cells[k].runs = cells[k].runs + 1
-                if r.compliant then cells[k].passed = cells[k].passed + 1 end
-                table.insert(cells[k].lats, r.latency_s or 0)
-                tasks_set[r.task or "?"] = true
-                models_set[r.model or "?"] = true
-            end
-            -- Compute median per cell
-            local matrix = {}
-            for k, c in pairs(cells) do
-                table.sort(c.lats)
-                local mid = math.ceil(#c.lats / 2)
-                matrix[k] = {
-                    runs       = c.runs,
-                    passed     = c.passed,
-                    pass_rate  = c.runs > 0 and (c.passed / c.runs) or 0,
-                    latency_p50 = c.lats[mid] or 0,
-                }
-            end
-            local tasks_list, models_list = {}, {}
-            for t in pairs(tasks_set) do table.insert(tasks_list, t) end
-            for m in pairs(models_set) do table.insert(models_list, m) end
-            table.sort(tasks_list); table.sort(models_list)
-            out.bench = {
-                generated_at = b.started_at,
-                trials_per_cell = b.trials_per_cell,
-                tasks  = tasks_list,
-                models = models_list,
-                matrix = matrix,
-            }
-        end
+    local bdata = require("bench_agg").load(AGENTS_DIR .. "/bench-results.json")
+    if bdata then
+        out.bench = {
+            generated_at    = bdata.started_at,
+            trials_per_cell = bdata.trials_per_cell,
+            tasks           = bdata.tasks,
+            models          = bdata.models,
+            matrix          = bdata.cells,
+        }
     end
 
     -- Live: query omlx /v1/models/status (small file, fast local call).
