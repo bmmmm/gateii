@@ -1137,6 +1137,36 @@ if uri == "/internal/admin/agents" and method == "GET" then
     return
 end
 
+-- /internal/admin/agents/idle-config — per-model idle-unload TTLs.
+-- GET returns current config, POST or PUT replaces it. Forwarded to
+-- compose-ctl which holds the writable mount + the watcher thread.
+-- Both POST/PUT accepted at the admin layer; always POSTed downstream
+-- (compose-ctl uses BaseHTTPRequestHandler which only implements GET/POST).
+if uri == "/internal/admin/agents/idle-config" and (method == "GET" or method == "PUT" or method == "POST") then
+    local http_ok, http = pcall(require, "resty.http")
+    if not http_ok then
+        ngx.status = 500; ngx.say(cjson.encode({error="lua-resty-http unavailable"})); return
+    end
+    local httpc = http.new()
+    httpc:set_timeouts(1000, 1000, 5000)
+    local opts = { method = (method == "GET" and "GET" or "POST"),
+                   headers = { ["Content-Type"] = "application/json" } }
+    if method ~= "GET" then
+        ngx.req.read_body()
+        opts.body = ngx.req.get_body_data() or "{}"
+    end
+    local res, err = httpc:request_uri("http://compose-ctl:8090/idle-config", opts)
+    if not res then
+        ngx.status = 502
+        ngx.say(cjson.encode({error = "compose-ctl unreachable: " .. tostring(err)}))
+        return
+    end
+    ngx.status = res.status
+    ngx.header["Content-Type"] = res.headers["Content-Type"] or "application/json"
+    ngx.print(res.body)
+    return
+end
+
 -- POST /internal/admin/agents/bench — fire scripts/agent-bench in the
 -- background via the compose-ctl sidecar (which has python + the writable
 -- data/agents/ mount). Returns 202 immediately; progress is visible via
