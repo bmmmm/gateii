@@ -4,6 +4,11 @@
 Minimal self-hosted Anthropic API proxy. 3 containers: OpenResty (nginx + LuaJIT), Prometheus, Grafana.
 No Redis, no external dependencies, no application framework.
 
+## Domain contexts (for agent spawning)
+`.claude/domains/` contains per-domain context files — include the relevant file when spawning a
+domain-specific agent. Domains: `bench`, `grafana`, `console`, `lua-core`, `omlx`, `infra`.
+See `.claude/domains/README.md` for the full map and spawn pattern.
+
 ## Local development
 
 The user-facing CLI is `scripts/gateii` (aliased as `gateii` in `~/.zshrc`).
