@@ -896,12 +896,14 @@ end
 
 -- GET /internal/admin/agents — local omlx-agent state for the Console "Agents" tab
 -- Reads files written by scripts/agent (mounted at /etc/nginx/data/agents):
---   active.json   currently-running agent (omitted if idle)
---   log.jsonl     append-only per-call history (last 50 returned)
---   routing.json  bench-picked model/max_tokens per task (if scripts/agent-bench has run)
+--   active.json         currently-running agent (omitted if idle)
+--   log.jsonl           append-only per-call history (last 50 returned)
+--   routing.json        bench-picked model/max_tokens per task
+--   bench-results.json  full per-trial bench data (used to build per-task × per-model matrix)
+-- Plus a live call to omlx /v1/models/status for current load + RAM (graceful on omlx down).
 local AGENTS_DIR = "/etc/nginx/data/agents"
 if uri == "/internal/admin/agents" and method == "GET" then
-    local out = { active = nil, recent = {}, routing = nil }
+    local out = { active = nil, recent = {}, routing = nil, bench = nil, omlx_status = nil }
 
     local af = io.open(AGENTS_DIR .. "/active.json", "r")
     if af then
@@ -927,6 +929,67 @@ if uri == "/internal/admin/agents" and method == "GET" then
     if rf then
         local content = rf:read("*a"); rf:close()
         out.routing = cjson.decode(content)
+    end
+
+    -- Aggregate bench-results.json by (task, model) → pass-rate + p50 latency
+    local bf = io.open(AGENTS_DIR .. "/bench-results.json", "r")
+    if bf then
+        local content = bf:read("*a"); bf:close()
+        local b = cjson.decode(content)
+        if b and b.results then
+            local cells = {}  -- key = task .. "|" .. model
+            local tasks_set = {}
+            local models_set = {}
+            for _, r in ipairs(b.results) do
+                local k = (r.task or "?") .. "|" .. (r.model or "?")
+                cells[k] = cells[k] or { runs = 0, passed = 0, lats = {} }
+                cells[k].runs = cells[k].runs + 1
+                if r.compliant then cells[k].passed = cells[k].passed + 1 end
+                table.insert(cells[k].lats, r.latency_s or 0)
+                tasks_set[r.task or "?"] = true
+                models_set[r.model or "?"] = true
+            end
+            -- Compute median per cell
+            local matrix = {}
+            for k, c in pairs(cells) do
+                table.sort(c.lats)
+                local mid = math.ceil(#c.lats / 2)
+                matrix[k] = {
+                    runs       = c.runs,
+                    passed     = c.passed,
+                    pass_rate  = c.runs > 0 and (c.passed / c.runs) or 0,
+                    latency_p50 = c.lats[mid] or 0,
+                }
+            end
+            local tasks_list, models_list = {}, {}
+            for t in pairs(tasks_set) do table.insert(tasks_list, t) end
+            for m in pairs(models_set) do table.insert(models_list, m) end
+            table.sort(tasks_list); table.sort(models_list)
+            out.bench = {
+                generated_at = b.started_at,
+                trials_per_cell = b.trials_per_cell,
+                tasks  = tasks_list,
+                models = models_list,
+                matrix = matrix,
+            }
+        end
+    end
+
+    -- Live: query omlx /v1/models/status (small file, fast local call)
+    -- Failure is non-fatal — page still renders without live state.
+    local http_ok, http = pcall(require, "resty.http")
+    if http_ok then
+        local omlx_url = os.getenv("OMLX_URL") or "http://host.docker.internal:8000"
+        local omlx_key = os.getenv("OMLX_API_KEY") or ""
+        local httpc = http.new()
+        httpc:set_timeout(2000)
+        local res, _ = httpc:request_uri(omlx_url .. "/v1/models/status", {
+            method = "GET",
+            headers = { ["Authorization"] = "Bearer " .. omlx_key },
+        })
+        if res and res.status == 200 then
+            out.omlx_status = cjson.decode(res.body)
+        end
     end
 
     ngx.header["Content-Type"] = "application/json"
