@@ -22,7 +22,6 @@ import json
 import os
 import re
 import statistics
-import subprocess
 import sys
 import time
 import urllib.request
@@ -359,8 +358,9 @@ def main():
     if args.quick:
         models_to_bench = [DEFAULT_MODEL]
     else:
-        # Default: full bench on Qwen3.5-9B; reasoning-only on the other two
-        # (they're slow but good at math — see earlier ad-hoc bench).
+        # Default model first, then every other registered model. Per-model
+        # task scope is decided below by the SMALL_MODEL_GB rule (full suite
+        # for ≤10 GB models, reasoning + classify-yesno for big ones).
         models_to_bench = [DEFAULT_MODEL]
         for m in available:
             if m != DEFAULT_MODEL:

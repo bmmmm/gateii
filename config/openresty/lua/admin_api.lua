@@ -19,6 +19,44 @@ local PROXY_MODE = os.getenv("PROXY_MODE") or "apikey"
 -- if unset, compose-ctl falls back to "trust the docker network" (legacy).
 local INTERNAL_TOKEN = os.getenv("INTERNAL_TOKEN") or ""
 
+-- pcall-wrapped cjson.decode — every read of a user-writable JSON file
+-- (active.json, log.jsonl lines, routing.json, bench-results.json) goes
+-- through this so a partial / kill-9'd write can't 500 the endpoint.
+local function safe_decode(s)
+    if not s or s == "" then return nil end
+    local ok, val = pcall(cjson.decode, s)
+    if ok then return val end
+    return nil
+end
+
+-- Forward an admin-authed request to the compose-ctl sidecar with the
+-- internal-shared-secret header. Generic 502 message on the wire (real
+-- error goes to ngx.log) so admin responses don't leak internal hostnames
+-- or lua-resty-http internals to anyone who got past the admin gate.
+-- Hoisted here so the /services and /agents endpoints can both use it.
+local function compose_ctl_forward(path, method, body)
+    local http_ok, http = pcall(require, "resty.http")
+    if not http_ok then
+        ngx.status = 500; ngx.say(cjson.encode({error = "lua-resty-http unavailable"})); return
+    end
+    local httpc = http.new()
+    httpc:set_timeouts(1000, 1000, 5000)
+    local headers = { ["Content-Type"] = "application/json" }
+    if INTERNAL_TOKEN ~= "" then headers["X-Internal-Token"] = INTERNAL_TOKEN end
+    local res, err = httpc:request_uri("http://compose-ctl:8090" .. path, {
+        method = method, headers = headers, body = body,
+    })
+    if not res then
+        ngx.log(ngx.ERR, "compose-ctl forward ", method, " ", path, ": ", tostring(err))
+        ngx.status = 502
+        ngx.say(cjson.encode({error = "upstream unavailable"}))
+        return
+    end
+    ngx.status = res.status
+    ngx.header["Content-Type"] = res.headers["Content-Type"] or "application/json"
+    ngx.print(res.body)
+end
+
 -- Per-component health-check timeouts (ms). Defaults tuned for LAN-local services.
 -- Override via env when hitting slower backends.
 local HEALTH_CHECK_CONNECT_MS = tonumber(os.getenv("HEALTH_CHECK_CONNECT_MS")) or 1500
@@ -833,9 +871,8 @@ if uri == "/internal/admin/diagnostics" and method == "GET" then
         -- Bench freshness
         local bf = io.open(AGENTS_DIR .. "/bench-results.json", "r")
         if bf then
-            local _ok, b = pcall(cjson.decode, bf:read("*a"))
+            local b = safe_decode(bf:read("*a")) or {}
             bf:close()
-            if not _ok or not b then b = {} end
             local models = {}
             for _, r in ipairs(b.results or {}) do models[r.model or "?"] = (models[r.model or "?"] or 0) + 1 end
             local mlist = {}
@@ -854,9 +891,8 @@ if uri == "/internal/admin/diagnostics" and method == "GET" then
         -- Routing freshness
         local rf = io.open(AGENTS_DIR .. "/routing.json", "r")
         if rf then
-            local _ok, r = pcall(cjson.decode, rf:read("*a"))
+            local r = safe_decode(rf:read("*a")) or {}
             rf:close()
-            if not _ok or not r then r = {} end
             local rcount = 0
             for _ in pairs(r.routes or {}) do rcount = rcount + 1 end
             out.agents.routing = {
@@ -877,8 +913,7 @@ if uri == "/internal/admin/diagnostics" and method == "GET" then
                 method = "GET", headers = { ["Authorization"] = "Bearer " .. omlx_key },
             })
             if res and res.status == 200 then
-                local _ok, s = pcall(cjson.decode, res.body)
-                if not _ok or not s then s = {} end
+                local s = safe_decode(res.body) or {}
                 out.agents.omlx = {
                     reachable        = true,
                     loaded_count     = s.loaded_count,
@@ -908,33 +943,13 @@ end
 -- holds the docker-socket mount; the proxy never talks to Docker directly.
 if uri == "/internal/admin/services"
    or uri:sub(1, #"/internal/admin/services/") == "/internal/admin/services/" then
-    local http = require "resty.http"
-    local httpc = http.new()
-    httpc:set_timeouts(2000, 2000, 30000)  -- connect/send/read
-
     local sub_path = uri:sub(#"/internal/admin/services" + 1)  -- "" or "/<name>/<action>"
-    local target = "http://compose-ctl:8090/services" .. sub_path
     local body
     if method == "POST" then
         ngx.req.read_body()
         body = ngx.req.get_body_data() or ""
     end
-
-    local headers = { ["Content-Type"] = "application/json" }
-    if INTERNAL_TOKEN ~= "" then headers["X-Internal-Token"] = INTERNAL_TOKEN end
-    local res, err = httpc:request_uri(target, {
-        method = method, body = body, headers = headers,
-    })
-    if not res then
-        ngx.log(ngx.ERR, "compose-ctl forward services", sub_path, ": ", tostring(err))
-        ngx.status = 502
-        ngx.say(cjson.encode({error = "upstream unavailable",
-                              hint = "check that the gateii-compose-ctl container is running"}))
-        return
-    end
-    ngx.status = res.status
-    ngx.say(res.body or "")
-    return
+    return compose_ctl_forward("/services" .. sub_path, method, body)
 end
 
 -- /internal/admin/git-tracking — read/write per-repo tracking config
@@ -1011,15 +1026,6 @@ end
 local AGENTS_DIR = "/etc/nginx/data/agents"
 if uri == "/internal/admin/agents" and method == "GET" then
     local out = { active = nil, recent = {}, routing = nil, bench = nil, omlx_status = nil }
-
-    -- Helper: cjson.decode under pcall — a partial write to active.json or
-    -- a half-written line in log.jsonl must not 500 the entire endpoint.
-    local function safe_decode(s)
-        if not s or s == "" then return nil end
-        local ok, val = pcall(cjson.decode, s)
-        if ok then return val end
-        return nil
-    end
 
     local af = io.open(AGENTS_DIR .. "/active.json", "r")
     if af then
@@ -1151,8 +1157,7 @@ if uri == "/internal/admin/agents" and method == "GET" then
     -- renders without live state.
     local _cached = counters:get("omlx_status_cache")
     if _cached then
-        local _ok, parsed = pcall(cjson.decode, _cached)
-        if _ok then out.omlx_status = parsed end
+        out.omlx_status = safe_decode(_cached)
     else
         local http_ok, http = pcall(require, "resty.http")
         if http_ok then
@@ -1165,8 +1170,8 @@ if uri == "/internal/admin/agents" and method == "GET" then
                 headers = { ["Authorization"] = "Bearer " .. omlx_key },
             })
             if res and res.status == 200 then
-                local _ok, parsed = pcall(cjson.decode, res.body)
-                if _ok then
+                local parsed = safe_decode(res.body)
+                if parsed then
                     out.omlx_status = parsed
                     counters:set("omlx_status_cache", res.body, 5)  -- 5 s TTL
                 end
@@ -1177,33 +1182,6 @@ if uri == "/internal/admin/agents" and method == "GET" then
     ngx.header["Content-Type"] = "application/json"
     ngx.print(cjson.encode(out))
     return
-end
-
--- Helper: forward an admin-authed request to the compose-ctl sidecar with
--- the internal-shared-secret header. Generic 502 message on the wire (real
--- error goes to ngx.log) so admin responses don't leak internal hostnames
--- or lua-resty-http internals to anyone who got past the admin gate.
-local function compose_ctl_forward(path, method, body)
-    local http_ok, http = pcall(require, "resty.http")
-    if not http_ok then
-        ngx.status = 500; ngx.say(cjson.encode({error = "lua-resty-http unavailable"})); return
-    end
-    local httpc = http.new()
-    httpc:set_timeouts(1000, 1000, 5000)
-    local headers = { ["Content-Type"] = "application/json" }
-    if INTERNAL_TOKEN ~= "" then headers["X-Internal-Token"] = INTERNAL_TOKEN end
-    local res, err = httpc:request_uri("http://compose-ctl:8090" .. path, {
-        method = method, headers = headers, body = body,
-    })
-    if not res then
-        ngx.log(ngx.ERR, "compose-ctl forward ", method, " ", path, ": ", tostring(err))
-        ngx.status = 502
-        ngx.say(cjson.encode({error = "upstream unavailable"}))
-        return
-    end
-    ngx.status = res.status
-    ngx.header["Content-Type"] = res.headers["Content-Type"] or "application/json"
-    ngx.print(res.body)
 end
 
 -- /internal/admin/agents/idle-config — per-model idle-unload TTLs.
@@ -1228,7 +1206,7 @@ end
 if uri == "/internal/admin/agents/bench" and method == "POST" then
     ngx.req.read_body()
     local body = ngx.req.get_body_data() or "{}"
-    local req_obj = (function() local ok, v = pcall(cjson.decode, body); return ok and v or {} end)()
+    local req_obj = safe_decode(body) or {}
     local force = req_obj.force == true
     return compose_ctl_forward("/run-bench", "POST", cjson.encode({force = force}))
 end
@@ -1240,7 +1218,7 @@ end
 if uri == "/internal/admin/models" and method == "POST" then
     ngx.req.read_body()
     local body = ngx.req.get_body_data() or "{}"
-    local req_obj = (function() local ok, v = pcall(cjson.decode, body); return ok and v or {} end)()
+    local req_obj = safe_decode(body) or {}
     local action  = req_obj.action
     local model   = req_obj.model
     if action ~= "load" and action ~= "unload" then
