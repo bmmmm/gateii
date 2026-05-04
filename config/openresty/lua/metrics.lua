@@ -600,7 +600,12 @@ local function _routing_to_metrics()
     end
 end
 
-pcall(_bench_to_metrics)
-pcall(_routing_to_metrics)
+-- Surface failures (truncated bench-results.json, missing dir mount, etc.)
+-- to the error log so operators can act. Without this an invariant break
+-- silently turns into "no gateii_omlx_bench_* gauges in Prometheus".
+local _ok_b, _err_b = pcall(_bench_to_metrics)
+if not _ok_b then ngx.log(ngx.WARN, "metrics: bench export failed: ", _err_b) end
+local _ok_r, _err_r = pcall(_routing_to_metrics)
+if not _ok_r then ngx.log(ngx.WARN, "metrics: routing export failed: ", _err_r) end
 
 ngx.print(table.concat(lines, "\n") .. "\n")

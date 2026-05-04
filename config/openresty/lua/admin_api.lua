@@ -830,8 +830,9 @@ if uri == "/internal/admin/diagnostics" and method == "GET" then
         -- Bench freshness
         local bf = io.open(AGENTS_DIR .. "/bench-results.json", "r")
         if bf then
-            local b = cjson.decode(bf:read("*a")) or {}
+            local _ok, b = pcall(cjson.decode, bf:read("*a"))
             bf:close()
+            if not _ok or not b then b = {} end
             local models = {}
             for _, r in ipairs(b.results or {}) do models[r.model or "?"] = (models[r.model or "?"] or 0) + 1 end
             local mlist = {}
@@ -850,8 +851,9 @@ if uri == "/internal/admin/diagnostics" and method == "GET" then
         -- Routing freshness
         local rf = io.open(AGENTS_DIR .. "/routing.json", "r")
         if rf then
-            local r = cjson.decode(rf:read("*a")) or {}
+            local _ok, r = pcall(cjson.decode, rf:read("*a"))
             rf:close()
+            if not _ok or not r then r = {} end
             local rcount = 0
             for _ in pairs(r.routes or {}) do rcount = rcount + 1 end
             out.agents.routing = {
@@ -872,7 +874,8 @@ if uri == "/internal/admin/diagnostics" and method == "GET" then
                 method = "GET", headers = { ["Authorization"] = "Bearer " .. omlx_key },
             })
             if res and res.status == 200 then
-                local s = cjson.decode(res.body) or {}
+                local _ok, s = pcall(cjson.decode, res.body)
+                if not _ok or not s then s = {} end
                 out.agents.omlx = {
                     reachable        = true,
                     loaded_count     = s.loaded_count,
@@ -1005,10 +1008,19 @@ local AGENTS_DIR = "/etc/nginx/data/agents"
 if uri == "/internal/admin/agents" and method == "GET" then
     local out = { active = nil, recent = {}, routing = nil, bench = nil, omlx_status = nil }
 
+    -- Helper: cjson.decode under pcall — a partial write to active.json or
+    -- a half-written line in log.jsonl must not 500 the entire endpoint.
+    local function safe_decode(s)
+        if not s or s == "" then return nil end
+        local ok, val = pcall(cjson.decode, s)
+        if ok then return val end
+        return nil
+    end
+
     local af = io.open(AGENTS_DIR .. "/active.json", "r")
     if af then
         local content = af:read("*a"); af:close()
-        out.active = cjson.decode(content)
+        out.active = safe_decode(content)
     end
 
     -- Per-model usage stats aggregated from the FULL log.jsonl (not just last 50)
@@ -1021,25 +1033,23 @@ if uri == "/internal/admin/agents" and method == "GET" then
             if line ~= "" then table.insert(lines, line) end
         end
         lf:close()
-        -- Aggregate usage from all lines
+        -- Aggregate usage from all lines (skip malformed)
         for _, raw in ipairs(lines) do
-            local rec = cjson.decode(raw)
+            local rec = safe_decode(raw)
             if rec and rec.model then
                 local m = rec.model
                 usage[m] = usage[m] or { runs=0, passed=0, latency_sum=0, last_used_at=nil }
                 usage[m].runs = usage[m].runs + 1
                 if rec.exit == 0 then usage[m].passed = usage[m].passed + 1 end
                 usage[m].latency_sum = usage[m].latency_sum + (rec.latency_s or 0)
-                -- ISO date sort works lex; keep latest
                 if not usage[m].last_used_at or (rec.started_at and rec.started_at > usage[m].last_used_at) then
                     usage[m].last_used_at = rec.started_at
                 end
             end
         end
-        -- Recent (last 50) for the table
         local start_idx = math.max(1, #lines - 49)
         for i = start_idx, #lines do
-            local rec = cjson.decode(lines[i])
+            local rec = safe_decode(lines[i])
             if rec then table.insert(out.recent, rec) end
         end
     end
@@ -1057,14 +1067,14 @@ if uri == "/internal/admin/agents" and method == "GET" then
     local rf = io.open(AGENTS_DIR .. "/routing.json", "r")
     if rf then
         local content = rf:read("*a"); rf:close()
-        out.routing = cjson.decode(content)
+        out.routing = safe_decode(content)
     end
 
     -- Aggregate bench-results.json by (task, model) → pass-rate + p50 latency
     local bf = io.open(AGENTS_DIR .. "/bench-results.json", "r")
     if bf then
         local content = bf:read("*a"); bf:close()
-        local b = cjson.decode(content)
+        local b = safe_decode(content)
         if b and b.results then
             local cells = {}  -- key = task .. "|" .. model
             local tasks_set = {}
@@ -1117,7 +1127,8 @@ if uri == "/internal/admin/agents" and method == "GET" then
             headers = { ["Authorization"] = "Bearer " .. omlx_key },
         })
         if res and res.status == 200 then
-            out.omlx_status = cjson.decode(res.body)
+            local _ok, parsed = pcall(cjson.decode, res.body)
+            if _ok then out.omlx_status = parsed end
         end
     end
 
@@ -1133,7 +1144,7 @@ end
 if uri == "/internal/admin/agents/bench" and method == "POST" then
     ngx.req.read_body()
     local body = ngx.req.get_body_data() or "{}"
-    local req_obj = cjson.decode(body) or {}
+    local req_obj = (function() local ok, v = pcall(cjson.decode, body); return ok and v or {} end)()
     local force = req_obj.force == true
     local http_ok, http = pcall(require, "resty.http")
     if not http_ok then
@@ -1166,7 +1177,7 @@ end
 if uri == "/internal/admin/models" and method == "POST" then
     ngx.req.read_body()
     local body = ngx.req.get_body_data() or "{}"
-    local req_obj = cjson.decode(body) or {}
+    local req_obj = (function() local ok, v = pcall(cjson.decode, body); return ok and v or {} end)()
     local action  = req_obj.action
     local model   = req_obj.model
     if action ~= "load" and action ~= "unload" then
@@ -1174,9 +1185,12 @@ if uri == "/internal/admin/models" and method == "POST" then
         ngx.say(cjson.encode({error = "action must be 'load' or 'unload'"}))
         return
     end
-    if not model or model == "" then
+    -- Validate model id: only chars omlx legitimately uses for model names.
+    -- Without this, "model":"x/foo" would interpolate into the upstream URL
+    -- and reach arbitrary omlx endpoints (path injection).
+    if not model or not model:match("^[A-Za-z0-9._%-]+$") then
         ngx.status = 400
-        ngx.say(cjson.encode({error = "model id required"}))
+        ngx.say(cjson.encode({error = "invalid model id (must match [A-Za-z0-9._-]+)"}))
         return
     end
     local http_ok, http = pcall(require, "resty.http")

@@ -46,14 +46,21 @@ LOG_FILE="$STATE_DIR/log.jsonl"
 
 JQ=/opt/homebrew/bin/jq
 
-# Resolve API key (passthrough mode forwards the client key to omlx as Bearer)
+# Resolve API key (passthrough mode forwards the client key to omlx as Bearer).
+# Strips surrounding single/double quotes and trailing CR (Windows-edited .env)
+# so a quoted value doesn't reach curl as `Authorization: Bearer "value"`.
 resolve_key() {
     if [ -n "${OMLX_API_KEY:-}" ]; then
         printf '%s' "$OMLX_API_KEY"
         return
     fi
     if [ -f "$PROJECT_DIR/.env" ]; then
-        awk -F= '/^OMLX_API_KEY=/{print $2; exit}' "$PROJECT_DIR/.env"
+        awk -F= '/^OMLX_API_KEY=/{
+            v = $0; sub(/^OMLX_API_KEY=/, "", v);
+            sub(/\r$/, "", v);
+            gsub(/^["\047]|["\047]$/, "", v);
+            print v; exit
+        }' "$PROJECT_DIR/.env"
     fi
 }
 
@@ -112,9 +119,11 @@ clear_active() {
 append_log() {
     local payload="$1"
     /bin/mkdir -p "$STATE_DIR"
-    # Compact to single line — log.jsonl invariant is one JSON object per line
-    printf '%s' "$payload" | $JQ -c . >> "$LOG_FILE"
-    printf '\n' >> "$LOG_FILE"
+    # Single-printf write to keep the log.jsonl invariant under SIGKILL:
+    # one JSON object + trailing newline must land in one syscall, not two.
+    # The previous "compact then echo \n" pattern left half-written records
+    # that the /internal/admin/agents handler couldn't decode.
+    printf '%s\n' "$(printf '%s' "$payload" | $JQ -c .)" >> "$LOG_FILE"
 }
 
 # Task definitions: each task pins its system prompt + max_tokens.
@@ -244,13 +253,25 @@ cmd_run() {
     picked_model=$(resolve_model_for_task "$task")
 
     # Acquire lock — portable across Linux/macOS via atomic mkdir.
-    # Stale lock guard: if the dir is older than 5 min AND its PID is gone, reclaim.
+    # Stale-lock guard requires THREE conditions (don't reclaim a live lock):
+    #   1. lock dir's mtime > 5 min ago
+    #   2. active.json has a parseable, non-zero pid
+    #   3. that pid is gone (kill -0 fails)
+    # The previous version reclaimed when active.json was missing or had no
+    # pid — but a fresh holder may have just mkdir'd before writing
+    # active.json, so we'd kill an in-flight sibling.
     /bin/mkdir -p "$STATE_DIR"
     if ! /bin/mkdir "$LOCK_FILE.d" 2>/dev/null; then
         local lock_age stale_pid
-        lock_age=$(( $(/bin/date +%s) - $(/usr/bin/stat -f %m "$LOCK_FILE.d" 2>/dev/null || echo 0) ))
-        stale_pid=$($JQ -r '.pid // "0"' "$ACTIVE_FILE" 2>/dev/null || echo 0)
-        if [ "$lock_age" -gt 300 ] && ! /bin/kill -0 "$stale_pid" 2>/dev/null; then
+        # macOS stat -f, Linux stat -c — try both
+        lock_age=$(( $(/bin/date +%s) - $( /usr/bin/stat -f %m "$LOCK_FILE.d" 2>/dev/null \
+                                       || /usr/bin/stat -c %Y "$LOCK_FILE.d" 2>/dev/null \
+                                       || echo 0) ))
+        stale_pid=$($JQ -r '.pid // empty' "$ACTIVE_FILE" 2>/dev/null || true)
+        if [ "$lock_age" -gt 300 ] \
+           && [ -n "$stale_pid" ] \
+           && [ "$stale_pid" -gt 0 ] 2>/dev/null \
+           && ! /bin/kill -0 "$stale_pid" 2>/dev/null; then
             /bin/rm -rf "$LOCK_FILE.d" 2>/dev/null
             /bin/rm -f  "$ACTIVE_FILE" 2>/dev/null
             /bin/mkdir  "$LOCK_FILE.d" 2>/dev/null || { echo "[agent] couldn't reclaim stale lock" >&2; exit 7; }
