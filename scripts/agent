@@ -1,0 +1,190 @@
+#!/bin/bash
+# scripts/agent — local omlx-backed task runner
+#
+# Routes simple tasks (commit messages, summaries, classification, etc.) to a
+# local Qwen3.5-9B model via gateii → omlx, instead of burning Claude API
+# tokens on them. Parent Claude Code calls this via Bash() when CLAUDE.md
+# routing rules match.
+#
+# Usage:
+#   echo "<input>" | scripts/agent run <task>
+#   scripts/agent tasks                    # list available tasks
+#   scripts/agent list                     # show running + recent (Stage 2)
+#
+# All tasks share these defaults:
+#   - model: Qwen3.5-9B-MLX-4bit
+#   - chat_template_kwargs: enable_thinking=false
+#   - temperature: 0.2 (deterministic)
+#   - timeout: 60s
+#
+# Routing path:
+#   scripts/agent → gateii :8888 (x-provider:omlx) → omlx :8000 → Qwen3.5-9B
+#
+# State (Stage 2+):
+#   data/agents/active.json   currently-running agents
+#   data/agents/log.jsonl     append-only history
+#   data/agents/lock          flock for concurrency=1
+
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+PROJECT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+
+GATEII_URL="${GATEII_URL:-http://localhost:8888}"
+TIMEOUT="${OMLX_AGENT_TIMEOUT:-60}"
+MODEL="${OMLX_AGENT_MODEL:-Qwen3.5-9B-MLX-4bit}"
+
+# Resolve API key (passthrough mode forwards the client key to omlx as Bearer)
+resolve_key() {
+    if [ -n "${OMLX_API_KEY:-}" ]; then
+        printf '%s' "$OMLX_API_KEY"
+        return
+    fi
+    if [ -f "$PROJECT_DIR/.env" ]; then
+        awk -F= '/^OMLX_API_KEY=/{print $2; exit}' "$PROJECT_DIR/.env"
+    fi
+}
+
+# Task definitions: each task pins its system prompt + max_tokens.
+# Add new tasks here; keep system prompts strict ("output only", "no preamble").
+task_config() {
+    case "$1" in
+        commit-msg)
+            MAX_TOKENS=80
+            SYSTEM='Generate a single-line conventional commit message for this git diff. Format: type(scope): description. Output ONLY the commit message line, no explanation, no preamble.'
+            ;;
+        summarize-file)
+            MAX_TOKENS=80
+            SYSTEM='Summarize what this file does in ONE sentence. No preamble, no thinking. Output only the sentence.'
+            ;;
+        classify-yesno)
+            MAX_TOKENS=40
+            SYSTEM="Reply with 'yes' or 'no' followed by max 10 words justification. Output only that line."
+            ;;
+        rename)
+            MAX_TOKENS=100
+            SYSTEM='Suggest 3 better variable names. Output as numbered list 1./2./3. with name and 3-word reason. Nothing else.'
+            ;;
+        doc-comment)
+            MAX_TOKENS=80
+            SYSTEM='Write a one-line docstring for this function. Output only the docstring text, no quotes, no preamble.'
+            ;;
+        extract-json)
+            MAX_TOKENS=120
+            SYSTEM='Extract structured data as a JSON object. Output ONLY the JSON, no markdown fences, no explanation.'
+            ;;
+        explain-line)
+            MAX_TOKENS=60
+            SYSTEM='Explain in one short sentence what this code does. No preamble. Output only the sentence.'
+            ;;
+        refactor-suggestion)
+            MAX_TOKENS=120
+            SYSTEM='Suggest 1 specific refactor. Output: 1 sentence what to change + 1 sentence why. Nothing else.'
+            ;;
+        ambiguity-check)
+            MAX_TOKENS=80
+            SYSTEM="If the request is too vague to answer confidently, reply 'AMBIGUOUS: <what is missing>'. Otherwise answer normally."
+            ;;
+        unix-recipe)
+            MAX_TOKENS=200
+            SYSTEM='Suggest 3 unix commands or one-liners that solve the task. Output as numbered list, no explanation.'
+            ;;
+        code-gen-short)
+            # Qwen3.5-9B generates ~13 tok/s, so 250 ≈ 19s. Cap kept tight to
+            # avoid runaway latency; longer code-gen should stay on Claude.
+            MAX_TOKENS=250
+            SYSTEM='Write code only, no explanation, no markdown fences. Just the raw code.'
+            ;;
+        *)
+            return 1
+            ;;
+    esac
+}
+
+cmd_tasks() {
+    cat <<'EOF'
+Available tasks:
+  commit-msg            git diff/stat → conventional commit message
+  summarize-file        file contents → one-sentence summary
+  classify-yesno        question → yes/no + 10-word reason
+  rename                variable + context → 3 better names
+  doc-comment           function code → one-line docstring
+  extract-json          unstructured text → JSON object
+  explain-line          code line → one-sentence explanation
+  refactor-suggestion   code block → 1 specific refactor (what + why)
+  ambiguity-check       request → answer or "AMBIGUOUS: ..."
+  unix-recipe           task description → 3 shell command suggestions
+  code-gen-short        spec → small function (≤400 tokens)
+
+Usage: echo "<input>" | scripts/agent run <task>
+EOF
+}
+
+cmd_run() {
+    local task="${1:-}"
+    [ -z "$task" ] && { echo "usage: scripts/agent run <task>" >&2; exit 2; }
+
+    if ! task_config "$task"; then
+        echo "unknown task: $task" >&2
+        echo "see: scripts/agent tasks" >&2
+        exit 2
+    fi
+
+    local input
+    if [ -t 0 ]; then
+        echo "scripts/agent: no input on stdin" >&2
+        echo "usage: echo \"<input>\" | scripts/agent run $task" >&2
+        exit 2
+    fi
+    input=$(cat)
+
+    local key body resp text stop tokens_in tokens_out http_code
+    key=$(resolve_key)
+    [ -z "$key" ] && { echo "OMLX_API_KEY not found in env or .env" >&2; exit 3; }
+
+    body=$(/opt/homebrew/bin/jq -n \
+        --arg model "$MODEL" \
+        --argjson mt "$MAX_TOKENS" \
+        --arg sys "$SYSTEM" \
+        --arg user "$input" \
+        '{model:$model, max_tokens:$mt, temperature:0.2, chat_template_kwargs:{enable_thinking:false}, system:$sys, messages:[{role:"user", content:$user}]}')
+
+    resp=$(/usr/bin/curl -s --max-time "$TIMEOUT" \
+        -w "\n__HTTP__%{http_code}" \
+        -X POST "$GATEII_URL/v1/messages" \
+        -H "Content-Type: application/json" \
+        -H "x-api-key: $key" \
+        -H "x-provider: omlx" \
+        -d "$body" 2>&1) || {
+            echo "[agent] curl failed (timeout or network)" >&2
+            exit 4
+        }
+
+    http_code=$(printf '%s' "$resp" | /usr/bin/grep -oE '__HTTP__[0-9]+$' | /usr/bin/grep -oE '[0-9]+$' || echo "?")
+    body_only=$(printf '%s' "$resp" | /usr/bin/sed 's/__HTTP__[0-9]*$//')
+
+    if [ "$http_code" != "200" ]; then
+        echo "[agent] upstream returned HTTP $http_code:" >&2
+        echo "$body_only" >&2
+        exit 5
+    fi
+
+    text=$(printf '%s' "$body_only" | /opt/homebrew/bin/jq -r '.content[0].text // .error.message // ""')
+    stop=$(printf '%s' "$body_only" | /opt/homebrew/bin/jq -r '.stop_reason // "?"')
+
+    if [ -z "$text" ]; then
+        echo "[agent] empty response from omlx (stop=$stop)" >&2
+        exit 6
+    fi
+
+    # Print result to stdout
+    printf '%s\n' "$text"
+}
+
+case "${1:-}" in
+    run)        shift; cmd_run "$@" ;;
+    tasks)      cmd_tasks ;;
+    list)       echo "[agent list — coming in Stage 2]" >&2; exit 0 ;;
+    -h|--help|"") cmd_tasks ;;
+    *)          echo "unknown subcommand: $1 (try: tasks)" >&2; exit 2 ;;
+esac

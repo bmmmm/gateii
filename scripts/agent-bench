@@ -1,0 +1,365 @@
+#!/usr/bin/env python3
+"""scripts/agent-bench — empirical task→model routing benchmark.
+
+Self-adapts to the host: queries omlx /v1/models/status for available memory,
+loads one model at a time when memory is tight, runs each task N times per
+model, scores latency + format compliance, picks the best (model, max_tokens)
+per task, and writes data/agents/routing.json for the wrapper to pick up.
+
+Usage:
+    scripts/agent-bench               # full bench, default 3 trials
+    scripts/agent-bench --trials 5    # more trials = lower variance
+    scripts/agent-bench --quick       # 1 trial, default model only
+    scripts/agent-bench --task TASK   # bench only one task (debugging)
+
+Outputs:
+    data/agents/bench-results.json    raw per-trial data
+    data/agents/bench-report.md       human-readable summary
+    data/agents/routing.json          chosen model/max_tokens per task
+"""
+import argparse
+import json
+import os
+import re
+import statistics
+import subprocess
+import sys
+import time
+import urllib.request
+import urllib.error
+from pathlib import Path
+
+ROOT      = Path(__file__).resolve().parent.parent
+DATA_DIR  = ROOT / "data" / "agents"
+OMLX_URL  = os.environ.get("OMLX_URL", "http://localhost:8000")
+RESERVE_GB = 4   # keep this much headroom on top of omlx's own max_model_memory
+
+DEFAULT_MODEL = "Qwen3.5-9B-MLX-4bit"
+
+
+def load_api_key() -> str:
+    env = ROOT / ".env"
+    if env.exists():
+        for line in env.read_text().splitlines():
+            if line.startswith("OMLX_API_KEY="):
+                return line.split("=", 1)[1].strip()
+    return os.environ.get("OMLX_API_KEY", "")
+
+
+KEY = load_api_key()
+HEADERS = {"Authorization": f"Bearer {KEY}", "Content-Type": "application/json"}
+
+
+def http(method: str, path: str, body: dict | None = None, timeout: int = 120):
+    url = OMLX_URL + path
+    data = json.dumps(body).encode() if body else None
+    req = urllib.request.Request(url, method=method, data=data, headers=HEADERS)
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as r:
+            return r.status, json.loads(r.read().decode())
+    except urllib.error.HTTPError as e:
+        try:
+            return e.code, json.loads(e.read().decode())
+        except Exception:
+            return e.code, {"error": str(e)}
+    except Exception as e:
+        return 0, {"error": str(e)}
+
+
+# ─── task definitions ────────────────────────────────────────────────────────
+# regex = pattern the output must match for "compliant" (None = just non-empty)
+TASKS = {
+    "commit-msg": dict(
+        max_tokens=80,
+        system="Generate a single-line conventional commit message. Format: type(scope): description. Output ONLY the commit message line.",
+        prompt="scripts/git-tracking.sh +50 -10\nconfig/openresty/lua/admin_api.lua +30 -5",
+        compliant=re.compile(r"^[a-z]+(\([a-z\-]+\))?: .+$", re.IGNORECASE),
+    ),
+    "summarize-file": dict(
+        max_tokens=80,
+        system="Summarize what this file does in ONE sentence. No preamble. Output only the sentence.",
+        prompt="#!/bin/bash\nset -e\nfor f in $(find . -name '*.lua'); do\n  luac -p \"$f\" || exit 1\ndone\necho 'all lua files compile'",
+        compliant=re.compile(r"^[A-Z].{20,200}\.?$", re.DOTALL),
+    ),
+    "classify-yesno": dict(
+        max_tokens=40,
+        system="Reply with 'yes' or 'no' followed by max 10 words justification.",
+        prompt="Is changing `if (x = null)` to `if (x == null)` a bug fix?",
+        compliant=re.compile(r"^(yes|no)\b", re.IGNORECASE),
+    ),
+    "rename": dict(
+        max_tokens=100,
+        system="Suggest 3 better variable names. Output as numbered list 1./2./3.",
+        prompt="Variable: x\nfor x in users:\n    send_email(x.email)",
+        compliant=re.compile(r"^\s*1[\.\)]"),
+    ),
+    "doc-comment": dict(
+        max_tokens=80,
+        system="Write a one-line docstring. Output only the docstring text.",
+        prompt="def jaccard(a,b):\n    s1,s2=set(a),set(b)\n    return len(s1&s2)/len(s1|s2) if s1|s2 else 0",
+        compliant=re.compile(r"^.{20,200}$", re.DOTALL),
+    ),
+    "extract-json": dict(
+        max_tokens=120,
+        system='Extract IP and HTTP method as JSON {"ip":"...","method":"..."}. Output ONLY the JSON.',
+        prompt='192.168.1.42 - - [04/May/2026:12:33:01 +0000] "POST /api/login HTTP/1.1" 200 421',
+        compliant=re.compile(r'^\s*\{[^{}]*"ip"\s*:\s*"\d+\.\d+\.\d+\.\d+".*"method"\s*:\s*"[A-Z]+"', re.DOTALL),
+    ),
+    "explain-line": dict(
+        max_tokens=60,
+        system="Explain in one short sentence. Output only the sentence.",
+        prompt="x = sum(1 for c in s if c.isalnum()) / max(len(s), 1)",
+        compliant=re.compile(r"^[A-Z].{15,200}\.?$", re.DOTALL),
+    ),
+    "refactor-suggestion": dict(
+        max_tokens=120,
+        system="Suggest 1 specific refactor: 1 sentence what + 1 sentence why.",
+        prompt="def f(x):\n  if x is not None:\n    if x > 0:\n      if x < 10:\n        return x*2",
+        compliant=re.compile(r"^.{40,400}", re.DOTALL),
+    ),
+    "ambiguity-check": dict(
+        max_tokens=80,
+        system="If too vague, reply 'AMBIGUOUS: <missing>'. Otherwise answer.",
+        prompt="Make this faster",
+        compliant=re.compile(r"^AMBIGUOUS:", re.IGNORECASE),
+    ),
+    "unix-recipe": dict(
+        max_tokens=200,
+        system="Suggest 3 unix commands. Output as numbered list.",
+        prompt="Find all .lua files modified in the last 7 days, sorted by size",
+        compliant=re.compile(r"^\s*1[\.\)].*find", re.DOTALL),
+    ),
+    "reasoning": dict(
+        max_tokens=80,
+        system="Solve and output only the final HH:MM time.",
+        prompt="Train1 leaves 9am at 60km/h. Train2 leaves 10am same station, same direction, 90km/h. Meeting time?",
+        compliant=re.compile(r"^\s*12:00\s*$"),  # known-correct answer
+    ),
+}
+
+
+# ─── memory management ──────────────────────────────────────────────────────
+def models_status():
+    code, data = http("GET", "/v1/models/status")
+    if code != 200:
+        sys.exit(f"omlx /v1/models/status failed: {data}")
+    return data
+
+
+def gb(b): return b / (1024**3)
+
+
+def ensure_model(model_id: str, status: dict) -> dict:
+    """Load model_id; unload others if budget tight. Returns updated status."""
+    info = next((m for m in status["models"] if m["id"] == model_id), None)
+    if not info:
+        sys.exit(f"unknown model: {model_id}")
+
+    if info["loaded"]:
+        return status  # already loaded, nothing to do
+
+    needed     = info["estimated_size"]
+    max_mem    = status["max_model_memory"]
+    headroom   = max_mem - status["current_model_memory"] - RESERVE_GB * 1024**3
+
+    if needed > headroom:
+        # Free space: evict everything except the default model (which we want sticky)
+        for m in status["models"]:
+            if m["loaded"] and m["id"] != DEFAULT_MODEL and m["id"] != model_id:
+                print(f"  ⤵ unload {m['id']} ({gb(m['estimated_size']):.1f}GB) to fit {model_id}", flush=True)
+                http("POST", f"/v1/models/{m['id']}/unload")
+
+    print(f"  ⤴ loading {model_id} ({gb(needed):.1f}GB) — first call will be slow", flush=True)
+    # Trigger load via a tiny request
+    http("POST", "/v1/messages", {
+        "model": model_id, "max_tokens": 1, "chat_template_kwargs": {"enable_thinking": False},
+        "messages": [{"role": "user", "content": "."}]
+    }, timeout=300)
+    return models_status()
+
+
+# ─── benchmark ──────────────────────────────────────────────────────────────
+def call(model: str, task_name: str, trial: int) -> dict:
+    t = TASKS[task_name]
+    body = {
+        "model": model,
+        "max_tokens": t["max_tokens"],
+        "temperature": 0.2,
+        "chat_template_kwargs": {"enable_thinking": False},
+        "system": t["system"],
+        "messages": [{"role": "user", "content": t["prompt"]}],
+    }
+    t0 = time.time()
+    code, resp = http("POST", "/v1/messages", body, timeout=180)
+    dt = time.time() - t0
+
+    text, stop, in_tok, out_tok = "", "?", 0, 0
+    if code == 200 and "content" in resp:
+        text = (resp["content"][0] or {}).get("text", "") if resp["content"] else ""
+        stop = resp.get("stop_reason", "?")
+        u = resp.get("usage") or {}
+        # Sum the three input-token fields (omlx quirk: input_tokens=0)
+        in_tok = (u.get("input_tokens", 0)
+                  + u.get("cache_creation_input_tokens", 0)
+                  + u.get("cache_read_input_tokens", 0))
+        out_tok = u.get("output_tokens", 0)
+
+    text_strip = text.strip()
+    compliant = bool(t["compliant"].match(text_strip))
+
+    return dict(
+        task=task_name, model=model, trial=trial,
+        latency_s=round(dt, 3), http=code, stop=stop,
+        tokens_in=in_tok, tokens_out=out_tok,
+        compliant=compliant, output=text_strip[:300],
+    )
+
+
+def bench_model(model: str, tasks: list[str], trials: int) -> list[dict]:
+    results = []
+    for task in tasks:
+        runs = []
+        for i in range(trials):
+            r = call(model, task, i + 1)
+            runs.append(r)
+            mark = "✓" if r["compliant"] else "✗"
+            print(f"    {mark} {task:22s} trial {i+1}/{trials}  {r['latency_s']:>5.2f}s  out={r['tokens_out']}", flush=True)
+        results.extend(runs)
+    return results
+
+
+def aggregate(results: list[dict]) -> dict:
+    """Group by (task, model), compute pass-rate + latency stats."""
+    by = {}
+    for r in results:
+        by.setdefault((r["task"], r["model"]), []).append(r)
+
+    agg = {}
+    for (task, model), runs in by.items():
+        lats = [r["latency_s"] for r in runs]
+        passes = sum(1 for r in runs if r["compliant"])
+        agg.setdefault(task, {})[model] = dict(
+            trials=len(runs),
+            pass_rate=round(passes / len(runs), 2),
+            latency_p50=round(statistics.median(lats), 2),
+            latency_max=round(max(lats), 2),
+            tokens_out_avg=round(statistics.mean(r["tokens_out"] for r in runs), 1),
+        )
+    return agg
+
+
+def pick_routing(agg: dict) -> dict:
+    """For each task pick the (model) with highest pass_rate, ties broken by latency."""
+    routing = {}
+    for task, models in agg.items():
+        ranked = sorted(
+            models.items(),
+            key=lambda kv: (-kv[1]["pass_rate"], kv[1]["latency_p50"]),
+        )
+        best_model, best_stats = ranked[0]
+        routing[task] = dict(
+            model=best_model,
+            max_tokens=TASKS[task]["max_tokens"],
+            pass_rate=best_stats["pass_rate"],
+            latency_p50=best_stats["latency_p50"],
+            picked_from=[m for m, _ in ranked],
+        )
+    return routing
+
+
+def render_report(agg: dict, routing: dict, started_at: str) -> str:
+    out = [f"# Agent Bench Report — {started_at}", ""]
+    out.append("## Per-task pass-rate × model")
+    out.append("")
+    out.append("| Task | Model | Pass | p50 | max | out-tokens |")
+    out.append("|---|---|---:|---:|---:|---:|")
+    for task in sorted(agg):
+        for model, s in sorted(agg[task].items()):
+            out.append(f"| {task} | {model} | {int(s['pass_rate']*100)}% | {s['latency_p50']}s | {s['latency_max']}s | {s['tokens_out_avg']} |")
+    out.append("")
+    out.append("## Picked routing (data/agents/routing.json)")
+    out.append("")
+    out.append("| Task | Model | Pass | p50 |")
+    out.append("|---|---|---:|---:|")
+    for task in sorted(routing):
+        r = routing[task]
+        out.append(f"| {task} | {r['model']} | {int(r['pass_rate']*100)}% | {r['latency_p50']}s |")
+    return "\n".join(out) + "\n"
+
+
+# ─── main ───────────────────────────────────────────────────────────────────
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--trials", type=int, default=3)
+    ap.add_argument("--quick", action="store_true", help="1 trial, default model only")
+    ap.add_argument("--task", help="bench only this task name")
+    args = ap.parse_args()
+
+    if not KEY:
+        sys.exit("OMLX_API_KEY not in env or .env")
+
+    DATA_DIR.mkdir(parents=True, exist_ok=True)
+    started = time.strftime("%Y-%m-%dT%H:%M:%S")
+    print(f"agent-bench • {started} • host={OMLX_URL}", flush=True)
+
+    status = models_status()
+    print(f"  RAM: {gb(status['current_model_memory']):.1f}/{gb(status['max_model_memory']):.1f} GB used, "
+          f"{status['loaded_count']}/{status['model_count']} models loaded", flush=True)
+
+    # Determine which models to bench
+    available = [m["id"] for m in status["models"]]
+    if args.quick:
+        models_to_bench = [DEFAULT_MODEL]
+    else:
+        # Default: full bench on Qwen3.5-9B; reasoning-only on the other two
+        # (they're slow but good at math — see earlier ad-hoc bench).
+        models_to_bench = [DEFAULT_MODEL]
+        for m in available:
+            if m != DEFAULT_MODEL:
+                models_to_bench.append(m)
+
+    # Determine task subset per model
+    tasks_full = [args.task] if args.task else list(TASKS.keys())
+    if args.task and args.task not in TASKS:
+        sys.exit(f"unknown task: {args.task}")
+
+    all_results = []
+    for model in models_to_bench:
+        # For non-default models, only bench reasoning + 1 fast task as comparison
+        if model == DEFAULT_MODEL or args.task or args.quick:
+            tasks = tasks_full
+        else:
+            tasks = [t for t in ["reasoning", "classify-yesno"] if t in tasks_full]
+            if not tasks:
+                continue
+
+        print(f"\n=== {model} ({len(tasks)} task(s) × {1 if args.quick else args.trials} trial(s)) ===", flush=True)
+        status = ensure_model(model, status)
+        trials = 1 if args.quick else args.trials
+        all_results.extend(bench_model(model, tasks, trials))
+
+    # Aggregate + decide
+    agg = aggregate(all_results)
+    routing = pick_routing(agg)
+
+    # Persist
+    (DATA_DIR / "bench-results.json").write_text(json.dumps({
+        "started_at": started,
+        "host": OMLX_URL,
+        "trials_per_cell": 1 if args.quick else args.trials,
+        "results": all_results,
+    }, indent=2) + "\n")
+    (DATA_DIR / "routing.json").write_text(json.dumps({
+        "generated_at": started,
+        "default_model": DEFAULT_MODEL,
+        "routes": routing,
+    }, indent=2) + "\n")
+    report = render_report(agg, routing, started)
+    (DATA_DIR / "bench-report.md").write_text(report)
+
+    print("\n" + report, flush=True)
+    print(f"\nWrote: data/agents/bench-results.json, routing.json, bench-report.md", flush=True)
+
+
+if __name__ == "__main__":
+    main()
