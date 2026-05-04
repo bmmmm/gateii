@@ -1023,17 +1023,40 @@ if uri == "/internal/admin/agents" and method == "GET" then
         out.active = safe_decode(content)
     end
 
-    -- Per-model usage stats aggregated from the FULL log.jsonl (not just last 50)
-    -- so we capture lifetime efficiency per model.
-    local usage = {}  -- model → {runs, passed, latency_sum, last_used_epoch, by_task={}}
-    local lf = io.open(AGENTS_DIR .. "/log.jsonl", "r")
+    -- Per-model usage stats + last-50 recent entries from log.jsonl, with a
+    -- size-based cache. log.jsonl is append-only — file size is a perfect
+    -- invariant for "did anything change?". Re-aggregation only fires when
+    -- the file actually grew, even with N Console tabs polling every 2 s.
+    local LOG_PATH = AGENTS_DIR .. "/log.jsonl"
+    local lf = io.open(LOG_PATH, "r")
+    local size = 0
+    if lf then size = lf:seek("end") or 0 end
+
+    local cached_size = tonumber(counters:get("agents_log_size") or -1)
+    if size > 0 and size == cached_size then
+        local cached_usage  = counters:get("agents_log_usage_json")
+        local cached_recent = counters:get("agents_log_recent_json")
+        if cached_usage and cached_recent then
+            local _ok_u, _u = pcall(cjson.decode, cached_usage)
+            local _ok_r, _r = pcall(cjson.decode, cached_recent)
+            if _ok_u and _ok_r then
+                out.usage  = _u
+                out.recent = _r
+                if lf then lf:close() end
+                lf = nil  -- skip re-aggregation
+            end
+        end
+    end
+
     if lf then
+        lf:seek("set", 0)
         local lines = {}
         for line in lf:lines() do
             if line ~= "" then table.insert(lines, line) end
         end
         lf:close()
-        -- Aggregate usage from all lines (skip malformed)
+
+        local usage = {}
         for _, raw in ipairs(lines) do
             local rec = safe_decode(raw)
             if rec and rec.model then
@@ -1047,21 +1070,24 @@ if uri == "/internal/admin/agents" and method == "GET" then
                 end
             end
         end
+        out.usage = {}
+        for model, u in pairs(usage) do
+            out.usage[model] = {
+                runs        = u.runs,
+                pass_rate   = u.runs > 0 and (u.passed / u.runs) or 0,
+                latency_avg = u.runs > 0 and (u.latency_sum / u.runs) or 0,
+                last_used_at = u.last_used_at,
+            }
+        end
         local start_idx = math.max(1, #lines - 49)
         for i = start_idx, #lines do
             local rec = safe_decode(lines[i])
             if rec then table.insert(out.recent, rec) end
         end
-    end
-    -- Convert to output shape (avg latency, pass rate)
-    out.usage = {}
-    for model, u in pairs(usage) do
-        out.usage[model] = {
-            runs        = u.runs,
-            pass_rate   = u.runs > 0 and (u.passed / u.runs) or 0,
-            latency_avg = u.runs > 0 and (u.latency_sum / u.runs) or 0,
-            last_used_at = u.last_used_at,
-        }
+        -- Persist cache so the next poll skips this work
+        counters:set("agents_log_size",        size)
+        counters:set("agents_log_usage_json",  cjson.encode(out.usage))
+        counters:set("agents_log_recent_json", cjson.encode(out.recent))
     end
 
     local rf = io.open(AGENTS_DIR .. "/routing.json", "r")
@@ -1114,21 +1140,33 @@ if uri == "/internal/admin/agents" and method == "GET" then
         end
     end
 
-    -- Live: query omlx /v1/models/status (small file, fast local call)
-    -- Failure is non-fatal — page still renders without live state.
-    local http_ok, http = pcall(require, "resty.http")
-    if http_ok then
-        local omlx_url = os.getenv("OMLX_URL") or "http://host.docker.internal:8000"
-        local omlx_key = os.getenv("OMLX_API_KEY") or ""
-        local httpc = http.new()
-        httpc:set_timeout(2000)
-        local res, _ = httpc:request_uri(omlx_url .. "/v1/models/status", {
-            method = "GET",
-            headers = { ["Authorization"] = "Bearer " .. omlx_key },
-        })
-        if res and res.status == 200 then
-            local _ok, parsed = pcall(cjson.decode, res.body)
-            if _ok then out.omlx_status = parsed end
+    -- Live: query omlx /v1/models/status (small file, fast local call).
+    -- Cached in `counters` shared dict for 5 s — N open Console tabs each
+    -- polling every 2 s would otherwise hammer omlx during big-model loads
+    -- (omlx serializes status reads). Failure is non-fatal — page still
+    -- renders without live state.
+    local _cached = counters:get("omlx_status_cache")
+    if _cached then
+        local _ok, parsed = pcall(cjson.decode, _cached)
+        if _ok then out.omlx_status = parsed end
+    else
+        local http_ok, http = pcall(require, "resty.http")
+        if http_ok then
+            local omlx_url = os.getenv("OMLX_URL") or "http://host.docker.internal:8000"
+            local omlx_key = os.getenv("OMLX_API_KEY") or ""
+            local httpc = http.new()
+            httpc:set_timeout(2000)
+            local res, _ = httpc:request_uri(omlx_url .. "/v1/models/status", {
+                method = "GET",
+                headers = { ["Authorization"] = "Bearer " .. omlx_key },
+            })
+            if res and res.status == 200 then
+                local _ok, parsed = pcall(cjson.decode, res.body)
+                if _ok then
+                    out.omlx_status = parsed
+                    counters:set("omlx_status_cache", res.body, 5)  -- 5 s TTL
+                end
+            end
         end
     end
 

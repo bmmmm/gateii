@@ -65,31 +65,23 @@ resolve_key() {
     fi
 }
 
-# Per-task routing override from bench results.
-# Only switches away from MODEL when there's a qualitative win:
-#   default fails (pass_rate < 1.0) AND chosen model passes (1.0).
-# Ignores marginal latency advantages — we'd burn 15-21 GB RAM for an
-# 80 ms latency saving on classify-yesno. Not worth it.
+# Per-task routing override from bench results — single jq invocation.
+# Returns:
+#   default model name → keep DEFAULT (no qualitative win to switch)
+#   picked model name  → switch (default fails, picked passes 100%)
+# Ignores marginal latency advantages. ~25 ms instead of ~75 ms per call.
 resolve_model_for_task() {
     local task="$1"
     [ ! -f "$ROUTING_FILE" ] && { printf '%s' "$MODEL"; return; }
-    local default_pass picked_model picked_pass
-    default_pass=$($JQ -r --arg m "$MODEL" --arg t "$task" \
-        '[.routes[$t] | select(.picked_from | index($m))] | first | .pass_rate // 0' \
-        "$ROUTING_FILE" 2>/dev/null)
-    picked_model=$($JQ -r --arg t "$task" '.routes[$t].model // ""' "$ROUTING_FILE" 2>/dev/null)
-    picked_pass=$($JQ -r --arg t "$task" '.routes[$t].pass_rate // 0' "$ROUTING_FILE" 2>/dev/null)
-    # Switch only when default underperforms AND picked is reliable
-    if [ -n "$picked_model" ] && [ "$picked_model" != "$MODEL" ]; then
-        local cmp_default cmp_picked
-        cmp_default=$(awk "BEGIN{print ($default_pass < 1.0)}")
-        cmp_picked=$(awk "BEGIN{print ($picked_pass >= 0.99)}")
-        if [ "$cmp_default" = "1" ] && [ "$cmp_picked" = "1" ]; then
-            printf '%s' "$picked_model"
-            return
-        fi
-    fi
-    printf '%s' "$MODEL"
+    $JQ -r --arg m "$MODEL" --arg t "$task" '
+        (.routes[$t]) as $r
+        | if $r == null then $m
+          elif $r.model == $m then $m
+          else
+            ([.routes[$t] | select(.picked_from | index($m))] | first | .pass_rate // 0) as $dp
+            | if ($dp < 1.0) and (($r.pass_rate // 0) >= 0.99) then $r.model else $m end
+          end
+    ' "$ROUTING_FILE" 2>/dev/null || printf '%s' "$MODEL"
 }
 
 # Inspect parent process / env to fingerprint the calling Claude Code session
