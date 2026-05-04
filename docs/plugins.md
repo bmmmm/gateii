@@ -14,8 +14,9 @@ gateii admin plugin status            # detailed status
 
 | Plugin | What it does | Enable |
 |--------|-------------|--------|
-| `console` | Admin web console at `/console` — key management, limits, usage bars, live stats, live pricing comparison, monthly cost forecast. | `gateii admin plugin enable console` |
+| `console` | Admin web console at `/console` — key management, limits, usage bars, live stats, live pricing comparison, monthly cost forecast, **Agents tab**. | `gateii admin plugin enable console` |
 | `git-tracking` | Track git activity (commits, lines changed) alongside token usage. Useful for correlating spend with coding output. | `gateii admin plugin enable git-tracking ~/projects ~/servers` |
+| `agents` _(opt-in via `scripts/agent`)_ | Route simple tasks to a local Apple-Silicon LLM via [oMLX](https://github.com/jundot/omlx) instead of paying for Anthropic tokens. See [agents.md](agents.md). | n/a — no proxy plugin to enable; install oMLX + use `scripts/agent run <task>` |
 
 Both can be toggled independently without affecting the core proxy or
 each other.

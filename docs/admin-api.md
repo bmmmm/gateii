@@ -65,6 +65,8 @@ for alerting on brute-force attempts.
 | `GET` | `/internal/admin/openrouter-models` | Top-10 weekly programming models (12 h cache) |
 | `GET` | `/internal/admin/health` | Component reachability: proxy, Prometheus, Grafana + upstream error rate |
 | `GET` | `/internal/admin/bootstrap` | Pending codes + active confirm sessions |
+| `GET` | `/internal/admin/agents` | Local-omlx-agent state: active, recent runs, routing, bench matrix, omlx_status |
+| `GET` | `/internal/admin/diagnostics?include=agents` | Agents-page diagnostics: omlx connectivity, file sizes, bench freshness, smart-skip log |
 
 ---
 
@@ -103,6 +105,15 @@ Limits persist to `data/limits.json` via the proxy (loaded at startup by
 
 The create response is the only place the HMAC secret is disclosed — it is
 not stored in a reversible form. See [bootstrap.md](bootstrap.md).
+
+### Local agents (omlx)
+
+| Method | Path | Body | Effect |
+|--------|------|------|--------|
+| `POST` | `/internal/admin/models` | `{action:"load"\|"unload",model:"<id>"}` | Proxy to oMLX `/v1/models/<id>/(load\|unload)`. Model id validated against `^[A-Za-z0-9._-]+$` |
+| `POST` | `/internal/admin/agents/bench` | `{force?:bool}` | Spawn `scripts/agent-bench` via the `compose-ctl` sidecar. 202 on start, 409 if a bench is already in flight. `force=true` bypasses smart-skip |
+
+See [agents.md](agents.md) for the full feature description.
 
 ---
 
