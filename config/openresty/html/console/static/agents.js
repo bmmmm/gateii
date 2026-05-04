@@ -29,12 +29,12 @@ async function unloadModel(modelId) {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ action: 'unload', model: modelId }),
     });
-    const data = await r.json().catch(() => ({}));
-    if (r.ok && data.status === 'ok') {
+    if (r.ok) {
       toast(`unloaded ${modelId}`);
-      pollAgents();   // refresh immediately
+      pollAgents();
     } else {
-      toast(data.error || `unload failed (HTTP ${r.status})`, true);
+      const d = await r.json().catch(() => ({}));
+      toast((d.error && (d.error.message || d.error)) || `unload failed (HTTP ${r.status})`, true);
     }
   } catch (err) {
     toast('unload error: ' + err.message, true);
@@ -50,7 +50,10 @@ async function loadModel(modelId) {
       body: JSON.stringify({ action: 'load', model: modelId }),
     });
     if (r.ok) { toast(`loaded ${modelId}`); pollAgents(); }
-    else { const d = await r.json().catch(() => ({})); toast(d.error || `load failed (HTTP ${r.status})`, true); }
+    else {
+      const d = await r.json().catch(() => ({}));
+      toast((d.error && (d.error.message || d.error)) || `load failed (HTTP ${r.status})`, true);
+    }
   } catch (err) {
     toast('load error: ' + err.message, true);
   }
@@ -95,7 +98,8 @@ async function unloadAll() {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ action: 'unload', model: m.id }),
-    }).then(r => r.json().catch(() => ({}))).then(d => ({ model: m.id, ok: d.status === 'ok', error: d.error }))
+    }).then(r => ({ model: m.id, ok: r.ok, status: r.status }))
+      .catch(err => ({ model: m.id, ok: false, error: err.message }))
   ));
   const ok = results.filter(r => r.ok).length;
   const fail = results.length - ok;
