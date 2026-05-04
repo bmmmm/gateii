@@ -17,7 +17,43 @@ function shortModel(m) {
   return m
     .replace(/-MLX-4bit$/, '')
     .replace(/-A3B-4bit$/, '-A3B')
-    .replace(/-a4b-it-4bit$/, '');
+    .replace(/-a4b-it-4bit$/, '')
+    .replace(/-it-4bit$/, '');     // gemma-4-e2b-it-4bit → gemma-4-e2b
+}
+
+async function unloadModel(modelId) {
+  if (!confirm(`Unload ${modelId}?\n\nNext request to it will trigger a cold reload (~30-60s for big models).`)) return;
+  try {
+    const r = await fetch('/internal/admin/models', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'unload', model: modelId }),
+    });
+    const data = await r.json().catch(() => ({}));
+    if (r.ok && data.status === 'ok') {
+      toast(`unloaded ${modelId}`);
+      pollAgents();   // refresh immediately
+    } else {
+      toast(data.error || `unload failed (HTTP ${r.status})`, true);
+    }
+  } catch (err) {
+    toast('unload error: ' + err.message, true);
+  }
+}
+
+async function loadModel(modelId) {
+  toast(`loading ${modelId}…`);
+  try {
+    const r = await fetch('/internal/admin/models', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'load', model: modelId }),
+    });
+    if (r.ok) { toast(`loaded ${modelId}`); pollAgents(); }
+    else { const d = await r.json().catch(() => ({})); toast(d.error || `load failed (HTTP ${r.status})`, true); }
+  } catch (err) {
+    toast('load error: ' + err.message, true);
+  }
 }
 
 function renderActive(active) {
@@ -114,6 +150,9 @@ function renderModels(omlx) {
     const badge = m.loaded
         ? '<span class="badge badge-loaded">loaded</span>'
         : '<span class="badge badge-idle">idle</span>';
+    const action = m.loaded
+        ? `<button class="btn btn-blue model-act" data-model="${esc(m.id)}" data-action="unload" style="font-size:10px;padding:2px 8px">unload</button>`
+        : `<button class="btn btn-blue model-act" data-model="${esc(m.id)}" data-action="load"   style="font-size:10px;padding:2px 8px">load</button>`;
     return `<div class="${cls}">
       <div class="id">${esc(m.id)} ${badge}</div>
       <div class="gb">${sizeGB} GB · ${esc(m.config_model_type || '?')} · ctx ${ctx}</div>
@@ -121,6 +160,7 @@ function renderModels(omlx) {
         <b>thinking</b><span>${thinking}</span>
         <b>last call</b><span>${lastAccess}</span>
       </div>
+      <div style="margin-top:8px;text-align:right">${action}</div>
     </div>`;
   }).join('')}</div>`;
 }
@@ -223,4 +263,17 @@ async function pollAgents() {
 function initAgents() {
   pollAgents();
   setInterval(pollAgents, POLL_MS);
+  // Delegated click handler — renderModels redraws every poll, so per-button
+  // listeners would be wiped. Listen on the parent once.
+  const area = $('models-area');
+  if (area) {
+    area.addEventListener('click', e => {
+      const btn = e.target.closest('button.model-act');
+      if (!btn) return;
+      const model = btn.dataset.model;
+      const action = btn.dataset.action;
+      if (action === 'unload') unloadModel(model);
+      else if (action === 'load') loadModel(model);
+    });
+  }
 }
