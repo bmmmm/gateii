@@ -38,6 +38,11 @@ services:
       - HEALTH_CHECK_CONNECT_MS=${HEALTH_CHECK_CONNECT_MS:-}
       - HEALTH_CHECK_SEND_MS=${HEALTH_CHECK_SEND_MS:-}
       - HEALTH_CHECK_READ_MS=${HEALTH_CHECK_READ_MS:-}
+      # Local omlx (passthrough provider). Only used by the Console "Agents" tab
+      # to query /v1/models/status; runtime requests forward whatever Bearer
+      # token the client sent.
+      - OMLX_URL=${OMLX_URL:-http://host.docker.internal:8000}
+      - OMLX_API_KEY=${OMLX_API_KEY:-}
     volumes:
       - ./config/openresty/nginx.conf:/usr/local/openresty/nginx/conf/nginx.conf:ro
       - ./config/openresty/lua:/etc/nginx/lua:ro

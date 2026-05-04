@@ -65,6 +65,57 @@
   .routing-row .pass { margin-left: auto; color: var(--c-green) }
   .routing-row .pass.partial { color: var(--c-yellow, #d4b56a) }
   .routing-row .pass.fail { color: var(--c-red) }
+
+  /* Models card grid */
+  .model-grid {
+    display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+    gap: 10px;
+  }
+  .model-card {
+    border: 1px solid var(--border);
+    border-radius: 6px; padding: 10px 12px;
+    background: var(--bg-elev, rgba(255,255,255,.02));
+  }
+  .model-card.loaded { border-color: var(--accent, #6aa8e8); }
+  .model-card .id {
+    font-weight: 600; font-family: ui-monospace, monospace; font-size: 12px;
+    word-break: break-all;
+  }
+  .model-card .gb { color: var(--dim); font-size: 11px }
+  .model-card .badge {
+    display: inline-block; padding: 1px 7px; border-radius: 8px;
+    font-size: 10px; font-weight: 600; margin-left: 6px;
+  }
+  .badge-loaded { background: var(--c-green, #6acb6a); color: #000 }
+  .badge-idle   { background: var(--border); color: var(--dim) }
+  .model-card .meta {
+    font-size: 11px; color: var(--dim); margin-top: 6px;
+    display: grid; grid-template-columns: max-content 1fr; gap: 1px 8px;
+  }
+
+  /* Bench matrix table */
+  .bench-matrix {
+    width: 100%; border-collapse: collapse; font-size: 11px;
+  }
+  .bench-matrix th, .bench-matrix td {
+    padding: 5px 8px; text-align: center;
+    border: 1px solid var(--border);
+  }
+  .bench-matrix th { font-weight: 500; color: var(--dim); text-transform: none; font-size: 10px }
+  .bench-matrix th.task-name, .bench-matrix td.task-name {
+    text-align: left; font-weight: 600; white-space: nowrap;
+  }
+  .bench-matrix .cell-pass-100 { background: rgba(106,203,106,.18) }
+  .bench-matrix .cell-pass-mid { background: rgba(212,181,106,.18) }
+  .bench-matrix .cell-pass-0   { background: rgba(232,120,120,.16); color: var(--dim) }
+  .bench-matrix .cell-empty    { color: var(--dim); font-style: italic }
+  .bench-matrix .pct { font-weight: 600 }
+  .bench-matrix .lat { font-size: 10px; color: var(--dim); display: block; margin-top: 2px }
+  .bench-matrix tr:hover td { background-color: rgba(80,160,255,.05) }
+  .bench-matrix .winner-mark {
+    display: inline-block; width: 6px; height: 6px; border-radius: 50%;
+    background: var(--accent); margin-right: 4px; vertical-align: middle;
+  }
 </style>
 </head>
 <body>
@@ -116,6 +167,30 @@
   <div class="panel">
     <div class="panel-body" id="history-area">
       <div class="empty">no history yet — run <code>scripts/agent run &lt;task&gt;</code></div>
+    </div>
+  </div>
+
+  <div class="sec-head">
+    <h2>Models</h2>
+    <div class="controls">
+      <span style="color:var(--dim);font-size:11px" id="models-meta">omlx unreachable</span>
+    </div>
+  </div>
+  <div class="panel">
+    <div class="panel-body" id="models-area">
+      <div class="empty">connecting to omlx…</div>
+    </div>
+  </div>
+
+  <div class="sec-head">
+    <h2>Bench matrix</h2>
+    <div class="controls">
+      <span style="color:var(--dim);font-size:11px" id="bench-meta">no bench yet</span>
+    </div>
+  </div>
+  <div class="panel">
+    <div class="panel-body" id="bench-area">
+      <div class="empty">no bench data — run <code>scripts/agent-bench</code></div>
     </div>
   </div>
 
