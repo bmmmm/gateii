@@ -43,6 +43,10 @@ services:
       # token the client sent.
       - OMLX_URL=${OMLX_URL:-http://host.docker.internal:8000}
       - OMLX_API_KEY=${OMLX_API_KEY:-}
+      # Shared secret openresty injects when forwarding to compose-ctl.
+      # Defense-in-depth: without this any sibling container on the gateii
+      # docker network could trigger /run-bench or /services/<x>/<action>.
+      - INTERNAL_TOKEN=${INTERNAL_TOKEN:-}
     volumes:
       - ./config/openresty/nginx.conf:/usr/local/openresty/nginx/conf/nginx.conf:ro
       - ./config/openresty/lua:/etc/nginx/lua:ro
@@ -173,6 +177,8 @@ services:
       # .internal to reach the omlx server on the Mac host.
       - OMLX_URL=${OMLX_URL:-http://host.docker.internal:8000}
       - OMLX_API_KEY=${OMLX_API_KEY:-}
+      # Same shared secret as openresty — checked on every non-/health request
+      - INTERNAL_TOKEN=${INTERNAL_TOKEN:-}
       - COMPOSE_FILE=/workspace/docker-compose.yml:/workspace/docker-compose.override.yml
       - PROXY_SERVICE_NAME=openresty
       - CTL_PORT=8090
