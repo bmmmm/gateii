@@ -203,10 +203,10 @@ mkdir-based (`data/agents/lock.d`), max 1 concurrent agent.
 ```bash
 scripts/agent-bench                   # default: full suite on Qwen3.5-9B
                                        # + small models, comparison-only on big
-                                       # + claude-haiku reference if ANTHROPIC_API_KEY set
+                                       # + claude-haiku reference if claude CLI on PATH
 scripts/agent-bench --quick           # 1 trial, default model only (no reference)
 scripts/agent-bench --task TASK       # single task, all models
-scripts/agent-bench --no-reference    # skip Haiku even if ANTHROPIC_API_KEY is set
+scripts/agent-bench --no-reference    # skip Haiku even if claude CLI available
 scripts/agent-bench --reference-model claude-haiku-4-5-20251001  # override reference
 ```
 
@@ -217,8 +217,9 @@ ignores marginal latency advantages so we don't burn 15-21 GB of RAM for
 an 80 ms saving.
 
 Reference model (Haiku) appears in the bench matrix for quality comparison
-but is never written into routing.json — it's excluded from local routing
-decisions. Smart-skip: re-runs reference only once per day (or with --force).
+but is never written into routing.json — excluded from local routing decisions.
+Uses `claude --print` with the existing Claude Code auth (no separate API key).
+Smart-skip: re-runs reference only once per day (or with --force).
 
 **Visualization:** Console tab at `http://localhost:8888/console/agents`
 shows live active agent, recent runs (full log.jsonl tail), per-model
