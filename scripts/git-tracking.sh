@@ -100,8 +100,16 @@ collect_from_config() {
                     continue
                 fi
                 [ -z "$alias" ]    && alias=$(basename "$path")
-                [ -z "$author" ]   && author="$default_author"
                 [ -z "$platform" ] && platform=$(detect_platform "$path")
+                # Author resolution (most specific → most general):
+                #   1. explicit per-repo author
+                #   2. platform_authors[platform]   (your username on that host)
+                #   3. default_author                (project-wide fallback)
+                #   4. ""                            (track all authors)
+                if [ -z "$author" ] && [ -n "$platform" ]; then
+                    author=$(jq -r --arg p "$platform" '.platform_authors[$p] // ""' "$config")
+                fi
+                [ -z "$author" ] && author="$default_author"
                 emit_repo "$path" "$alias" "$author" "$platform"
             done
     } > "$tmpfile"

@@ -119,10 +119,27 @@ fi
 
 if value_matches GIT_TRACKING_ENABLED '^1$'; then
     ok GIT_TRACKING_ENABLED "plugin enabled"
+    # If git-tracking.json exists with a default_author, the JSON wins —
+    # warn the user if the env value disagrees so they don't waste time
+    # wondering why their .env-set author isn't being used.
+    JSON_FILE="$PROJECT_DIR/data/git-tracking.json"
+    JSON_DEFAULT_AUTHOR=""
+    if [ -f "$JSON_FILE" ] && command -v jq >/dev/null 2>&1; then
+        JSON_DEFAULT_AUTHOR=$(jq -r '.default_author // ""' "$JSON_FILE" 2>/dev/null)
+    fi
     if is_set GIT_AUTHOR; then
-        ok GIT_AUTHOR "set (default-author for repos without git-tracking.json override)"
+        ENV_AUTHOR=$(grep -E '^[[:space:]]*GIT_AUTHOR=' "$ENV_FILE" | head -1 | sed -E 's/^[[:space:]]*GIT_AUTHOR=//' | tr -d '\r')
+        if [ -n "$JSON_DEFAULT_AUTHOR" ] && [ "$JSON_DEFAULT_AUTHOR" != "$ENV_AUTHOR" ]; then
+            warn GIT_AUTHOR "set in .env but git-tracking.json has a different default_author — JSON wins"
+        else
+            ok GIT_AUTHOR "set (fallback for repos without git-tracking.json override)"
+        fi
     else
-        warn GIT_AUTHOR "unset — counts ALL authors' commits"
+        if [ -n "$JSON_DEFAULT_AUTHOR" ]; then
+            ok GIT_AUTHOR "unset in .env (git-tracking.json provides default_author)"
+        else
+            warn GIT_AUTHOR "unset — counts ALL authors' commits"
+        fi
     fi
 else
     skip GIT_TRACKING_ENABLED "git-tracking plugin disabled"

@@ -40,14 +40,39 @@
     <div class="panel-body">
       <div class="form-row">
         <span class="form-label">Author</span>
-        <input class="input" id="default-author" type="text" placeholder="default git author (used when repo doesn't override)" style="width:340px" maxlength="128">
+        <input class="input" id="default-author" type="text" placeholder="default git author (project-wide fallback)" style="width:340px" maxlength="128">
       </div>
       <div class="form-row">
         <span class="form-label">Interval</span>
         <input class="input input-sm" id="interval" type="number" min="30" step="30" value="300" style="width:100px">
         <span style="color:var(--dim);font-size:11px">seconds between scans (≥30)</span>
       </div>
-      <div class="form-row">
+
+      <div style="margin-top:14px;padding-top:12px;border-top:1px solid var(--border)">
+        <div style="font-size:11px;color:var(--dim);text-transform:uppercase;letter-spacing:.06em;font-weight:500;margin-bottom:8px">
+          Platform identities <span style="text-transform:none;font-style:italic">— your username on each host (overrides default author for repos on that platform)</span>
+        </div>
+        <div class="form-row">
+          <span class="form-label">Forgejo</span>
+          <input class="input" id="pa-forgejo" type="text" placeholder="username on forgejo" style="width:200px" maxlength="64">
+          <span class="form-label" style="margin-left:14px">GitHub</span>
+          <input class="input" id="pa-github" type="text" placeholder="username on github" style="width:200px" maxlength="64">
+        </div>
+        <div class="form-row">
+          <span class="form-label">GitLab</span>
+          <input class="input" id="pa-gitlab" type="text" placeholder="username on gitlab" style="width:200px" maxlength="64">
+          <span class="form-label" style="margin-left:14px">Codeberg</span>
+          <input class="input" id="pa-codeberg" type="text" placeholder="username on codeberg" style="width:200px" maxlength="64">
+        </div>
+        <div class="form-row">
+          <span class="form-label">Gitea</span>
+          <input class="input" id="pa-gitea" type="text" placeholder="username on gitea" style="width:200px" maxlength="64">
+          <span class="form-label" style="margin-left:14px">Bitbucket</span>
+          <input class="input" id="pa-bitbucket" type="text" placeholder="username on bitbucket" style="width:200px" maxlength="64">
+        </div>
+      </div>
+
+      <div class="form-row" style="margin-top:14px">
         <button class="btn btn-primary" id="btn-save-settings">Save Settings</button>
       </div>
     </div>

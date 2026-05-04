@@ -146,6 +146,23 @@ function _M.validate_git_tracking(data)
     if data.interval ~= nil and (type(data.interval) ~= "number" or data.interval < 30) then
         return false, "git-tracking.json: interval must be a number ≥ 30 (seconds)"
     end
+    -- platform_authors: { "forgejo": "bma", "github": "bmmmm", … }
+    -- Maps platform tag → git-author string used as fallback when a repo
+    -- doesn't pin its own author. Platform keys must match PLATFORM_PATTERN.
+    if data.platform_authors ~= nil then
+        if type(data.platform_authors) ~= "table" then
+            return false, "git-tracking.json: platform_authors must be an object"
+        end
+        for plat, author in pairs(data.platform_authors) do
+            if type(plat) ~= "string" or not plat:match(PLATFORM_PATTERN) then
+                return false, "git-tracking.json: platform_authors key '" .. tostring(plat)
+                    .. "' must match [a-z0-9_-]+"
+            end
+            if not is_string(author) then
+                return false, "git-tracking.json: platform_authors[" .. plat .. "] must be a string"
+            end
+        end
+    end
     if data.repos == nil then return true, nil end
     if type(data.repos) ~= "table" then
         return false, "git-tracking.json: repos must be an array"
