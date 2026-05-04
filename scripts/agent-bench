@@ -222,12 +222,13 @@ def _clear_active() -> None:
     except FileNotFoundError: pass
 
 
-def call(model: str, task_name: str, trial: int, max_trials: int = 3) -> dict:
+def call(model: str, task_name: str, trial: int, max_trials: int = 3,
+         override_max_tokens: int | None = None) -> dict:
     t = TASKS[task_name]
     _write_active(task_name, model, trial, max_trials)
     body = {
         "model": model,
-        "max_tokens": t["max_tokens"],
+        "max_tokens": override_max_tokens if override_max_tokens is not None else t["max_tokens"],
         "temperature": 0.2,
         "chat_template_kwargs": {"enable_thinking": False},
         "system": t["system"],
@@ -334,13 +335,16 @@ def call_via_claude_code(model: str, task_name: str, trial: int,
 
 
 def bench_model(model: str, tasks: list[str], trials: int,
-                reference: bool = False) -> list[dict]:
+                reference: bool = False,
+                override_max_tokens: int | None = None) -> list[dict]:
     results = []
     _call = call_via_claude_code if reference else call
     for task in tasks:
         runs = []
         for i in range(trials):
-            r = _call(model, task, i + 1, trials)
+            r = _call(model, task, i + 1, trials,
+                      **({"override_max_tokens": override_max_tokens}
+                         if override_max_tokens and not reference else {}))
             runs.append(r)
             if r.get("stop") == "skipped":
                 print(f"    S {task:22s} trial {i+1}/{trials}  (skipped)", flush=True)
@@ -529,6 +533,70 @@ def render_report(agg: dict, routing: dict, started_at: str) -> str:
     return "\n".join(out) + "\n"
 
 
+def render_calibration_report(results: list[dict], started_at: str) -> str:
+    """Analyse --calibrate run results and emit max_tokens recommendations."""
+    import math
+    CALIBRATE_MAX = 1024
+    by: dict[str, dict[str, list]] = {}
+    for r in results:
+        by.setdefault(r["task"], {}).setdefault(r["model"], []).append(r)
+
+    # Read context window limits from bench-results.json metadata if available
+    ctx_windows: dict[str, int] = {}  # model → max_context_window (populated from oMLX status later)
+
+    out = [f"# Calibration Report — {started_at}", "",
+           "> Run with max_tokens=1024 to measure actual output length per task.",
+           "> Recommendations help tune tasks.json max_tokens caps.", ""]
+    out.append("| Task | Configured | Model | p50_in | p50_out | max_out | stop=length | ctx% | Advice |")
+    out.append("|---|---:|---|---:|---:|---:|---:|---:|---|")
+
+    recommendations: dict[str, int] = {}  # task → recommended max_tokens
+    for task in sorted(by):
+        configured = TASKS[task]["max_tokens"]
+        for model, runs in sorted(by[task].items()):
+            real = [r for r in runs if r.get("stop") != "skipped"]
+            if not real:
+                continue
+            outs   = sorted(r["tokens_out"] for r in real)
+            ins    = sorted(r.get("tokens_in", 0) for r in real)
+            p50    = outs[len(outs) // 2]
+            p50_in = ins[len(ins) // 2]
+            maxo   = outs[-1]
+            trunc  = sum(1 for r in real if r.get("stop") == "length")
+            ratio  = p50 / configured if configured > 0 else 0
+            ctx_w  = ctx_windows.get(model, 32768)
+            ctx_pct = round((p50_in + p50) / ctx_w * 100, 1) if ctx_w else 0
+
+            if trunc > 0:
+                rec = math.ceil(maxo * 1.5 / 10) * 10
+                advice = f"⚠ TRUNC {trunc}/{len(real)} — bump to ≥{rec}"
+            elif ratio > 0.8:
+                rec = math.ceil(p50 * 1.5 / 10) * 10
+                advice = f"⚠ tight ({int(ratio*100)}% util) — consider {rec}"
+            elif ratio < 0.2:
+                rec = max(30, math.ceil(p50 * 2.0 / 10) * 10)
+                advice = f"✓ generous ({int(ratio*100)}% util) — could reduce to {rec}"
+            else:
+                rec = configured
+                advice = f"✓ OK ({int(ratio*100)}% util)"
+
+            out.append(f"| {task} | {configured} | {model} | {p50_in} | {p50} | {maxo} | {trunc}/{len(real)} | {ctx_pct}% | {advice} |")
+            # Track the highest recommendation across models for this task
+            recommendations[task] = max(recommendations.get(task, configured), rec)
+
+    out.append("")
+    changed = {t: r for t, r in recommendations.items() if r != TASKS[t]["max_tokens"]}
+    if changed:
+        out.append("## Suggested tasks.json changes")
+        out.append("")
+        for task in sorted(changed):
+            out.append(f"- **{task}**: {TASKS[task]['max_tokens']} → **{changed[task]}**")
+    else:
+        out.append("_All tasks within acceptable range — no changes needed._")
+
+    return "\n".join(out) + "\n"
+
+
 # ─── main ───────────────────────────────────────────────────────────────────
 def _load_existing_results():
     """Return previous bench-results.json (or {}) so --smart can skip cells."""
@@ -566,6 +634,9 @@ def main():
                     help="skip all oMLX models; bench only the reference model (no oMLX needed)")
     ap.add_argument("--model", dest="model_filter",
                     help="bench only models whose ID contains this substring (e.g. gemma-4-e2b)")
+    ap.add_argument("--calibrate", action="store_true",
+                    help="run each task with max_tokens=1024 to measure real output length; "
+                         "writes bench-calibration.json + prints recommendations, skips routing update")
     args = ap.parse_args()
 
     if args.reference_only and args.no_reference:
@@ -627,7 +698,7 @@ def main():
                 if not tasks:
                     continue
 
-            if _models_already_benched(prev, model, model_created.get(model)):
+            if not args.calibrate and _models_already_benched(prev, model, model_created.get(model)):
                 skipped.append(model)
                 print(f"\n=== {model} ({size_gb:.1f} GB) — SKIP (cached, model unchanged; --force to override) ===", flush=True)
                 continue
@@ -636,7 +707,10 @@ def main():
             print(f"\n=== {model} ({size_label}) — {len(tasks)} task(s) × {1 if args.quick else args.trials} trial(s) ===", flush=True)
             status = ensure_model(model, status)
             trials = 1 if args.quick else args.trials
-            all_results.extend(bench_model(model, tasks, trials))
+            all_results.extend(bench_model(
+                model, tasks, trials,
+                override_max_tokens=1024 if args.calibrate else None,
+            ))
             unload_after_bench(model)
             status = models_status()
 
@@ -658,6 +732,19 @@ def main():
         model_created[ref_model] = 0  # no omlx timestamp for Claude models
     elif not CLAUDE_CLI and not args.no_reference and not args.quick and not args.model_filter:
         print("\n  (reference model skipped — claude CLI not found on PATH)", flush=True)
+
+    # Calibration path: emit recommendations, skip routing + bench-results update
+    if args.calibrate:
+        cal_report = render_calibration_report(all_results, started)
+        (DATA_DIR / "bench-calibration.json").write_text(json.dumps({
+            "started_at": started, "calibrate_max_tokens": 1024,
+            "results": all_results,
+        }, indent=2) + "\n")
+        (DATA_DIR / "bench-calibration.md").write_text(cal_report)
+        print("\n" + cal_report, flush=True)
+        print(f"\nWrote: data/agents/bench-calibration.json, bench-calibration.md", flush=True)
+        print("EXIT: 0", flush=True)
+        return
 
     # Aggregate + decide
     agg = aggregate(all_results)
