@@ -40,6 +40,7 @@ ${BOLD}Stack${NC}
   ${CYN}reload${NC}                  Reload nginx config without container restart
   ${CYN}logs${NC} [service]          Tail logs (default: gateii-proxy)
   ${CYN}smoke${NC}                   Run the smoke test
+  ${CYN}env-check${NC}               Audit .env for required + recommended vars (no secret values printed)
 
 ${BOLD}Claude Code routing${NC}
   ${CYN}switch${NC} <target>         local-proxy | remote-proxy | direct | status
@@ -106,6 +107,9 @@ case "$cmd" in
         ;;
     smoke)
         exec bash "$SCRIPT_DIR/smoke-test.sh" "$@"
+        ;;
+    env-check|envcheck)
+        exec bash "$SCRIPT_DIR/env-check.sh" "$@"
         ;;
     switch)
         exec "$SCRIPT_DIR/admin.sh" switch "$@"
