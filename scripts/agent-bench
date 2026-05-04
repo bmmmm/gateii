@@ -298,28 +298,56 @@ def bench_model(model: str, tasks: list[str], trials: int,
         for i in range(trials):
             r = _call(model, task, i + 1, trials)
             runs.append(r)
-            mark = "✓" if r["compliant"] else "✗"
-            print(f"    {mark} {task:22s} trial {i+1}/{trials}  {r['latency_s']:>5.2f}s  out={r['tokens_out']}", flush=True)
+            mark  = "✓" if r["compliant"] else "✗"
+            flags = ""
+            if r.get("stop") == "length":
+                flags += " TRUNC"
+            if r.get("http", 200) != 200:
+                flags += f" ERR={r['http']}"
+            print(f"    {mark} {task:22s} trial {i+1}/{trials}  {r['latency_s']:>5.2f}s  out={r['tokens_out']}{flags}",
+                  flush=True)
+        # Per-task summary after all trials — shows fail preview for quick diagnosis
+        pass_count  = sum(1 for r in runs if r["compliant"])
+        trunc_count = sum(1 for r in runs if r.get("stop") == "length")
+        if pass_count < trials:
+            trunc_note   = f"  TRUNC={trunc_count}/{trials}" if trunc_count else ""
+            fail_preview = next((r["output"][:100] for r in runs if not r["compliant"]), "")
+            print(f"      → {pass_count}/{trials} passed{trunc_note}  first-fail: {fail_preview!r}",
+                  flush=True)
         results.extend(runs)
     return results
 
 
 def aggregate(results: list[dict]) -> dict:
-    """Group by (task, model), compute pass-rate + latency stats."""
+    """Group by (task, model), compute pass-rate + latency + failure diagnostics."""
     by = {}
     for r in results:
         by.setdefault((r["task"], r["model"]), []).append(r)
 
     agg = {}
     for (task, model), runs in by.items():
-        lats = [r["latency_s"] for r in runs]
-        passes = sum(1 for r in runs if r["compliant"])
+        lats      = [r["latency_s"] for r in runs]
+        out_toks  = [r["tokens_out"] for r in runs]
+        passes    = sum(1 for r in runs if r["compliant"])
+        truncs    = sum(1 for r in runs if r.get("stop") == "length")
+        errors    = sum(1 for r in runs if r.get("http", 200) != 200)
+        max_tok   = TASKS[task]["max_tokens"]
+        # Capture up to 2 failing outputs for the report's failure-samples section
+        fail_outputs = [
+            {"output": r["output"], "stop": r.get("stop", "?")}
+            for r in runs if not r["compliant"]
+        ][:2]
         agg.setdefault(task, {})[model] = dict(
             trials=len(runs),
             pass_rate=round(passes / len(runs), 2),
             latency_p50=round(statistics.median(lats), 2),
             latency_max=round(max(lats), 2),
-            tokens_out_avg=round(statistics.mean(r["tokens_out"] for r in runs), 1),
+            tokens_out_avg=round(statistics.mean(out_toks), 1),
+            trunc_rate=round(truncs / len(runs), 2),
+            error_rate=round(errors / len(runs), 2),
+            # util%: how close avg output is to the max_tokens cap
+            util_pct=round(statistics.mean(out_toks) / max_tok * 100, 0) if max_tok > 0 else 0,
+            fail_outputs=fail_outputs,
         )
     return agg
 
@@ -334,12 +362,17 @@ def _reference_already_benched(prev: dict, model: str) -> bool:
 
 
 def pick_routing(agg: dict) -> dict:
-    """For each task pick the best local model.
-    Reference-only models (claude-*) are excluded — they're comparison-only,
-    not candidates for the wrapper's routing table."""
+    """For each task pick the best model.
+
+    Local models (non claude-*) are preferred. If the best local consistently
+    fails (pass_rate < 0.5) AND a reference model (claude-*) passes ≥ 99%,
+    the reference model is written as the routing choice so the wrapper uses it.
+    picked_from always lists only the local candidates that were tried.
+    """
     routing = {}
     for task, models in agg.items():
-        local = {m: s for m, s in models.items() if not m.startswith("claude-")}
+        local  = {m: s for m, s in models.items() if not m.startswith("claude-")}
+        claude = {m: s for m, s in models.items() if     m.startswith("claude-")}
         if not local:
             continue
         ranked = sorted(
@@ -347,33 +380,92 @@ def pick_routing(agg: dict) -> dict:
             key=lambda kv: (-kv[1]["pass_rate"], kv[1]["latency_p50"]),
         )
         best_model, best_stats = ranked[0]
+        local_candidates = [m for m, _ in ranked]
+
+        # Claude fallback: route to reference model only when locals consistently
+        # fail. Threshold < 0.5 avoids triggering on marginal underperformance.
+        if best_stats["pass_rate"] < 0.5 and claude:
+            claude_ranked = sorted(
+                claude.items(),
+                key=lambda kv: (-kv[1]["pass_rate"], kv[1]["latency_p50"]),
+            )
+            best_claude, best_claude_stats = claude_ranked[0]
+            if best_claude_stats["pass_rate"] >= 0.99:
+                routing[task] = dict(
+                    model=best_claude,
+                    max_tokens=TASKS[task]["max_tokens"],
+                    pass_rate=best_claude_stats["pass_rate"],
+                    latency_p50=best_claude_stats["latency_p50"],
+                    picked_from=local_candidates,
+                )
+                continue
+
         routing[task] = dict(
             model=best_model,
             max_tokens=TASKS[task]["max_tokens"],
             pass_rate=best_stats["pass_rate"],
             latency_p50=best_stats["latency_p50"],
-            picked_from=[m for m, _ in ranked],
+            picked_from=local_candidates,
         )
     return routing
 
 
 def render_report(agg: dict, routing: dict, started_at: str) -> str:
     out = [f"# Agent Bench Report — {started_at}", ""]
+
     out.append("## Per-task pass-rate × model")
     out.append("")
-    out.append("| Task | Model | Pass | p50 | max | out-tokens |")
-    out.append("|---|---|---:|---:|---:|---:|")
+    out.append("| Task | Model | Pass | p50 | max | out-avg/cap | util% | trunc% |")
+    out.append("|---|---|---:|---:|---:|---:|---:|---:|")
     for task in sorted(agg):
+        max_tok = TASKS[task]["max_tokens"]
         for model, s in sorted(agg[task].items()):
-            out.append(f"| {task} | {model} | {int(s['pass_rate']*100)}% | {s['latency_p50']}s | {s['latency_max']}s | {s['tokens_out_avg']} |")
+            trunc_flag = " ⚠" if s["trunc_rate"] > 0 else ""
+            out.append(
+                f"| {task} | {model} | {int(s['pass_rate']*100)}% "
+                f"| {s['latency_p50']}s | {s['latency_max']}s "
+                f"| {s['tokens_out_avg']}/{max_tok} "
+                f"| {int(s['util_pct'])}% "
+                f"| {int(s['trunc_rate']*100)}%{trunc_flag} |"
+            )
     out.append("")
+
+    # Failures section — shows compliant pattern + first failing output side-by-side
+    failures = [
+        (task, model, s)
+        for task in sorted(agg)
+        for model, s in sorted(agg[task].items())
+        if s["pass_rate"] < 1.0 and s["fail_outputs"]
+    ]
+    if failures:
+        out.append("## Failure samples")
+        out.append("")
+        out.append("> `⚠ TRUNC` = hit max_tokens cap → increase max_tokens in tasks.json")
+        out.append("> `stop=?` / `http!=200` = infrastructure error")
+        out.append("")
+        for task, model, s in failures:
+            pattern = TASKS[task]["compliant"].pattern
+            out.append(
+                f"### {task} / {model}"
+                f"  (pass={int(s['pass_rate']*100)}%  trunc={int(s['trunc_rate']*100)}%)"
+            )
+            out.append("```")
+            out.append(f"pattern : {pattern}")
+            for i, f in enumerate(s["fail_outputs"], 1):
+                flag = " ⚠ TRUNC" if f["stop"] == "length" else f"  stop={f['stop']}"
+                out.append(f"fail {i}{flag}: {f['output'][:200]!r}")
+            out.append("```")
+            out.append("")
+
     out.append("## Picked routing (data/agents/routing.json)")
     out.append("")
     out.append("| Task | Model | Pass | p50 |")
     out.append("|---|---|---:|---:|")
     for task in sorted(routing):
         r = routing[task]
-        out.append(f"| {task} | {r['model']} | {int(r['pass_rate']*100)}% | {r['latency_p50']}s |")
+        flag = " ★" if r["model"].startswith("claude-") else ""
+        out.append(f"| {task} | {r['model']}{flag} | {int(r['pass_rate']*100)}% | {r['latency_p50']}s |")
+
     return "\n".join(out) + "\n"
 
 
@@ -410,83 +502,77 @@ def main():
                     help="skip reference model (claude-haiku) even if claude CLI is available")
     ap.add_argument("--reference-model", default=DEFAULT_REFERENCE_MODEL,
                     help=f"reference model to bench (default: {DEFAULT_REFERENCE_MODEL})")
+    ap.add_argument("--reference-only", action="store_true",
+                    help="skip all oMLX models; bench only the reference model (no oMLX needed)")
     args = ap.parse_args()
 
-    if not KEY:
+    if args.reference_only and args.no_reference:
+        sys.exit("--reference-only and --no-reference are mutually exclusive")
+
+    if not args.reference_only and not KEY:
         sys.exit("OMLX_API_KEY not in env or .env")
 
     DATA_DIR.mkdir(parents=True, exist_ok=True)
     started = time.strftime("%Y-%m-%dT%H:%M:%S")
-    print(f"agent-bench • {started} • host={OMLX_URL}", flush=True)
-
-    status = models_status()
-    print(f"  RAM: {gb(status['current_model_memory']):.1f}/{gb(status['max_model_memory']):.1f} GB used, "
-          f"{status['loaded_count']}/{status['model_count']} models loaded", flush=True)
-
-    # Determine which models to bench
-    available = [m["id"] for m in status["models"]]
-    if args.quick:
-        models_to_bench = [DEFAULT_MODEL]
-    else:
-        # Default model first, then every other registered model. Per-model
-        # task scope is decided below by the SMALL_MODEL_GB rule (full suite
-        # for ≤10 GB models, reasoning + classify-yesno for big ones).
-        models_to_bench = [DEFAULT_MODEL]
-        for m in available:
-            if m != DEFAULT_MODEL:
-                models_to_bench.append(m)
-
-    # Determine task subset per model
     tasks_full = [args.task] if args.task else list(TASKS.keys())
     if args.task and args.task not in TASKS:
         sys.exit(f"unknown task: {args.task}")
 
-    # Small models (≤ SMALL_MODEL_GB) are fast enough to bench on the full task
-    # suite; big models get only reasoning + classify (where they might shine
-    # despite the latency cost). The default model is always full-bench.
-    SMALL_MODEL_GB = 10
-    sizes = {m["id"]: m["estimated_size"] for m in status["models"]}
-    # Per-model omlx-registration timestamp — used by --smart and exported to
-    # Prometheus via metrics.lua. Lets dashboards distinguish "model unchanged"
-    # from "model updated and freshly benched".
-    model_created = {m["id"]: m.get("created") or 0 for m in status["models"]}
-
-    # --smart (default unless --force/--quick/--task): skip models whose results
-    # already exist AND whose `created` timestamp matches.
-    prev = {} if (args.force or args.quick or args.task) else _load_existing_results()
-    skipped = []
-
     all_results = []
-    # Carry forward existing per-model results that we're choosing to skip
-    if prev and prev.get("results"):
-        for r in prev["results"]:
-            if _models_already_benched(prev, r["model"], model_created.get(r["model"])):
-                all_results.append(r)
+    skipped: list[str] = []
+    model_created: dict = {}
+    prev = {} if (args.force or args.quick or args.task) else _load_existing_results()
 
-    for model in models_to_bench:
-        size_gb = gb(sizes.get(model, 0))
-        is_small = size_gb <= SMALL_MODEL_GB
-        if model == DEFAULT_MODEL or args.task or args.quick or is_small:
-            tasks = tasks_full
+    if args.reference_only:
+        print(f"agent-bench • {started} • --reference-only (no oMLX needed)", flush=True)
+    else:
+        print(f"agent-bench • {started} • host={OMLX_URL}", flush=True)
+        status = models_status()
+        print(f"  RAM: {gb(status['current_model_memory']):.1f}/{gb(status['max_model_memory']):.1f} GB used, "
+              f"{status['loaded_count']}/{status['model_count']} models loaded", flush=True)
+
+        # Determine which models to bench
+        available = [m["id"] for m in status["models"]]
+        if args.quick:
+            models_to_bench = [DEFAULT_MODEL]
         else:
-            tasks = [t for t in ["reasoning", "classify-yesno"] if t in tasks_full]
-            if not tasks:
+            models_to_bench = [DEFAULT_MODEL]
+            for m in available:
+                if m != DEFAULT_MODEL:
+                    models_to_bench.append(m)
+
+        SMALL_MODEL_GB = 10
+        sizes = {m["id"]: m["estimated_size"] for m in status["models"]}
+        model_created = {m["id"]: m.get("created") or 0 for m in status["models"]}
+
+        # Carry forward existing per-model results that we're choosing to skip
+        if prev and prev.get("results"):
+            for r in prev["results"]:
+                if _models_already_benched(prev, r["model"], model_created.get(r["model"])):
+                    all_results.append(r)
+
+        for model in models_to_bench:
+            size_gb = gb(sizes.get(model, 0))
+            is_small = size_gb <= SMALL_MODEL_GB
+            if model == DEFAULT_MODEL or args.task or args.quick or is_small:
+                tasks = tasks_full
+            else:
+                tasks = [t for t in ["reasoning", "classify-yesno"] if t in tasks_full]
+                if not tasks:
+                    continue
+
+            if _models_already_benched(prev, model, model_created.get(model)):
+                skipped.append(model)
+                print(f"\n=== {model} ({size_gb:.1f} GB) — SKIP (cached, model unchanged; --force to override) ===", flush=True)
                 continue
 
-        if _models_already_benched(prev, model, model_created.get(model)):
-            skipped.append(model)
-            print(f"\n=== {model} ({size_gb:.1f} GB) — SKIP (cached, model unchanged; --force to override) ===", flush=True)
-            continue
-
-        size_label = f"{size_gb:.1f} GB" + (" — small, full bench" if (is_small and model != DEFAULT_MODEL) else "")
-        print(f"\n=== {model} ({size_label}) — {len(tasks)} task(s) × {1 if args.quick else args.trials} trial(s) ===", flush=True)
-        status = ensure_model(model, status)
-        trials = 1 if args.quick else args.trials
-        all_results.extend(bench_model(model, tasks, trials))
-        # Free RAM before moving to the next model — keeps memory pressure
-        # predictable and matches "bench sequentially, one model at a time".
-        unload_after_bench(model)
-        status = models_status()
+            size_label = f"{size_gb:.1f} GB" + (" — small, full bench" if (is_small and model != DEFAULT_MODEL) else "")
+            print(f"\n=== {model} ({size_label}) — {len(tasks)} task(s) × {1 if args.quick else args.trials} trial(s) ===", flush=True)
+            status = ensure_model(model, status)
+            trials = 1 if args.quick else args.trials
+            all_results.extend(bench_model(model, tasks, trials))
+            unload_after_bench(model)
+            status = models_status()
 
     # Reference model bench (Claude Haiku via `claude` CLI).
     # Uses existing Claude Code auth — no ANTHROPIC_API_KEY needed.
