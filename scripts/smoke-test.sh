@@ -174,6 +174,35 @@ fi
 
 echo ""
 
+# --- Diagnostics endpoint (when admin auth available) ---
+if [ -n "${ADMIN_TOKEN:-}" ] && [ "$SANDBOX_MODE" -eq 0 ]; then
+  echo -e "${BOLD}Diagnostics endpoint${NC}"
+  ADMIN_URL="${PROXY}/internal/admin"
+
+  DIAG=$(curl -sf --max-time 5 -H "X-Admin-Token: $ADMIN_TOKEN" \
+    "$ADMIN_URL/diagnostics" 2>/dev/null || echo "")
+  if [ -z "$DIAG" ]; then
+    fail "/diagnostics — empty response"
+  elif ! echo "$DIAG" | jq -e '.timestamp and .services and .rate_limits and .totals and .plugins' >/dev/null 2>&1; then
+    fail "/diagnostics — missing expected sections"
+    info "got: $(echo "$DIAG" | head -c 200)"
+  else
+    ok "/diagnostics — full snapshot returns expected sections"
+  fi
+
+  # Scope param — request only `plugins`, verify only that key + timestamp come back
+  SCOPED=$(curl -sf --max-time 5 -H "X-Admin-Token: $ADMIN_TOKEN" \
+    "$ADMIN_URL/diagnostics?include=plugins" 2>/dev/null || echo "")
+  if echo "$SCOPED" | jq -e '.plugins and (.services | not) and (.rate_limits | not)' >/dev/null 2>&1; then
+    ok "/diagnostics?include=plugins — scope filter excludes other sections"
+  else
+    fail "/diagnostics?include=plugins — scope filter not honored"
+    info "got: $(echo "$SCOPED" | head -c 200)"
+  fi
+
+  echo ""
+fi
+
 # --- Bootstrap roundtrip (only when ADMIN_TOKEN set and not in sandbox) ---
 if [ -n "${ADMIN_TOKEN:-}" ] && [ "$SANDBOX_MODE" -eq 0 ] && command -v openssl >/dev/null 2>&1; then
   echo -e "${BOLD}Bootstrap handshake${NC}"
