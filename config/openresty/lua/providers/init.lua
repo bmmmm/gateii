@@ -21,7 +21,7 @@ local function is_safe_upstream(url)
     if url:sub(1, 8) == "https://" then return true end
     if url:sub(1, 16) == "http://127.0.0.1"           then return true end
     if url:sub(1, 16) == "http://localhost"           then return true end
-    if url:sub(1, 25) == "http://host.docker.internal" then return true end
+    if url:sub(1, 27) == "http://host.docker.internal" then return true end
     return false
 end
 for name, p in pairs(registry) do

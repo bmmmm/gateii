@@ -66,6 +66,8 @@ local HEALTH_CHECK_READ_MS    = tonumber(os.getenv("HEALTH_CHECK_READ_MS"))    o
 if ADMIN_TOKEN == "" and PROXY_MODE == "apikey" then
     -- Fail-closed: apikey mode without token exposes keys.json/limits.json
     -- mutations to anyone on the admin network. Require a token.
+    -- Passthrough mode: no token intentionally allowed — read-only console
+    -- access on the Docker network is the intended zero-config single-user path.
     ngx.status = 503
     ngx.say('{"error":"Admin API disabled — set ADMIN_TOKEN in .env"}')
     return ngx.exit(503)
@@ -103,10 +105,6 @@ end
 local LIMITS_FILE = "/etc/nginx/data/limits.json"
 local MAX_ITER_KEYS = 5000
 
--- Sanitize user for key construction
-local function sanitize(s)
-    return (tostring(s or ""):gsub("[:|%s]", "_"):sub(1, 64))
-end
 
 -- Read keys.json, return table (may be empty)
 local function read_keys_file()
@@ -118,7 +116,7 @@ end
 
 -- Validate user param from request args; send 400 and return nil on missing
 local function require_user(args)
-    local u = sanitize(args.user or "")
+    local u = util.sanitize(args.user or "", "")
     if u == "" then
         ngx.status = 400
         ngx.say('{"error":"Missing user parameter"}')
@@ -427,7 +425,7 @@ end
 if uri == "/internal/admin/addkey" and method == "POST" then
     ngx.req.read_body()
     local args = ngx.req.get_uri_args()
-    local user = sanitize(args.user or "")
+    local user = util.sanitize(args.user or "", "")
     if user == "" then
         ngx.status = 400
         ngx.say('{"error":"Missing user parameter"}')

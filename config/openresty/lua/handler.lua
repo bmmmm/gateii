@@ -216,7 +216,7 @@ local upstream_headers = provider.build_headers(ngx.ctx.upstream_key, ngx.ctx.up
 for name, value in pairs(req_headers) do
     local lower = name:lower()
     -- string.sub prefix checks avoid the regex engine for the common case
-    if lower:sub(1, 10) == "anthropic-" or lower:sub(1, 12) == "x-stainless-" or lower == "user-agent" then
+    if (lower:sub(1, 10) == "anthropic-" and lower ~= "anthropic-version") or lower:sub(1, 12) == "x-stainless-" or lower == "user-agent" then
         -- Strip CRLF to prevent header injection into upstream request
         if type(value) == "string" then
             upstream_headers[lower] = value:gsub("[\r\n]", "")
@@ -290,11 +290,14 @@ if not is_streaming then
     ngx.print(response_body)
     ngx.flush(true)  -- send to client before tracking write
     circuit_breaker.record(provider_name, res.status, nil)
-    pcall(tracking.record, user, provider_name, model, input_tokens, output_tokens,
+    local _ok, _err = pcall(tracking.record, user, provider_name, model, input_tokens, output_tokens,
           { latency_ms = latency_ms, status = res.status, stop_reason = stop_reason,
             cache_creation = cache_creation, cache_read = cache_read })
-    pcall(tracking.record_effort,   user, provider_name, model, request_effort,     input_tokens, output_tokens)
-    pcall(tracking.record_modality, user, provider_name, model, request_has_vision, input_tokens, output_tokens)
+    if not _ok then ngx.log(ngx.WARN, "[rid=", rid, "] tracking.record failed: ", tostring(_err)) end
+    _ok, _err = pcall(tracking.record_effort,   user, provider_name, model, request_effort,     input_tokens, output_tokens)
+    if not _ok then ngx.log(ngx.WARN, "[rid=", rid, "] tracking.record_effort failed: ", tostring(_err)) end
+    _ok, _err = pcall(tracking.record_modality, user, provider_name, model, request_has_vision, input_tokens, output_tokens)
+    if not _ok then ngx.log(ngx.WARN, "[rid=", rid, "] tracking.record_modality failed: ", tostring(_err)) end
     return
 end
 
@@ -312,7 +315,7 @@ if not cb_ok then
 end
 
 local httpc = http.new()
-httpc:set_timeout(120000)
+httpc:set_timeouts(10000, 30000, 120000)  -- connect 10s, send 30s, read 120s per chunk
 local t0_stream = ngx.now()
 
 local parsed_uri, parse_err2 = httpc:parse_uri(upstream_url, false)
@@ -428,8 +431,11 @@ if res.status == 200 then track_rl_window(res) end
 if res.status == 429 then track_rl_429(res, user, model, provider_name) end
 
 circuit_breaker.record(provider_name, res.status, had_read_err and "read_error" or nil)
-pcall(tracking.record, user, provider_name, model, input_tokens, output_tokens,
+local _ok, _err = pcall(tracking.record, user, provider_name, model, input_tokens, output_tokens,
       { latency_ms = (ngx.now() - t0_stream) * 1000, status = res.status, stop_reason = stop_reason,
         cache_creation = cache_creation, cache_read = cache_read })
-pcall(tracking.record_effort,   user, provider_name, model, request_effort,     input_tokens, output_tokens)
-pcall(tracking.record_modality, user, provider_name, model, request_has_vision, input_tokens, output_tokens)
+if not _ok then ngx.log(ngx.WARN, "[rid=", rid, "] tracking.record failed: ", tostring(_err)) end
+_ok, _err = pcall(tracking.record_effort,   user, provider_name, model, request_effort,     input_tokens, output_tokens)
+if not _ok then ngx.log(ngx.WARN, "[rid=", rid, "] tracking.record_effort failed: ", tostring(_err)) end
+_ok, _err = pcall(tracking.record_modality, user, provider_name, model, request_has_vision, input_tokens, output_tokens)
+if not _ok then ngx.log(ngx.WARN, "[rid=", rid, "] tracking.record_modality failed: ", tostring(_err)) end
