@@ -163,6 +163,75 @@ async function promVector(expr) {
 
 function isPromAvailable() { return _promAvailable; }
 
+// Diagnostics modal — wired by initDiagnostics() (called from each page).
+// Fetches /internal/admin/diagnostics, shows pretty-printed JSON, offers
+// "Copy" so the operator can paste it into a chat / bug report without
+// clipboard juggling. Closes on Esc or backdrop click.
+async function showDiagnostics() {
+  const overlay = $('diag-overlay');
+  const body = $('diag-body');
+  if (!overlay || !body) return;
+  body.innerHTML = '<pre>fetching diagnostics…</pre>';
+  overlay.classList.add('show');
+  try {
+    const r = await fetch('/internal/admin/diagnostics');
+    const text = await r.text();
+    let pretty;
+    try { pretty = JSON.stringify(JSON.parse(text), null, 2); }
+    catch (_) { pretty = text; }
+    body.innerHTML = `<pre>${esc(pretty)}</pre>`;
+    body._raw = pretty;  // for copy
+  } catch (e) {
+    body.innerHTML = `<pre class="err">fetch failed: ${esc(e.message)}</pre>`;
+  }
+}
+
+function closeDiagnostics() {
+  $('diag-overlay')?.classList.remove('show');
+}
+
+async function copyDiagnostics() {
+  const text = $('diag-body')?._raw;
+  if (!text) return;
+  try {
+    await navigator.clipboard.writeText(text);
+    toast('Copied to clipboard');
+  } catch (e) {
+    toast('Copy failed — select the text manually', true);
+  }
+}
+
+function initDiagnostics() {
+  // Inject the modal markup once (every page includes console.js, so we
+  // guard against double-injection).
+  if ($('diag-overlay')) return;
+  const overlay = document.createElement('div');
+  overlay.id = 'diag-overlay';
+  overlay.className = 'diag-overlay';
+  overlay.innerHTML = `
+    <div class="diag-modal" onclick="event.stopPropagation()">
+      <div class="diag-head">
+        <h3>Diagnostics</h3>
+        <div class="diag-actions">
+          <button class="btn btn-blue" id="diag-copy">Copy</button>
+          <button class="btn btn-primary" id="diag-refresh">Refresh</button>
+          <button class="btn btn-danger" id="diag-close">Close</button>
+        </div>
+      </div>
+      <div class="diag-body" id="diag-body"><pre>—</pre></div>
+    </div>`;
+  overlay.addEventListener('click', closeDiagnostics);  // backdrop click
+  document.body.appendChild(overlay);
+  $('diag-copy').addEventListener('click', copyDiagnostics);
+  $('diag-refresh').addEventListener('click', showDiagnostics);
+  $('diag-close').addEventListener('click', closeDiagnostics);
+  document.addEventListener('keydown', e => {
+    if (e.key === 'Escape') closeDiagnostics();
+  });
+  // Wire the trigger button on the page (each page renders one with id="btn-diag")
+  $('btn-diag')?.addEventListener('click', showDiagnostics);
+}
+
 // Shared header refresh: online/offline pill + mode-display tag.
 // Used by every page's refresh() so the per-page logic only owns its own
 // section. Returns the parsed overview object (or null on failure) so the
