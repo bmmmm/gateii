@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Wrapper: resolves canonical setup-claude-identity.sh via OPS_DIR env or
-# `.ops-anchor` walk-up. Canonical script lives in ~/offline_coding/ops/scripts/.
+# `.ops-anchor` walk-up. Canonical script lives in ~/ops/scripts/.
 ops="${OPS_DIR:-}"
 if [[ -z "$ops" ]]; then
   d="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
