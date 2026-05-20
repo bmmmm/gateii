@@ -5,7 +5,7 @@ ops="${OPS_DIR:-}"
 if [[ -z "$ops" ]]; then
   d="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
   while [[ "$d" != "/" ]]; do
-    [[ -f "$d/.ops-anchor" ]] && { ops="$d"; break; }
+    [[ -f "$d/ops/.ops-anchor" ]] && { ops="$d/ops"; break; }
     d="$(dirname "$d")"
   done
 fi
