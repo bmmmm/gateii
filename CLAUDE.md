@@ -265,3 +265,36 @@ are kept as fallbacks for non-claudii setups.
 - Read or commit `.env` (contains API keys)
 - Change `ssl_verify` to true without adding CA certs to the image
 - Stop the proxy before running `admin.sh switch direct` (loses Claude Code connection)
+
+## oMLX Routing — Claude-Side Guide
+
+When to delegate to `scripts/agent` instead of handling myself:
+
+| Task | Trigger |
+|------|---------|
+| `commit-msg` | summarizing `git diff` for a commit message |
+| `summarize-file` | "what does this file do in one sentence?" (≤2k tokens input) |
+| `classify-yesno` | binary decision question with short justification |
+| `rename` | "better name for `<var>`?" |
+| `doc-comment` | one-line docstring for a small function |
+| `extract-json` | pulling structured fields from unstructured text |
+| `explain-line` | "what does this line do?" — single-line answer |
+| `refactor-suggestion` | one concrete refactor proposal for a snippet |
+| `ambiguity-check` | is a user request unambiguous enough? |
+| `unix-recipe` | "how do I solve X with shell commands?" — 3 suggestions |
+| `code-gen-short` | short function (~20 lines) from spec |
+
+**Do NOT delegate:** multi-step reasoning, math, architecture decisions, code > 250 tokens output, tasks needing tools (Read/Edit/Bash), format-critical output.
+
+**Fallback:** if `scripts/agent` exits non-zero or output is clearly bad (too long, wrong format, empty, `AMBIGUOUS:` prefix) — generate myself, silently.
+
+**Feedback** (run immediately after each call):
+```bash
+scripts/agent feedback <task> used              # output used as-is
+scripts/agent feedback <task> improved format   # minor formatting fix
+scripts/agent feedback <task> improved content  # minor content fix
+scripts/agent feedback <task> replaced format   # discarded: wrong format
+scripts/agent feedback <task> replaced content  # discarded: wrong content
+scripts/agent feedback <task> replaced capability # discarded: model can't do this
+scripts/agent feedback <task> replaced length   # discarded: too long/short
+```
