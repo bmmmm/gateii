@@ -8,14 +8,15 @@
 # Install in ~/.claude/settings.json:
 #   "statusLine": {
 #     "type": "command",
-#     "command": "/Users/bma/offline_coding/gateii/scripts/statusline-omlx.sh"
+#     "command": "~/offline_coding/gateii/scripts/statusline-omlx.sh"
 #   }
 #
 # Performance: file read only, no network. Sub-5ms typical.
 
 set -e
 
-ACTIVE="/Users/bma/offline_coding/gateii/data/agents/active.json"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+ACTIVE="$SCRIPT_DIR/../data/agents/active.json"
 [ -f "$ACTIVE" ] || exit 0
 
 JQ=/opt/homebrew/bin/jq

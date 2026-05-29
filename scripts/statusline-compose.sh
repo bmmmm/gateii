@@ -7,7 +7,7 @@
 # Install in ~/.claude/settings.json:
 #   "statusLine": {
 #     "type": "command",
-#     "command": "/Users/bma/offline_coding/gateii/scripts/statusline-compose.sh"
+#     "command": "~/offline_coding/gateii/scripts/statusline-compose.sh"
 #   }
 #
 # Override the inner command via env (in settings.json):
@@ -20,8 +20,10 @@
 
 set -e
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
 INNER_CMD="${STATUSLINE_INNER:-claudii-sessionline}"
-OMLX_HOOK="/Users/bma/offline_coding/gateii/scripts/statusline-omlx.sh"
+OMLX_HOOK="$SCRIPT_DIR/statusline-omlx.sh"
 
 # Capture the JSON Claude Code sends on stdin (model, cwd, etc.)
 INPUT=$(/bin/cat)
