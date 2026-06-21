@@ -28,7 +28,9 @@ function _M.extract_tokens(response_body)
     local obj = cjson.decode(response_body)
     if not obj or not obj.usage then return 0, 0, nil, 0, 0 end
     local stop = obj.choices and obj.choices[1] and obj.choices[1].finish_reason
-    return obj.usage.prompt_tokens or 0, obj.usage.completion_tokens or 0, stop, 0, 0
+    -- tonumber: coerce string token counts / drop cjson.null so tracking.record's
+    -- `> 0` comparison can't crash on a non-conformant upstream (vLLM/LM Studio/…).
+    return tonumber(obj.usage.prompt_tokens) or 0, tonumber(obj.usage.completion_tokens) or 0, stop, 0, 0
 end
 
 return _M

@@ -155,8 +155,17 @@ end
 
 local is_streaming = body_obj.stream == true
 local user = ngx.ctx.user
--- Trim model name (whitespace in model names would break counter keys)
-local model = (body_obj.model or "unknown"):match("^%s*(.-)%s*$")
+-- Trim model name (whitespace in model names would break counter keys).
+-- model is client-controlled JSON: guard the type before string methods —
+-- a truthy non-string (number/table/bool) would slip past `or "unknown"` and
+-- raise an uncaught error on :match (mirrors the type guards at output_config
+-- .effort below and free_fallback further down).
+local model = body_obj.model
+if type(model) == "string" then
+    model = model:match("^%s*(.-)%s*$")
+else
+    model = "unknown"
+end
 
 -- Opus 4.7 output_config.effort (low|medium|high|xhigh|max) — "none" if unset
 local request_effort = "none"

@@ -16,8 +16,10 @@ function _M.extract_tokens_streaming(body)
                 local obj = cjson.decode(line)
                 if obj then
                     if obj.usage then
-                        input_tokens  = obj.usage.prompt_tokens or input_tokens
-                        output_tokens = obj.usage.completion_tokens or output_tokens
+                        -- tonumber: coerce strings / drop cjson.null so a bad
+                        -- value can't reach tracking.record's `> 0` comparison.
+                        input_tokens  = tonumber(obj.usage.prompt_tokens) or input_tokens
+                        output_tokens = tonumber(obj.usage.completion_tokens) or output_tokens
                     end
                     -- choices can be cjson.null (not a table) on some upstreams;
                     -- type() check avoids indexing userdata.
