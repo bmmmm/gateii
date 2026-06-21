@@ -22,10 +22,10 @@ local sha256        = require "resty.sha256"
 local resty_random  = require "resty.random"
 local resty_string  = require "resty.string"
 local bit           = require "bit"
+local proxy_config  = require "proxy_config"
 
 local _M = {}
 
-local KEYS_FILE            = "/etc/nginx/data/keys.json"
 -- Bootstrap handshake tuning (override via env, see .env.example).
 local CONFIRM_TTL_DEFAULT  = tonumber(os.getenv("BOOTSTRAP_CONFIRM_TTL"))  or 300   -- 5min confirm window
 local PENDING_TTL_DEFAULT  = tonumber(os.getenv("BOOTSTRAP_PENDING_TTL"))  or 600   -- 10min bootstrap-code lifetime
@@ -121,36 +121,10 @@ local function set_json(dict, key, tbl, ttl)
     return dict:set(key, encoded, ttl or 0)
 end
 
-local function keys_read()
-    local f = io.open(KEYS_FILE, "r")
-    if not f then return {}, nil end
-    local raw = f:read("*a"); f:close()
-    local decoded, err = cjson.decode(raw)
-    if decoded == nil then
-        -- Corrupt JSON — abort rather than returning {} which would wipe all keys on next write
-        ngx.log(ngx.ERR, "bootstrap: keys_read parse error — ", tostring(err), " (file not modified)")
-        return nil, "parse_error"
-    end
-    return decoded, nil
-end
-
--- Atomic write via temp + rename — survives process crashes mid-write
-local function keys_write(keys)
-    local encoded = cjson.encode(keys)
-    if not encoded then return false, "encode_failed" end
-    local tmp = KEYS_FILE .. ".tmp"
-    local f = io.open(tmp, "w")
-    if not f then return false, "open_failed" end
-    local ok_w, err_w = f:write(encoded)
-    f:close()
-    if not ok_w then
-        os.remove(tmp)
-        return false, "write_failed: " .. tostring(err_w)
-    end
-    local ok, err = os.rename(tmp, KEYS_FILE)
-    if not ok then return false, err or "rename_failed" end
-    return true
-end
+-- keys.json reads/writes go through proxy_config.update_keys — a cross-worker
+-- locked read-modify-write plus a generation bump — so the mutators here
+-- (exchange, confirm-rollback, sweep) and admin_api's addkey can't race each
+-- other into a lost or resurrected key.
 
 local function json_resp(status, obj)
     ngx.status = status
@@ -310,20 +284,17 @@ function _M.handle_exchange()
     -- Atomic: issue key, persist keys.json, drop pending, open confirm session
     local api_key = "sk-proxy-" .. random_hex(16)   -- 32 hex chars
     local now     = ngx.time()
-    local keys, keys_err = keys_read()
-    if not keys then
-        return json_resp(500, { error = "keys store unavailable: " .. tostring(keys_err) })
-    end
-    keys[api_key] = {
-        user          = entry.user,
-        provider      = entry.provider,
-        upstream_key  = entry.upstream_key,
-        created_at    = os.date("!%Y-%m-%dT%H:%M:%SZ", now),
-        bootstrap_code = code,
-    }
-    local wok, werr = keys_write(keys)
+    local wok, werr = proxy_config.update_keys(function(keys)
+        keys[api_key] = {
+            user           = entry.user,
+            provider       = entry.provider,
+            upstream_key   = entry.upstream_key,
+            created_at     = os.date("!%Y-%m-%dT%H:%M:%SZ", now),
+            bootstrap_code = code,
+        }
+    end)
     if not wok then
-        ngx.log(ngx.ERR, "bootstrap.exchange: keys_write failed — ", werr)
+        ngx.log(ngx.ERR, "bootstrap.exchange: keys.json write failed — ", werr)
         return json_resp(500, { error = "failed to persist key" })
     end
 
@@ -340,7 +311,7 @@ function _M.handle_exchange()
     local sok, serr = set_json(sessions_dict(), confirm_token, session, CONFIRM_TTL_DEFAULT)
     if not sok then
         -- Rollback: drop the just-issued key
-        keys[api_key] = nil; keys_write(keys)
+        proxy_config.update_keys(function(keys) keys[api_key] = nil end)
         ngx.log(ngx.ERR, "bootstrap.exchange: sessions dict write failed — ", serr)
         return json_resp(500, { error = "failed to open confirm session" })
     end
@@ -392,12 +363,11 @@ function _M.handle_confirm()
         return json_resp(200, { status = "committed" })
     else
         -- Rollback: remove the issued key from keys.json + auth_cache
-        local keys = keys_read()
-        if keys then
+        local rok, rerr = proxy_config.update_keys(function(keys)
             keys[session.api_key] = nil
-            keys_write(keys)
-        else
-            ngx.log(ngx.ERR, "bootstrap: confirm rollback skipped — keys store unreadable")
+        end)
+        if not rok then
+            ngx.log(ngx.ERR, "bootstrap: confirm rollback failed — ", tostring(rerr))
         end
         if ngx.shared.auth_cache then ngx.shared.auth_cache:delete(session.api_key) end
         sessions_dict():delete(ct)
@@ -414,29 +384,48 @@ function _M.sweep()
     local sd = sessions_dict()
     if not sd then return 0 end
     local now = ngx.time()
-    local revoked = 0
+
+    -- Phase 1: collect expired sessions (no keys.json I/O in the loop).
+    -- Explicit expiry check — the shared_dict TTL usually removes entries first,
+    -- but check defensively in case a TTL lookup is racy.
+    local expired = {}
     for _, ct in ipairs(sd:get_keys(MAX_ITER_KEYS)) do
         local entry = get_json(sd, ct)
-        -- Explicit expiry check (shared_dict TTL usually removes first, but we check
-        -- defensively — an entry may linger if TTL lookup is racy).
         if entry and (entry.expires_at or 0) < now then
-            local keys = keys_read()
-            if not keys then
-                ngx.log(ngx.ERR, "bootstrap: sweep skipping revocation — keys store unreadable")
-            elseif keys[entry.api_key] then
-                keys[entry.api_key] = nil
-                keys_write(keys)
-                if ngx.shared.auth_cache then
-                    ngx.shared.auth_cache:delete(entry.api_key)
-                end
-                revoked = revoked + 1
-                ngx.log(ngx.NOTICE, "bootstrap.sweep: revoked un-confirmed key user=",
-                        entry.user, " provider=", entry.provider)
-            end
-            sd:delete(ct)
+            expired[#expired + 1] = { ct = ct, api_key = entry.api_key,
+                                      user = entry.user, provider = entry.provider }
         end
     end
-    return revoked
+    if #expired == 0 then return 0 end
+
+    -- Phase 2: one locked read-modify-write removes all expired keys at once
+    -- (was one full keys.json read+write cycle per expired entry).
+    local revoked = 0
+    local wok, werr = proxy_config.update_keys(function(keys)
+        for _, e in ipairs(expired) do
+            if e.api_key and keys[e.api_key] then
+                keys[e.api_key] = nil
+                revoked = revoked + 1
+            end
+        end
+        if revoked == 0 then return false end   -- nothing to write
+    end)
+    if not wok then
+        ngx.log(ngx.ERR, "bootstrap.sweep: revocation write failed — ", tostring(werr))
+    end
+
+    -- Phase 3: drop the expired sessions + their auth_cache entries (the session
+    -- is expired regardless of the keys.json write outcome).
+    for _, e in ipairs(expired) do
+        if e.api_key and ngx.shared.auth_cache then
+            ngx.shared.auth_cache:delete(e.api_key)
+        end
+        sd:delete(e.ct)
+    end
+    if wok and revoked > 0 then
+        ngx.log(ngx.NOTICE, "bootstrap.sweep: revoked ", revoked, " un-confirmed key(s)")
+    end
+    return wok and revoked or 0
 end
 
 local function sweep_timer_cb(premature)
