@@ -2,6 +2,7 @@
 local cjson = require "cjson.safe"
 local schema = require "schema"
 local util = require "util"
+local proxy_config = require "proxy_config"
 local blocking_dict = ngx.shared.blocking
 local counters = ngx.shared.counters
 local or_cache = ngx.shared.or_cache
@@ -470,23 +471,20 @@ if uri == "/internal/admin/addkey" and method == "POST" then
         ngx.status = 400; ngx.say('{"error":"provider must match ^[a-z][a-z0-9_]+$"}'); return
     end
 
-    local keys_data, kd_err = read_keys_file()
-    if not keys_data then
-        ngx.status = 500; ngx.say('{"error":"keys store unreadable: ' .. kd_err .. '"}'); return
-    end
-    keys_data[key] = {
-        user          = user,
-        provider      = provider,
-        upstream_key  = upstream_key,
-        created_at    = os.date("!%Y-%m-%dT%H:%M:%SZ"),
-    }
-    local encoded = cjson.encode(keys_data)
-    if not encoded then
-        ngx.status = 500; ngx.say('{"error":"Failed to encode keys"}'); return
-    end
-    local rok, rerr = util.atomic_write("/etc/nginx/data/keys.json", encoded)
-    if not rok then
-        ngx.log(ngx.ERR, "addkey: ", rerr)
+    -- Serialized read-modify-write across workers (one lock for every keys.json
+    -- mutator: addkey + bootstrap exchange/confirm/sweep) so concurrent writes
+    -- can't last-rename-wins-drop a key; bumps the generation so all workers
+    -- reload immediately.
+    local uok, uerr = proxy_config.update_keys(function(keys_data)
+        keys_data[key] = {
+            user          = user,
+            provider      = provider,
+            upstream_key  = upstream_key,
+            created_at    = os.date("!%Y-%m-%dT%H:%M:%SZ"),
+        }
+    end)
+    if not uok then
+        ngx.log(ngx.ERR, "addkey: ", uerr)
         ngx.status = 500; ngx.say('{"error":"Failed to persist keys.json — check server logs"}'); return
     end
     -- Clear any negative cache entry so the new key is usable immediately
