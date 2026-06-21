@@ -827,10 +827,16 @@ if uri == "/internal/admin/diagnostics" and method == "GET" then
     if want("plugins") then
         local gf = io.open("/etc/nginx/data/git-metrics.txt", "r")
         if gf then gf:close() end
+        -- GIT_TRACKING_ENABLED was never in the nginx env whitelist, so the old
+        -- os.getenv check was always nil → configured always false. Derive it from
+        -- artifacts instead: a git-tracking.json config OR produced metrics means
+        -- it's set up (matches how /overview reports git-tracking status).
+        local gtj = io.open("/etc/nginx/data/git-tracking.json", "r")
+        if gtj then gtj:close() end
         out.plugins = {
             console = { configured = os.getenv("CONSOLE_ENABLED") == "1" },
             git_tracking = {
-                configured = os.getenv("GIT_TRACKING_ENABLED") == "1",
+                configured = (gtj ~= nil) or (gf ~= nil),
                 metrics_file_present = gf ~= nil,
             },
         }

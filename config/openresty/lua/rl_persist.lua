@@ -73,7 +73,10 @@ function _M.start_persist_timer()
     -- see the same values; N writers would produce N-fold disk I/O for no gain.
     if ngx.worker.id() ~= 0 then return end
     local ok, err = ngx.timer.every(PERSIST_INTERVAL_SECONDS, function(premature)
-        if premature then return end
+        -- On a graceful exit the timer fires once with premature=true: flush the
+        -- current state instead of dropping up to PERSIST_INTERVAL_SECONDS of
+        -- gauge updates. save_state is idempotent and sync file I/O is allowed
+        -- in timers. (SIGKILL past Docker's grace period still loses the tail.)
         save_state()
     end)
     if not ok then

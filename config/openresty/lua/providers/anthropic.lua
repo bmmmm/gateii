@@ -80,14 +80,15 @@ function _M.extract_tokens_streaming(body)
             local obj = cjson.decode(ev.data)
             if obj and obj.message and obj.message.usage then
                 local u = obj.message.usage
-                input_tokens   = u.input_tokens or 0
-                cache_creation = u.cache_creation_input_tokens or 0
-                cache_read     = u.cache_read_input_tokens or 0
+                -- tonumber: see extract_tokens — guards tracking.record's `> 0`.
+                input_tokens   = tonumber(u.input_tokens) or 0
+                cache_creation = tonumber(u.cache_creation_input_tokens) or 0
+                cache_read     = tonumber(u.cache_read_input_tokens) or 0
             end
         elseif ev.event == "message_delta" then
             local obj = cjson.decode(ev.data)
             if obj then
-                if obj.usage then output_tokens = obj.usage.output_tokens or 0 end
+                if obj.usage then output_tokens = tonumber(obj.usage.output_tokens) or 0 end
                 if obj.delta and type(obj.delta.stop_reason) == "string" then
                     stop_reason = obj.delta.stop_reason
                 end
@@ -103,10 +104,13 @@ function _M.extract_tokens(response_body)
     local obj, err = cjson.decode(response_body)
     if not obj then return 0, 0, nil, 0, 0 end
     local u = obj.usage or {}
-    local input  = u.input_tokens or 0
-    local output = u.output_tokens or 0
-    local cache_create = u.cache_creation_input_tokens or 0
-    local cache_read   = u.cache_read_input_tokens or 0
+    -- tonumber coerces JSON strings / filters cjson.null (userdata) → 0, so a
+    -- non-conformant upstream can't feed a string into tracking.record's `> 0`
+    -- comparison (which would crash and drop ALL counters for the request).
+    local input  = tonumber(u.input_tokens) or 0
+    local output = tonumber(u.output_tokens) or 0
+    local cache_create = tonumber(u.cache_creation_input_tokens) or 0
+    local cache_read   = tonumber(u.cache_read_input_tokens) or 0
     -- cjson.null arrives as userdata, not a string — filter by type
     local stop   = obj.stop_reason
     if type(stop) ~= "string" then stop = nil end

@@ -26,7 +26,17 @@ function _M.load_keys()
     end
     local raw = f:read("*a")
     f:close()
-    _keys    = cjson.decode(raw) or {}
+    local parsed, derr = cjson.decode(raw)
+    if parsed == nil then
+        -- Corrupt JSON (e.g. operator hand-edit mid-flight): keep the previous
+        -- good cache and retry next cycle. Caching {} here would make auth.lua
+        -- negative-cache valid keys for AUTH_CACHE_NEG_TTL → 401 storm. Mirrors
+        -- bootstrap.lua keys_read(). The missing-file branch above keeps {}
+        -- because an absent keys.json legitimately means "no keys".
+        ngx.log(ngx.ERR, "proxy_config: keys.json decode failed, keeping previous cache: ", tostring(derr))
+        return _keys
+    end
+    _keys    = parsed
     _keys_ts = now
     return _keys
 end
