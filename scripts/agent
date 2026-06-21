@@ -112,11 +112,28 @@ clear_active() {
 append_log() {
     local payload="$1"
     /bin/mkdir -p "$STATE_DIR"
-    # Single-printf write to keep the log.jsonl invariant under SIGKILL:
-    # one JSON object + trailing newline must land in one syscall, not two.
-    # The previous "compact then echo \n" pattern left half-written records
-    # that the /internal/admin/agents handler couldn't decode.
-    printf '%s\n' "$(printf '%s' "$payload" | $JQ -c .)" >> "$LOG_FILE"
+    local line
+    line=$(printf '%s' "$payload" | $JQ -c .) || return 0
+    # Serialize appends across cmd_run + cmd_feedback + a second session via a
+    # short mkdir spinlock (portable — no flock on macOS). Without it, a record
+    # larger than the stdio buffer splits into multiple write() syscalls that
+    # interleave with a concurrent appender and corrupt a line.
+    local lock="$LOG_FILE.lock.d" i=0
+    while ! /bin/mkdir "$lock" 2>/dev/null; do
+        i=$((i + 1))
+        if [ "$i" -gt 50 ]; then /bin/rm -rf "$lock" 2>/dev/null; /bin/mkdir "$lock" 2>/dev/null; break; fi
+        sleep 0.01
+    done
+    printf '%s\n' "$line" >> "$LOG_FILE"
+    # Bound growth — keep the last 5000 records (trim with hysteresis so we
+    # rewrite only occasionally, not on every append).
+    local n
+    n=$(/usr/bin/wc -l < "$LOG_FILE" 2>/dev/null || echo 0)
+    if [ "$n" -gt 5500 ]; then
+        /usr/bin/tail -n 5000 "$LOG_FILE" > "$LOG_FILE.trim" 2>/dev/null \
+            && /bin/mv "$LOG_FILE.trim" "$LOG_FILE"
+    fi
+    /bin/rm -rf "$lock" 2>/dev/null
 }
 
 # Task definitions are read from config/agents/tasks.json — single source
@@ -172,25 +189,31 @@ cmd_run() {
     picked_model=$(resolve_model_for_task "$task")
 
     # Acquire lock — portable across Linux/macOS via atomic mkdir.
-    # Stale-lock guard requires THREE conditions (don't reclaim a live lock):
-    #   1. lock dir's mtime > 5 min ago
-    #   2. active.json has a parseable, non-zero pid
-    #   3. that pid is gone (kill -0 fails)
-    # The previous version reclaimed when active.json was missing or had no
-    # pid — but a fresh holder may have just mkdir'd before writing
-    # active.json, so we'd kill an in-flight sibling.
+    # The lock is held by a LIVE agent run only when ALL hold:
+    #   1. lock dir's mtime > 5 min ago (protects a fresh holder that mkdir'd
+    #      but hasn't written active.json yet — don't kill an in-flight sibling)
+    #   2. active.json identifies an agent-run (kind=="agent-run")
+    #   3. with a parseable, non-zero pid that is still alive (kill -0)
+    # The kind check matters: active.json is also written by agent-bench and
+    # compose-ctl. A live BENCH pid in active.json is not the agent-run lock
+    # holder — keying only on the pid wedged a genuinely-stale lock as "busy"
+    # for the bench's whole lifetime.
     /bin/mkdir -p "$STATE_DIR"
     if ! /bin/mkdir "$LOCK_FILE.d" 2>/dev/null; then
-        local lock_age stale_pid
+        local lock_age stale_pid stale_kind holder_alive=0
         # macOS stat -f, Linux stat -c — try both
         lock_age=$(( $(/bin/date +%s) - $( /usr/bin/stat -f %m "$LOCK_FILE.d" 2>/dev/null \
                                        || /usr/bin/stat -c %Y "$LOCK_FILE.d" 2>/dev/null \
                                        || echo 0) ))
+        stale_kind=$($JQ -r '.kind // empty' "$ACTIVE_FILE" 2>/dev/null || true)
         stale_pid=$($JQ -r '.pid // empty' "$ACTIVE_FILE" 2>/dev/null || true)
-        if [ "$lock_age" -gt 300 ] \
+        if [ "$stale_kind" = "agent-run" ] \
            && [ -n "$stale_pid" ] \
            && [ "$stale_pid" -gt 0 ] 2>/dev/null \
-           && ! /bin/kill -0 "$stale_pid" 2>/dev/null; then
+           && /bin/kill -0 "$stale_pid" 2>/dev/null; then
+            holder_alive=1
+        fi
+        if [ "$lock_age" -gt 300 ] && [ "$holder_alive" -eq 0 ]; then
             /bin/rm -rf "$LOCK_FILE.d" 2>/dev/null
             /bin/rm -f  "$ACTIVE_FILE" 2>/dev/null
             /bin/mkdir  "$LOCK_FILE.d" 2>/dev/null || { echo "[agent] couldn't reclaim stale lock" >&2; exit 7; }
@@ -213,6 +236,7 @@ cmd_run() {
     prompt_preview=$(printf '%s' "$input" | /usr/bin/head -c 80 | /usr/bin/tr '\n' ' ')
 
     write_active "$($JQ -n \
+        --arg kind "agent-run" \
         --arg task "$task" \
         --arg model "$picked_model" \
         --argjson mt "$MAX_TOKENS" \
@@ -221,7 +245,7 @@ cmd_run() {
         --arg pid "$$" \
         --arg preview "$prompt_preview" \
         --argjson ctx "$ctx" \
-        '{task:$task, model:$model, max_tokens:$mt, started_at:$started, started_epoch:$started_epoch, pid:$pid, prompt_preview:$preview, parent:$ctx}')"
+        '{kind:$kind, task:$task, model:$model, max_tokens:$mt, started_at:$started, started_epoch:$started_epoch, pid:$pid, prompt_preview:$preview, parent:$ctx}')"
 
     # active.json + lock cleanup is set in the lock-acquire trap above
 
@@ -272,12 +296,15 @@ cmd_run() {
 
         http_code=$(printf '%s' "$resp" | /usr/bin/grep -oE '__HTTP__[0-9]+$' | /usr/bin/grep -oE '[0-9]+$' || echo "?")
         body_only=$(printf '%s' "$resp" | /usr/bin/sed 's/__HTTP__[0-9]*$//')
+        # Numeric form for --argjson (jq rejects "?"/"" → would abort under set -e
+        # before the intended exit 5). Keep $http_code for the human message.
+        local http_num=${http_code//[!0-9]/}; http_num=${http_num:-0}
 
         if [ "$http_code" != "200" ]; then
             echo "[agent] upstream returned HTTP $http_code:" >&2
             echo "$body_only" >&2
             append_log "$($JQ -n --arg t "$task" --arg m "$picked_model" --arg s "$started_at" \
-                --argjson dt "0" --argjson http "${http_code:-0}" \
+                --argjson dt "0" --argjson http "$http_num" \
                 '{started_at:$s, task:$t, model:$m, latency_s:$dt, http:$http, exit:5}')"
             exit 5
         fi
