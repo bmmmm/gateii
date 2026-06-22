@@ -37,15 +37,31 @@ if [ ! -f "$ENV_FILE" ]; then
 fi
 
 # Internal helpers — all read .env via grep without exposing values.
+# `normalize_value` mirrors how the real consumers (`set -a; source .env`,
+# `docker --env-file`) interpret a value: strip \r, a trailing " # comment",
+# trailing whitespace, then one layer of surrounding matching quotes. Without
+# this, e.g. CONSOLE_ENABLED="1" or =1 # on would be reported as broken config.
+normalize_value() {
+    printf '%s' "$1" \
+        | tr -d '\r' \
+        | sed -E "s/[[:space:]]+#.*$//" \
+        | sed -E "s/[[:space:]]+$//" \
+        | sed -E "s/^\"(.*)\"$/\1/" \
+        | sed -E "s/^'(.*)'$/\1/"
+}
 # `is_set` = uncommented line `VAR=…` exists and value is non-empty.
 is_set() {
     grep -E "^[[:space:]]*$1=" "$ENV_FILE" 2>/dev/null \
         | grep -qE "^[[:space:]]*$1=.+$"
 }
-# `value_length` for format checks (length only, never the value itself)
+# `value_length` for format checks (length only, never the value itself).
+# `echo` re-adds the trailing newline `wc -c` counts, so the returned length
+# stays inflated-by-one (true_chars + 1) — callers use $((len-1)) to recover
+# the real count for both the threshold check and the display.
 value_length() {
-    grep -E "^[[:space:]]*$1=" "$ENV_FILE" 2>/dev/null \
-        | head -1 | sed -E "s/^[[:space:]]*$1=//" | tr -d '\r' | wc -c | tr -d ' '
+    raw=$(grep -E "^[[:space:]]*$1=" "$ENV_FILE" 2>/dev/null \
+        | head -1 | sed -E "s/^[[:space:]]*$1=//")
+    echo "$(normalize_value "$raw")" | wc -c | tr -d ' '
 }
 # `value_matches` checks regex against value WITHOUT printing the value.
 # Returns 0 if match, 1 if no match, 2 if not set.
@@ -53,7 +69,7 @@ value_matches() {
     var="$1"; pattern="$2"
     line=$(grep -E "^[[:space:]]*$var=" "$ENV_FILE" 2>/dev/null | head -1) || return 2
     [ -n "$line" ] || return 2
-    val=$(echo "$line" | sed -E "s/^[[:space:]]*$var=//" | tr -d '\r')
+    val=$(normalize_value "$(echo "$line" | sed -E "s/^[[:space:]]*$var=//")")
     [ -n "$val" ] || return 2
     echo "$val" | grep -qE "$pattern"
 }
@@ -66,7 +82,7 @@ skip()  { printf "  %b⊘%b %-28s %b%s%b\n" "$D" "$N" "$1" "$D" "${2:-not needed
 PROXY_MODE_ACTUAL=""
 if is_set PROXY_MODE; then
     line=$(grep -E "^[[:space:]]*PROXY_MODE=" "$ENV_FILE" | head -1)
-    PROXY_MODE_ACTUAL=$(echo "$line" | sed -E "s/^[[:space:]]*PROXY_MODE=//" | tr -d '\r')
+    PROXY_MODE_ACTUAL=$(normalize_value "$(echo "$line" | sed -E "s/^[[:space:]]*PROXY_MODE=//")")
 fi
 
 # ─── Required ──────────────────────────────────────────────────────────────
@@ -81,8 +97,9 @@ esac
 
 if is_set ADMIN_TOKEN; then
     len=$(value_length ADMIN_TOKEN)
-    # 64 hex chars = `openssl rand -hex 32` output (+1 for \n captured by wc)
-    if [ "$len" -lt 32 ]; then
+    # 64 hex chars = `openssl rand -hex 32` output (len is inflated by +1 for the
+    # \n wc counts, so compare the real char count via $((len-1)) like the display)
+    if [ "$((len-1))" -lt 32 ]; then
         warn ADMIN_TOKEN "set but only $((len-1)) chars (recommend 64-char hex from \`openssl rand -hex 32\`)"
     elif value_matches ADMIN_TOKEN '^[a-f0-9]{32,}$'; then
         ok ADMIN_TOKEN "set, hex format ($((len-1)) chars)"
@@ -128,7 +145,7 @@ if value_matches GIT_TRACKING_ENABLED '^1$'; then
         JSON_DEFAULT_AUTHOR=$(jq -r '.default_author // ""' "$JSON_FILE" 2>/dev/null)
     fi
     if is_set GIT_AUTHOR; then
-        ENV_AUTHOR=$(grep -E '^[[:space:]]*GIT_AUTHOR=' "$ENV_FILE" | head -1 | sed -E 's/^[[:space:]]*GIT_AUTHOR=//' | tr -d '\r')
+        ENV_AUTHOR=$(normalize_value "$(grep -E '^[[:space:]]*GIT_AUTHOR=' "$ENV_FILE" | head -1 | sed -E 's/^[[:space:]]*GIT_AUTHOR=//')")
         if [ -n "$JSON_DEFAULT_AUTHOR" ] && [ "$JSON_DEFAULT_AUTHOR" != "$ENV_AUTHOR" ]; then
             warn GIT_AUTHOR "set in .env but git-tracking.json has a different default_author — JSON wins"
         else

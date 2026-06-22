@@ -96,9 +96,20 @@ echo -e "  ${GRN}✓${NC} Proxy healthy at $HEALTH_URL"
 # ── Step 6: Active Claude Code sessions (optional, via claudii) ───────────────
 echo ""
 ACTIVE_COUNT=0
+# ACTIVE_UNKNOWN=1 means detection ran but produced unusable output (empty /
+# invalid JSON). We must NOT treat that as "0 sessions" — it would let
+# auto-switch interrupt a live session exactly when detection is broken.
+ACTIVE_UNKNOWN=0
 if command -v claudii >/dev/null 2>&1; then
-    ACTIVE_COUNT=$(claudii sessions --json 2>/dev/null | jq '[.[] | select(.age_seconds < 30)] | length' 2>/dev/null || echo "0")
-    if [ "$ACTIVE_COUNT" -gt 0 ]; then
+    # `try ... catch 0` keeps jq from exiting 0 with empty output on bad input;
+    # the regex guard then forces a clean integer (fail SAFE → flag unknown).
+    ACTIVE_COUNT=$(claudii sessions --json 2>/dev/null | jq 'try ([.[] | select(.age_seconds < 30)] | length) catch 0' 2>/dev/null || echo "")
+    if ! [[ "$ACTIVE_COUNT" =~ ^[0-9]+$ ]]; then
+        ACTIVE_UNKNOWN=1
+        ACTIVE_COUNT=0
+        echo -e "  ${YEL}⚠${NC}  Could not determine active Claude Code sessions (detection failed)"
+        echo -e "  ${DIM}Treating session state as unknown — auto-switch will be skipped.${NC}"
+    elif [ "$ACTIVE_COUNT" -gt 0 ]; then
         echo -e "  ${YEL}⚠${NC}  ${ACTIVE_COUNT} Claude Code session(s) active in the last 30s:"
         claudii sessions --json 2>/dev/null | jq -r '
             .[] | select(.age_seconds < 30) |
@@ -118,6 +129,9 @@ if [ -n "${GATEII_DEFAULT_ROUTE:-}" ] && [ "${GATEII_AUTO_SWITCH:-0}" = "1" ]; t
     if ! command -v claudii >/dev/null 2>&1; then
         echo ""
         echo -e "  ${DIM}GATEII_AUTO_SWITCH=1 requires claudii for session detection — skipping${NC}"
+    elif [ "$ACTIVE_UNKNOWN" = "1" ]; then
+        echo ""
+        echo -e "  ${DIM}GATEII_AUTO_SWITCH=1 but session state is unknown — skipping (switch manually when safe)${NC}"
     elif [ "$ACTIVE_COUNT" -gt 0 ]; then
         echo ""
         echo -e "  ${DIM}GATEII_AUTO_SWITCH=1 but sessions are active — skipping (switch manually when safe)${NC}"
