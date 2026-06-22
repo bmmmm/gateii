@@ -67,11 +67,12 @@ Or from this repo directly:
 ./scripts/rescue.sh --no-sweep   # global + restart only (skip project sweep)
 ```
 
-The project sweep walks `$GATEII_PROJECT_ROOTS` (space-separated) or, when
-unset, any of `~/offline_coding ~/coding ~/projects ~/dev ~/src` that exist
-(maxdepth 4). It only resets `ANTHROPIC_BASE_URL` keys that point at
-`localhost:`, `127.0.0.1:`, or `$REMOTE_URL` from `.env` — non-gateii
-overrides (e.g. company proxies) are left alone.
+The project sweep walks `$GATEII_PROJECT_ROOTS` (`:`-separated, PATH-style — so
+roots may contain spaces) plus any of `~/offline_coding ~/coding ~/projects
+~/dev ~/src` that exist (maxdepth 4); the defaults are always appended. It only
+resets `ANTHROPIC_BASE_URL` keys whose host is `localhost`/`127.0.0.1` or that
+match the normalized `$REMOTE_URL` from `.env` — non-gateii overrides (e.g.
+company proxies) are left alone.
 
 ## Gotchas
 
@@ -94,7 +95,7 @@ overrides (e.g. company proxies) are left alone.
 | `config/openresty/lua/handler.lua` | Proxy to upstream, SSE token parsing, header forwarding |
 | `config/openresty/lua/tracking.lua` | Shared dict counters (tokens, latency, errors, stop_reason) |
 | `config/openresty/lua/metrics.lua` | Prometheus exposition format from shared dicts; defensive expired-window guards (emit 0 util when reset_ts in past) |
-| `config/openresty/lua/admin_api.lua` | HTTP admin API: block/unblock/limit, /keys, /addkey, /overview, /providers, /llm-prices, /openrouter-models, /health, /git-tracking (GET/PUT), /services/* (proxied to compose-ctl), /agents (live state + bench matrix + omlx /v1/models/status passthrough) |
+| `config/openresty/lua/admin_api.lua` | HTTP admin API: block/unblock/limit, /keys, /addkey, /revoke-key (evicts auth_cache cross-worker), /overview, /providers, /llm-prices, /openrouter-models, /health, /git-tracking (GET/PUT), /services/* (proxied to compose-ctl), /agents (live state + bench matrix + omlx /v1/models/status passthrough) |
 | `config/openresty/lua/providers/anthropic.lua` | Anthropic header building, token extraction |
 | `config/openresty/lua/providers.json` | Multi-provider pricing config, active provider selector |
 | `config/openresty/nginx.conf` | Env whitelist, shared dicts, routes, /internal/prometheus proxy, /console/* router, /console/static MIME map |

@@ -7,8 +7,9 @@ HTTP admin surface at `/internal/admin/*`. Used by `scripts/admin.sh`, the
 
 Two mechanisms, both accepted on every endpoint:
 
-1. **Session cookie** — `admin_session=<hex>` (HttpOnly, Secure, SameSite=Strict,
-   Path=`/internal/admin`, 1 h TTL). Issued by `POST /internal/admin/login`
+1. **Session cookie** — `admin_session=<hex>` (HttpOnly, SameSite=Strict,
+   Path=`/internal/admin`, 1 h TTL; `Secure` added when served over HTTPS).
+   Issued by `POST /internal/admin/login`
    with body `{token: "<ADMIN_TOKEN>"}`. Used by the console with
    `fetch(..., { credentials: "include" })`.
 2. **Header** — `X-Admin-Token: <ADMIN_TOKEN>`. Used by `admin.sh` and curl.
@@ -82,8 +83,21 @@ Content-Type: application/json
 ```
 
 All three JSON fields required. Writes the structured entry via atomic
-temp + rename, clears the auth cache for that key. See
-[keys.md](keys.md) for the schema.
+temp + rename, clears the auth cache for that key. Re-adding an existing
+key reports `overwrote: true`. See [keys.md](keys.md) for the schema.
+
+```http
+POST /internal/admin/revoke-key
+Content-Type: application/json
+
+{ "key": "sk-proxy-..." }
+```
+
+Deletes the key's `auth_cache` entry across all workers and returns
+`{ "ok": true }` (`400` if `key` is missing). `lua_shared_dict` survives
+`nginx -s reload`, so `admin.sh revoke`/`rotate` call this to make a
+revocation effective immediately instead of waiting out the cache TTL.
+This only evicts the cache — remove the key from `keys.json` separately.
 
 ### Blocking + limits
 
