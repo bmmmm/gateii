@@ -17,6 +17,19 @@ local function make_dict()
         get      = function(_, k) return store[k] end,
         set      = function(_, k, v, ttl) store[k] = v; ttls[k] = ttl; return true end,
         delete   = function(_, k) store[k] = nil end,
+        -- add: succeeds only if the key is absent (atomic claim primitive).
+        add      = function(_, k, v, ttl)
+            if store[k] ~= nil then return false, "exists" end
+            store[k] = v; ttls[k] = ttl; return true
+        end,
+        -- incr: bumps an existing number; seeds with init when absent.
+        incr     = function(_, k, n, init, init_ttl)
+            if store[k] == nil then
+                if init == nil then return nil, "not found" end
+                store[k] = init + n; ttls[k] = init_ttl; return store[k]
+            end
+            store[k] = store[k] + n; return store[k]
+        end,
         get_keys = function(_, n)
             local ks = {}
             for k in pairs(store) do ks[#ks+1] = k end
@@ -44,9 +57,13 @@ _G.ngx = {
         bootstrap_pending  = make_dict(),
         bootstrap_sessions = make_dict(),
         auth_cache         = make_dict(),
+        -- proxy_config.update_keys serializes keys.json writes via this dict
+        -- (keys_write_lock + keys_gen) — bootstrap now routes writes through it.
+        blocking           = make_dict(),
     },
     time   = function() return _now end,
     now    = function() return _now end,
+    sleep  = function() end,
     log    = function() end,
     ERR    = 1, WARN = 2, NOTICE = 3, INFO = 4,
     worker = { id = function() return 0 end, pid = function() return 1 end },
@@ -123,7 +140,9 @@ local function install_keys_stub()
             if mode == "w" then
                 local buf = {}
                 return {
-                    write = function(_, s) buf[#buf+1] = s end,
+                    -- Return truthy like a real file handle: util.atomic_write
+                    -- checks `f:write(...)`'s return value and aborts on falsy.
+                    write = function(_, s) buf[#buf+1] = s; return true end,
                     close = function()
                         _pending_write = table.concat(buf)
                     end,
@@ -156,6 +175,7 @@ local function reset_stubs()
     _G.ngx.shared.bootstrap_pending  = make_dict()
     _G.ngx.shared.bootstrap_sessions = make_dict()
     _G.ngx.shared.auth_cache         = make_dict()
+    _G.ngx.shared.blocking           = make_dict()
     -- Reset keys store
     for k in pairs(_keys_store) do _keys_store[k] = nil end
     -- Reset say buffer
