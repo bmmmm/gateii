@@ -10,6 +10,7 @@ local function is_string(v) return type(v) == "string" end
 local function is_nonempty_string(v) return type(v) == "string" and v ~= "" end
 local function is_number(v) return type(v) == "number" end
 local function is_pos_int(v) return is_number(v) and v > 0 and math.floor(v) == v end
+local function is_nonneg_int(v) return is_number(v) and v >= 0 and math.floor(v) == v end
 local function is_nonneg_number(v) return is_number(v) and v >= 0 end
 
 -- Validate providers.json structure
@@ -43,21 +44,26 @@ function _M.validate_providers(data)
         if p.window_seconds ~= nil and not is_pos_int(p.window_seconds) then
             return false, path .. ".window_seconds: must be a positive integer"
         end
-        -- Pricing is optional but if present must be well-formed
-        if p.pricing ~= nil then
-            if not is_table(p.pricing) then
-                return false, path .. ".pricing: must be an object"
+        -- Pricing lives in p.models (pattern-matched array consumed by metrics.lua).
+        -- Optional, but if present must be a non-empty array of well-formed entries —
+        -- a missing pattern makes metrics.lua's m:find(nil) raise and 500s /metrics.
+        if p.models ~= nil then
+            if not is_table(p.models) or #p.models == 0 then
+                return false, path .. ".models: must be a non-empty array"
             end
-            for model, prices in pairs(p.pricing) do
-                local mpath = path .. ".pricing." .. model
-                if not is_table(prices) then
-                    return false, mpath .. ": must be an object with input/output prices"
+            for j, entry in ipairs(p.models) do
+                local mpath = path .. ".models[" .. (j - 1) .. "]"
+                if not is_table(entry) then
+                    return false, mpath .. ": must be an object"
                 end
-                -- Allow either flat {input,output} or pattern-matched structure; just check types
-                for k, v in pairs(prices) do
-                    if type(v) == "number" and v < 0 then
-                        return false, mpath .. "." .. k .. ": prices must be non-negative"
-                    end
+                if not is_nonempty_string(entry.pattern) then
+                    return false, mpath .. ".pattern: must be a non-empty string"
+                end
+                if not is_nonneg_number(entry.input) then
+                    return false, mpath .. ".input: must be a non-negative number"
+                end
+                if not is_nonneg_number(entry.output) then
+                    return false, mpath .. ".output: must be a non-negative number"
                 end
             end
         end
@@ -72,24 +78,40 @@ function _M.validate_providers(data)
     return true, nil
 end
 
--- Validate limits.json structure (map of user -> {tokens_per_day, requests_per_day})
+-- Validate limits.json structure (map of user -> {tokens_per_day, requests_per_day}).
+-- Per-entry tolerant: a single malformed entry must NOT drop the whole file, or one
+-- fat-fingered limit silently removes every user's daily cap (limits fail OPEN).
+-- Invalid entries are collected, removed from `data` in place, and WARN-logged;
+-- the surviving valid entries load normally. Only a non-object root is a hard error.
+-- Cap values use is_nonneg_int so a deliberate 0 cap (hard-zero, block everything)
+-- is accepted; keys.json validation stays strict (auth must fail closed).
 function _M.validate_limits(data)
     if not is_table(data) then
         return false, "limits.json: root must be an object (map user -> limits)"
     end
+    local drop = {}
     for user, limits in pairs(data) do
+        local reason
         if not is_nonempty_string(user) then
-            return false, "limits.json: user keys must be strings"
+            reason = "user key must be a non-empty string"
+        elseif not is_table(limits) then
+            reason = "value must be an object"
+        elseif limits.tokens_per_day ~= nil and not is_nonneg_int(limits.tokens_per_day) then
+            reason = "tokens_per_day must be a non-negative integer"
+        elseif limits.requests_per_day ~= nil and not is_nonneg_int(limits.requests_per_day) then
+            reason = "requests_per_day must be a non-negative integer"
         end
-        if not is_table(limits) then
-            return false, "limits.json['" .. user .. "']: must be an object"
+        if reason then
+            drop[#drop + 1] = user
+            -- ngx is available at startup (init_by_lua) but not in unit tests; guard it
+            -- so this pure validator stays loadable without an ngx stub.
+            if ngx and ngx.log then
+                ngx.log(ngx.WARN, "limits.json: skipping invalid entry '", tostring(user), "': ", reason)
+            end
         end
-        if limits.tokens_per_day ~= nil and not is_pos_int(limits.tokens_per_day) then
-            return false, "limits.json['" .. user .. "'].tokens_per_day: must be a positive integer"
-        end
-        if limits.requests_per_day ~= nil and not is_pos_int(limits.requests_per_day) then
-            return false, "limits.json['" .. user .. "'].requests_per_day: must be a positive integer"
-        end
+    end
+    for _, user in ipairs(drop) do
+        data[user] = nil
     end
     return true, nil
 end
@@ -198,6 +220,13 @@ function _M.load_validated(path, validator)
     if not f then return nil, nil end
     local raw = f:read("*a"); f:close()
     if not raw or raw == "" then return nil, nil end
+
+    -- All config roots must be JSON objects. A root array (incl. empty `[]`, which
+    -- cjson decodes to an empty table indistinguishable from `{}`) would otherwise
+    -- pass the is_table root check and validate as "valid-empty". Reject it up front.
+    if raw:match("^%s*%[") then
+        return nil, path .. ": root must be a JSON object, not an array"
+    end
 
     local data, decode_err = cjson.decode(raw)
     if not data then
