@@ -76,10 +76,8 @@ resolve_model_for_task() {
     $JQ -r --arg m "$MODEL" --arg t "$task" '
         (.routes[$t]) as $r
         | if $r == null then $m
-          elif $r.model == $m then $m
-          else
-            ([.routes[$t] | select(.picked_from | index($m))] | first | .pass_rate // 0) as $dp
-            | if ($dp < 1.0) and (($r.pass_rate // 0) >= 0.99) then $r.model else $m end
+          elif (($r.pass_rate // 0) >= 0.99) then $r.model
+          else $m
           end
     ' "$ROUTING_FILE" 2>/dev/null || printf '%s' "$MODEL"
 }
@@ -118,10 +116,13 @@ append_log() {
     # short mkdir spinlock (portable — no flock on macOS). Without it, a record
     # larger than the stdio buffer splits into multiple write() syscalls that
     # interleave with a concurrent appender and corrupt a line.
-    local lock="$LOG_FILE.lock.d" i=0
+    local lock="$LOG_FILE.lock.d"
+    # Function-scoped trap so a signal can't orphan the log lock. cmd_feedback
+    # reaches append_log without the run lock's EXIT trap, so cover RETURN too.
+    trap '/bin/rm -rf "$lock" 2>/dev/null' RETURN INT TERM
+    # Keep spinning until we win the lock — never proceed unlocked (a forced
+    # takeover would corrupt the concurrent appender's in-flight line).
     while ! /bin/mkdir "$lock" 2>/dev/null; do
-        i=$((i + 1))
-        if [ "$i" -gt 50 ]; then /bin/rm -rf "$lock" 2>/dev/null; /bin/mkdir "$lock" 2>/dev/null; break; fi
         sleep 0.01
     done
     printf '%s\n' "$line" >> "$LOG_FILE"
@@ -445,11 +446,14 @@ cmd_list() {
     if [ -f "$ACTIVE_FILE" ]; then
         local now elapsed task model started preview pid
         now=$(/bin/date +%s)
-        task=$($JQ -r '.task' "$ACTIVE_FILE")
-        model=$($JQ -r '.model' "$ACTIVE_FILE")
-        started=$($JQ -r '.started_epoch' "$ACTIVE_FILE")
-        preview=$($JQ -r '.prompt_preview' "$ACTIVE_FILE")
-        pid=$($JQ -r '.pid' "$ACTIVE_FILE")
+        task=$($JQ -r '.task // "?"' "$ACTIVE_FILE" 2>/dev/null || echo "?")
+        model=$($JQ -r '.model // "?"' "$ACTIVE_FILE" 2>/dev/null || echo "?")
+        # Guard started_epoch: a missing key yields literal "null" which aborts
+        # the arithmetic under set -u; default to 0 and strip non-digits.
+        started=$($JQ -r '.started_epoch // 0' "$ACTIVE_FILE" 2>/dev/null || echo 0)
+        started=${started//[!0-9]/}; started=${started:-0}
+        preview=$($JQ -r '.prompt_preview // ""' "$ACTIVE_FILE" 2>/dev/null || echo "")
+        pid=$($JQ -r '.pid // "?"' "$ACTIVE_FILE" 2>/dev/null || echo "?")
         elapsed=$((now - started))
         printf "RUNNING  pid=%s  %s  via %s  (%ds)\n  → %s\n\n" "$pid" "$task" "$model" "$elapsed" "$preview"
     else
@@ -479,6 +483,7 @@ cmd_count_tokens() {
     local input key body resp http_code body_only count
     input=$(cat)
     key=$(resolve_key)
+    [ -z "$key" ] && { echo "OMLX_API_KEY not found in env or .env" >&2; exit 3; }
     body=$($JQ -n --arg model "$model" --arg user "$input" \
         '{model:$model, messages:[{role:"user", content:$user}]}')
     resp=$(/usr/bin/curl -s --max-time "$TIMEOUT" \
