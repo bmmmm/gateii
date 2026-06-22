@@ -128,8 +128,8 @@ automatically on cooldown expiry.
 Two authentication paths into `/internal/admin/*`:
 
 1. **Session cookie** — `POST /internal/admin/login` with `{token}` sets
-   `admin_session=<hex>; HttpOnly; Secure; SameSite=Strict` (1 h TTL).
-   Used by the `/console` web UI.
+   `admin_session=<hex>; HttpOnly; SameSite=Strict` (1 h TTL; `Secure` added
+   when served over HTTPS). Used by the `/console` web UI.
 2. **Header** — `X-Admin-Token: <ADMIN_TOKEN>`. Used by
    `scripts/admin.sh` and ad-hoc curl.
 

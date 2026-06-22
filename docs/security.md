@@ -14,7 +14,8 @@ security posture and the controls in place. Full admin-API reference:
 | Admin API auth | Internal-only: IP allow-list + `ADMIN_TOKEN` (cookie or header), constant-time compare |
 | Admin login brute-force | `limit_req_zone adminauth 5r/m` with burst 3 on `/internal/admin/login` (429 on exhaustion) |
 | Admin fail-closed | `apikey` mode without `ADMIN_TOKEN` returns 503 on `/internal/admin/*` (passthrough stays open) |
-| Admin session | HttpOnly, Secure, SameSite=Strict cookie; crypto-random id; 1 h TTL |
+| Admin session | HttpOnly, SameSite=Strict cookie (Secure added over HTTPS); crypto-random id; 1 h TTL; per-IP login lockout |
+| Control plane (compose-ctl) | `INTERNAL_TOKEN` required — fails closed (health-only, 503) when unset; no host port, gateii-network-only |
 | Console CSP | `script-src 'self' 'nonce-<N>'` — no inline scripts without per-request nonce |
 | Bootstrap handshake | HMAC-SHA256, constant-time proof compare, one-time code, auto-revoke on failed install |
 | Port bindings | `PROXY_BIND`, `GRAFANA_BIND`, `PROMETHEUS_BIND` default to `127.0.0.1` — set to `0.0.0.0` only for explicit LAN exposure |
@@ -24,8 +25,8 @@ security posture and the controls in place. Full admin-API reference:
 The admin surface at `/internal/admin/*` accepts two mechanisms:
 
 - **Session cookie** — `POST /internal/admin/login` with `{token}` sets
-  `admin_session=<hex>; HttpOnly; Secure; SameSite=Strict` (1 h TTL).
-  Used by the `/console` web UI.
+  `admin_session=<hex>; HttpOnly; SameSite=Strict` (1 h TTL; `Secure` added
+  when the request is over HTTPS). Used by the `/console` web UI.
 - **Header** — `X-Admin-Token: <ADMIN_TOKEN>`. Used by
   `scripts/admin.sh` and curl.
 
