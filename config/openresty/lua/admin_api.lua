@@ -135,9 +135,33 @@ local function require_user(args)
     return u
 end
 
--- Persist limits to disk (survives container restarts)
+-- Persist limits to disk (survives container restarts).
+-- limits.json is the durable source of truth — the blocking dict is volatile
+-- (5000-key get_keys cap + LRU eviction), so rebuilding the file purely from
+-- the dict would permanently drop evicted/truncated limits|* entries. Instead
+-- we MERGE: read the existing file first, then overlay the dict's current
+-- limits|* entries on top, then atomic_write the union. On a parse error we
+-- return WITHOUT writing so a bad read never wipes the durable store.
 local function save_limits()
     local all = {}
+
+    -- Load existing durable limits (source of truth)
+    local f = io.open(LIMITS_FILE, "r")
+    if f then
+        local raw = f:read("*a"); f:close()
+        if raw and raw ~= "" then
+            local decoded, err = cjson.decode(raw)
+            if decoded == nil then
+                -- Refuse to overwrite a file we couldn't parse — a single bad
+                -- read must not wipe every persisted limit.
+                ngx.log(ngx.ERR, "save_limits: existing limits.json unparseable — refusing to overwrite, err=", tostring(err))
+                return
+            end
+            if type(decoded) == "table" then all = decoded end
+        end
+    end
+
+    -- Overlay the dict's current limits|* entries on top of the durable set
     local keys = blocking_dict:get_keys(MAX_ITER_KEYS)
     for _, key in ipairs(keys) do
         if key:sub(1, 7) == "limits|" then
@@ -153,6 +177,7 @@ local function save_limits()
             end
         end
     end
+
     local encoded = cjson.encode(all)
     if not encoded then
         ngx.log(ngx.ERR, "save_limits: cjson.encode failed")
@@ -297,6 +322,9 @@ if uri == "/internal/admin/usage" and method == "GET" then
         daily_input = counters:get(day_prefix .. "|input") or 0,
         daily_output = counters:get(day_prefix .. "|output") or 0,
         daily_requests = counters:get(day_prefix .. "|requests") or 0,
+        -- The |total counter is what tokens_per_day is actually enforced against
+        -- (auth.lua). Read it directly — deriving input+output masks eviction skew.
+        daily_total = counters:get(day_prefix .. "|total") or 0,
     }
     ngx.header["Content-Type"] = "application/json"
     ngx.say(cjson.encode(result))
@@ -335,15 +363,36 @@ if uri == "/internal/admin/keys" and method == "GET" then
 end
 
 -- GET /internal/admin/overview — combined status for console
+-- Like /usage-all this is console-polled and scans the blocking dict under the
+-- per-zone mutex; cache the assembled response in or_cache for a short TTL so
+-- concurrent polls share one scan per window. A keys.json parse failure is NOT
+-- cached (it must surface fresh as a 500 so a transient bad read self-heals).
+local OVERVIEW_CACHE_KEY = "overview_response"
+local OVERVIEW_CACHE_TTL = 5  -- seconds
 if uri == "/internal/admin/overview" and method == "GET" then
+    local cache_dict = or_cache or counters
+    local cached = cache_dict:get(OVERVIEW_CACHE_KEY)
+    if cached then
+        ngx.header["X-Cache"] = "HIT"
+        ngx.say(cached)
+        return
+    end
+    ngx.header["X-Cache"] = "MISS"
+
     -- Proxy mode
     local mode = os.getenv("PROXY_MODE") or "apikey"
     local passthrough_user = os.getenv("PASSTHROUGH_USER") or ""
 
-    -- Key count
+    -- Key count — surface a parse failure as 500 instead of silently
+    -- reporting key_count=0 (HTTP 200), which would mask a total auth outage.
+    local kf, kf_err = read_keys_file()
+    if not kf then
+        ngx.status = 500
+        ngx.say('{"error":"keys store unreadable: ' .. kf_err .. '"}')
+        return
+    end
     local key_count = 0
-    local kf = read_keys_file()
-    for _ in pairs(kf or {}) do key_count = key_count + 1 end
+    for _ in pairs(kf) do key_count = key_count + 1 end
 
     -- Blocked count
     local blocked_count = 0
@@ -364,18 +413,37 @@ if uri == "/internal/admin/overview" and method == "GET" then
 
     local console_enabled = os.getenv("CONSOLE_ENABLED") == "1"
 
-    ngx.say(cjson.encode({
+    local body = cjson.encode({
         proxy_mode = mode,
         passthrough_user = passthrough_user,
         key_count = key_count,
         blocked_count = blocked_count,
         plugins = { console = console_enabled, git_tracking = git_tracking },
-    }))
+    })
+    local sok, serr = cache_dict:set(OVERVIEW_CACHE_KEY, body, OVERVIEW_CACHE_TTL)
+    if not sok then ngx.log(ngx.WARN, "overview cache write failed: ", serr) end
+    ngx.say(body)
     return
 end
 
 -- GET /internal/admin/usage-all — all users' daily counters + limits for console
+-- Console polls this every few seconds; the full get_keys scans below hold the
+-- per-zone mutex against hot-path counter writes. Cache the assembled response
+-- in or_cache for a short TTL so N concurrent polls share one scan per window
+-- (same pattern as the agents-log cache). Correctness is identical — at most a
+-- few seconds stale, which is invisible at console refresh rates.
+local USAGE_ALL_CACHE_KEY = "usage_all_response"
+local USAGE_ALL_CACHE_TTL = 5  -- seconds
 if uri == "/internal/admin/usage-all" and method == "GET" then
+    local cache_dict = or_cache or counters
+    local cached = cache_dict:get(USAGE_ALL_CACHE_KEY)
+    if cached then
+        ngx.header["X-Cache"] = "HIT"
+        ngx.say(cached)
+        return
+    end
+    ngx.header["X-Cache"] = "MISS"
+
     local today = os.date("!%Y-%m-%d")
     local users = {}
     local truncated = false
@@ -387,11 +455,14 @@ if uri == "/internal/admin/usage-all" and method == "GET" then
         -- Match: day|<user>|<date>|<field>
         local u, date, field = key:match("^day|([^|]+)|([^|]+)|(.+)$")
         if u and date == today then
-            if not users[u] then users[u] = { user = u, input = 0, output = 0, requests = 0 } end
+            if not users[u] then users[u] = { user = u, input = 0, output = 0, requests = 0, total = 0 } end
             local val = counters:get(key) or 0
             if field == "input" then users[u].input = val
             elseif field == "output" then users[u].output = val
-            elseif field == "requests" then users[u].requests = val end
+            elseif field == "requests" then users[u].requests = val
+            -- |total is the counter tokens_per_day is enforced against (auth.lua).
+            -- Read it directly — deriving input+output masks eviction skew.
+            elseif field == "total" then users[u].total = val end
         end
     end
 
@@ -401,7 +472,7 @@ if uri == "/internal/admin/usage-all" and method == "GET" then
     for _, key in ipairs(block_keys) do
         if key:sub(1, 7) == "limits|" then
             local luser = key:sub(8)
-            if not users[luser] then users[luser] = { user = luser, input = 0, output = 0, requests = 0 } end
+            if not users[luser] then users[luser] = { user = luser, input = 0, output = 0, requests = 0, total = 0 } end
             local raw = blocking_dict:get(key)
             if raw then
                 local ldata = cjson.decode(raw)
@@ -420,7 +491,13 @@ if uri == "/internal/admin/usage-all" and method == "GET" then
     end
     table.sort(result, function(a, b) return a.user < b.user end)
 
-    ngx.say(cjson.encode({ users = result, truncated = truncated and true or false }))
+    local body = cjson.encode({ users = result, truncated = truncated and true or false })
+    -- Don't cache a truncated scan — callers should see the partial flag fresh.
+    if not truncated then
+        local sok, serr = cache_dict:set(USAGE_ALL_CACHE_KEY, body, USAGE_ALL_CACHE_TTL)
+        if not sok then ngx.log(ngx.WARN, "usage-all cache write failed: ", serr) end
+    end
+    ngx.say(body)
     return
 end
 
@@ -471,25 +548,83 @@ if uri == "/internal/admin/addkey" and method == "POST" then
         ngx.status = 400; ngx.say('{"error":"provider must match ^[a-z][a-z0-9_]+$"}'); return
     end
 
+    -- Existence guard: refuse silent overwrite unless ?force=1. The decision
+    -- (overwrite vs reject) is taken INSIDE the lock against a fresh read so a
+    -- concurrent addkey can't slip a key in between our check and our write.
+    -- All three outcomes are signalled back out of the mutate closure via
+    -- captured flags (update_keys returns true whenever the closure returns
+    -- false, since the abort is intentional and not an error).
+    local force = (args.force == "1")
+    local overwrote = false      -- key existed and force=1 → overwritten
+    local conflict = false       -- key existed and no force → 409
+    local validation_err = nil   -- schema rejection → 400
+
     -- Serialized read-modify-write across workers (one lock for every keys.json
     -- mutator: addkey + bootstrap exchange/confirm/sweep) so concurrent writes
     -- can't last-rename-wins-drop a key; bumps the generation so all workers
     -- reload immediately.
     local uok, uerr = proxy_config.update_keys(function(keys_data)
+        if keys_data[key] ~= nil then
+            if not force then
+                conflict = true
+                return false   -- key exists, no force → abort write (409 below)
+            end
+            overwrote = true
+        end
         keys_data[key] = {
             user          = user,
             provider      = provider,
             upstream_key  = upstream_key,
             created_at    = os.date("!%Y-%m-%dT%H:%M:%SZ"),
         }
+        -- Validate the full set before it gets encoded/written — mirrors the
+        -- git-tracking PUT path. On failure abort the write (no overwrite, no
+        -- generation bump) and surface the reason as a 400.
+        local vok, verr = schema.validate_keys(keys_data)
+        if not vok then
+            validation_err = verr
+            return false
+        end
     end)
+    if conflict then
+        ngx.status = 409
+        ngx.say('{"error":"Key already exists — pass ?force=1 to overwrite"}')
+        return
+    end
+    if validation_err then
+        ngx.status = 400
+        ngx.say(cjson.encode({ error = validation_err }))
+        return
+    end
     if not uok then
         ngx.log(ngx.ERR, "addkey: ", uerr)
         ngx.status = 500; ngx.say('{"error":"Failed to persist keys.json — check server logs"}'); return
     end
     -- Clear any negative cache entry so the new key is usable immediately
     ngx.shared.auth_cache:delete(key)
-    ngx.say(cjson.encode({ ok = true, user = user, provider = provider }))
+    ngx.say(cjson.encode({ ok = true, user = user, provider = provider, overwrote = overwrote }))
+    return
+end
+
+-- POST /internal/admin/revoke-key  body: {"key":"<proxy-key>"}
+-- Drops the key's entry from auth_cache (clears BOTH the positive and the
+-- negative cache across all workers) so a revoked/rotated key stops
+-- validating immediately. Consumed by scripts/admin.sh revoke/rotate.
+if uri == "/internal/admin/revoke-key" and method == "POST" then
+    ngx.req.read_body()
+    local body = ngx.req.get_body_data()
+    local key = ""
+    if body then
+        local obj = cjson.decode(body)
+        if obj then key = tostring(obj.key or "") end
+    end
+    if key == "" then
+        ngx.status = 400
+        ngx.say('{"error":"Missing key — JSON body requires: {key}"}')
+        return
+    end
+    ngx.shared.auth_cache:delete(key)
+    ngx.say(cjson.encode({ ok = true }))
     return
 end
 
@@ -510,7 +645,11 @@ end
 -- GET /internal/admin/llm-prices — proxy llm-prices.com with 1hr cache
 if uri == "/internal/admin/llm-prices" and method == "GET" then
     local cache_key = "llm_prices_cache"
-    local cached = counters:get(cache_key)
+    -- Store in the dedicated or_cache dict, not `counters` — this blob is large
+    -- enough that an LRU eviction in the counters dict could drop live token
+    -- counters (which share that zone). or_cache holds only HTTP-cache blobs.
+    local cache_dict = or_cache or counters
+    local cached = cache_dict:get(cache_key)
 
     -- Return cached data if fresh (< 1hr)
     if cached then
@@ -539,8 +678,8 @@ if uri == "/internal/admin/llm-prices" and method == "GET" then
         return
     end
 
-    -- Cache for 1hr (3600s) — uses counters dict for storage
-    local ok, cerr = counters:set(cache_key, res.body, 3600)
+    -- Cache for 1hr (3600s) — uses or_cache dict for storage
+    local ok, cerr = cache_dict:set(cache_key, res.body, 3600)
     if not ok then
         ngx.log(ngx.WARN, "llm-prices cache write failed: ", cerr)
     end
@@ -634,9 +773,14 @@ if uri == "/internal/admin/health" and method == "GET" then
     local _, prom = ngx.thread.wait(t_prom)
     local _, graf = ngx.thread.wait(t_graf)
 
-    -- Upstream error rate from counters (no network call needed)
+    -- Upstream error rate from counters (no network call needed).
+    -- get_keys is capped at MAX_ITER_KEYS — a truncated scan undercounts both
+    -- requests and errors, so the derived error_rate is unreliable. Flag it and
+    -- refuse to report ok=true on a scan we know was incomplete.
     local all_req, all_err = 0, 0
-    for _, key in ipairs(counters:get_keys(MAX_ITER_KEYS)) do
+    local counter_keys = counters:get_keys(MAX_ITER_KEYS)
+    local truncated = #counter_keys >= MAX_ITER_KEYS
+    for _, key in ipairs(counter_keys) do
         local parts = {}
         for p in key:gmatch("[^|]+") do parts[#parts+1] = p end
         if #parts == 4 and parts[1] ~= "day" then
@@ -646,7 +790,7 @@ if uri == "/internal/admin/health" and method == "GET" then
     end
     local err_rate = all_req > 0 and all_err / all_req or 0
     local upstream = {
-        ok         = err_rate < 0.1,
+        ok         = (not truncated) and err_rate < 0.1,
         requests   = all_req,
         errors     = all_err,
         error_rate = math.floor(err_rate * 1000) / 10,  -- percent, 1 decimal
@@ -657,7 +801,7 @@ if uri == "/internal/admin/health" and method == "GET" then
     for _, v in pairs(components) do if not v.ok then down = down + 1 end end
     local status = down == 0 and "ok" or (down >= 2 and "down" or "degraded")
 
-    ngx.say(cjson.encode({ status = status, components = components }))
+    ngx.say(cjson.encode({ status = status, components = components, partial = truncated and true or false }))
     return
 end
 
@@ -728,7 +872,23 @@ if uri == "/internal/admin/diagnostics" and method == "GET" then
     -- session can't hammer the endpoint silently. Returns 429 + Retry-After.
     local DIAG_RATE_LIMIT_PER_MIN = 6
     local rl_key = "diag_rl|" .. (ngx.var.remote_addr or "?")
-    local count = cd:incr(rl_key, 1, 0, 60) or 0
+    local count, incr_err = cd:incr(rl_key, 1, 0, 60)
+    -- incr returns nil when the dict is full. Coercing to 0 would fail OPEN
+    -- (count <= limit forever). Fail CLOSED instead — a full counters dict is
+    -- an abnormal state and the rate limiter must not silently disappear.
+    if count == nil then
+        ngx.log(ngx.WARN, "diagnostics rate-limit incr failed (counters dict full?) key=", rl_key,
+                " err=", tostring(incr_err), " free=", cd:free_space())
+        ngx.status = 429
+        ngx.header["Retry-After"] = "60"
+        ngx.say(cjson.encode({
+            error = "rate_limit",
+            reason = "counter_unavailable",
+            limit_per_min = DIAG_RATE_LIMIT_PER_MIN,
+            window_seconds = 60,
+        }))
+        return
+    end
     if count > DIAG_RATE_LIMIT_PER_MIN then
         ngx.status = 429
         ngx.header["Retry-After"] = "60"
@@ -791,7 +951,11 @@ if uri == "/internal/admin/diagnostics" and method == "GET" then
         -- the parallel `day|...` rollups and `user|provider|model|effort|...`
         -- / `|modality|...` dimensional counters which all share the same
         -- field-name suffix and would 4× the numbers if added together.
-        for _, key in ipairs(cd:get_keys(5000) or {}) do
+        -- get_keys is capped at MAX_ITER_KEYS — a truncated scan undercounts the
+        -- totals, so flag it as partial (matches /usage-all and /health).
+        local total_keys = cd:get_keys(MAX_ITER_KEYS) or {}
+        local truncated = #total_keys >= MAX_ITER_KEYS
+        for _, key in ipairs(total_keys) do
             local _, pipes = key:gsub("|", "")
             if pipes == 3 and key:sub(1, 4) ~= "day|" then
                 local field = key:match("|([^|]+)$")
@@ -807,6 +971,7 @@ if uri == "/internal/admin/diagnostics" and method == "GET" then
             output_tokens = t.output,
             cache_read_tokens = t.cache_read,
             cache_creation_tokens = t.cache_creation,
+            partial = truncated and true or false,
         }
     end
 
@@ -1046,21 +1211,23 @@ if uri == "/internal/admin/agents" and method == "GET" then
     -- size-based cache. log.jsonl is append-only — file size is a perfect
     -- invariant for "did anything change?". Re-aggregation only fires when
     -- the file actually grew, even with N Console tabs polling every 2 s.
+    -- The cache is a single JSON object {size, usage, recent} under one key:
+    -- one atomic set means the three values can never be observed out of sync,
+    -- and it lives in or_cache (not counters) so this blob can't LRU-evict live
+    -- token counters that share the counters zone.
+    local agents_cache = or_cache or counters
     local LOG_PATH = AGENTS_DIR .. "/log.jsonl"
     local lf = io.open(LOG_PATH, "r")
     local size = 0
     if lf then size = lf:seek("end") or 0 end
 
-    local cached_size = tonumber(counters:get("agents_log_size") or -1)
-    if size > 0 and size == cached_size then
-        local cached_usage  = counters:get("agents_log_usage_json")
-        local cached_recent = counters:get("agents_log_recent_json")
-        if cached_usage and cached_recent then
-            local _ok_u, _u = pcall(cjson.decode, cached_usage)
-            local _ok_r, _r = pcall(cjson.decode, cached_recent)
-            if _ok_u and _ok_r then
-                out.usage  = _u
-                out.recent = _r
+    if size > 0 then
+        local cached_blob = agents_cache:get("agents_log_cache")
+        if cached_blob then
+            local _ok, _c = pcall(cjson.decode, cached_blob)
+            if _ok and type(_c) == "table" and tonumber(_c.size) == size then
+                out.usage  = _c.usage  or {}
+                out.recent = _c.recent or {}
                 if lf then lf:close() end
                 lf = nil  -- skip re-aggregation
             end
@@ -1103,10 +1270,13 @@ if uri == "/internal/admin/agents" and method == "GET" then
             local rec = safe_decode(lines[i])
             if rec then table.insert(out.recent, rec) end
         end
-        -- Persist cache so the next poll skips this work
-        counters:set("agents_log_size",        size)
-        counters:set("agents_log_usage_json",  cjson.encode(out.usage))
-        counters:set("agents_log_recent_json", cjson.encode(out.recent))
+        -- Persist cache so the next poll skips this work. Single atomic set of
+        -- {size, usage, recent} → the values can never be read out of sync.
+        local blob = cjson.encode({ size = size, usage = out.usage, recent = out.recent })
+        if blob then
+            local _sok, _serr = agents_cache:set("agents_log_cache", blob)
+            if not _sok then ngx.log(ngx.WARN, "agents_log cache write failed: ", _serr) end
+        end
     end
 
     local rf = io.open(AGENTS_DIR .. "/routing.json", "r")
@@ -1128,11 +1298,12 @@ if uri == "/internal/admin/agents" and method == "GET" then
     end
 
     -- Live: query omlx /v1/models/status (small file, fast local call).
-    -- Cached in `counters` shared dict for 5 s — N open Console tabs each
+    -- Cached in the or_cache shared dict for 5 s — N open Console tabs each
     -- polling every 2 s would otherwise hammer omlx during big-model loads
-    -- (omlx serializes status reads). Failure is non-fatal — page still
-    -- renders without live state.
-    local _cached = counters:get("omlx_status_cache")
+    -- (omlx serializes status reads). Stored in or_cache (not counters) so the
+    -- blob can't LRU-evict live token counters. Failure is non-fatal — page
+    -- still renders without live state.
+    local _cached = agents_cache:get("omlx_status_cache")
     if _cached then
         out.omlx_status = safe_decode(_cached)
     else
@@ -1150,7 +1321,7 @@ if uri == "/internal/admin/agents" and method == "GET" then
                 local parsed = safe_decode(res.body)
                 if parsed then
                     out.omlx_status = parsed
-                    counters:set("omlx_status_cache", res.body, 5)  -- 5 s TTL
+                    agents_cache:set("omlx_status_cache", res.body, 5)  -- 5 s TTL
                 end
             end
         end
@@ -1239,4 +1410,4 @@ end
 
 ngx.status = 404
 ngx.say('{"error":"Unknown admin endpoint — available: /internal/admin/{block,unblock,limit,status,'
-    .. 'usage,keys,addkey,overview,providers,llm-prices,openrouter-models,health,git-tracking,services,diagnostics,bootstrap,agents}"}')
+    .. 'usage,keys,addkey,revoke-key,overview,providers,llm-prices,openrouter-models,health,git-tracking,services,diagnostics,bootstrap,agents}"}')
