@@ -7,6 +7,14 @@ local uri = ngx.var.uri
 
 ngx.header["Content-Type"] = "application/json"
 
+-- Append "; Secure" only when the request arrived over HTTPS (direct TLS or
+-- behind a TLS-terminating proxy). Plain-HTTP local logins must NOT get Secure,
+-- or the browser drops the cookie. The same suffix is applied to both the login
+-- and logout Set-Cookie strings — overwriting a cookie requires matching attrs.
+local is_https = ngx.var.scheme == "https"
+    or ngx.var.http_x_forwarded_proto == "https"
+local secure_suffix = is_https and "; Secure" or ""
+
 -- --- Logout ---
 if uri == "/internal/admin/logout" then
     if ngx.req.get_method() ~= "POST" then
@@ -22,7 +30,7 @@ if uri == "/internal/admin/logout" then
         sessions:delete(session_id)
     end
     -- Clear cookie by expiring it immediately
-    ngx.header["Set-Cookie"] = "admin_session=deleted; HttpOnly; SameSite=Strict; Path=/internal/admin; Max-Age=0"
+    ngx.header["Set-Cookie"] = "admin_session=deleted; HttpOnly; SameSite=Strict; Path=/internal/admin; Max-Age=0" .. secure_suffix
     ngx.say('{"ok":true}')
     return
 end
@@ -59,13 +67,32 @@ if body then
     if obj then supplied = tostring(obj.token or "") end
 end
 
+-- Short-TTL lockout, separate from the 7d observational metric counter above.
+-- Per-client (binary remote addr) so one attacker can't lock out everyone.
+-- Sliding 15-min window; over LOCKOUT_THRESHOLD failures → 429 until the window
+-- expires. The lockout key is cleared on a successful login below. A nil from
+-- eviction fails open — limit_req still backstops the request rate.
+local LOCKOUT_WINDOW = 900       -- 15 min
+local LOCKOUT_THRESHOLD = 10     -- failures before lockout kicks in
+local lockout_key = "admin_lockout|" .. (ngx.var.binary_remote_addr or "unknown")
+local fails = ngx.shared.counters:get(lockout_key) or 0
+if fails >= LOCKOUT_THRESHOLD then
+    ngx.status = 429
+    ngx.say('{"error":"Too many failed login attempts — try again later"}')
+    return
+end
+
 local bootstrap = require "bootstrap"
 if not bootstrap._consttime_eq(supplied, ADMIN_TOKEN) then
     ngx.shared.counters:incr("admin_login_failures", 1, 0, 86400 * 7)
+    ngx.shared.counters:incr(lockout_key, 1, 0, LOCKOUT_WINDOW)
     ngx.status = 401
     ngx.say('{"error":"Invalid token"}')
     return
 end
+
+-- Successful login: clear the lockout counter for this client.
+ngx.shared.counters:delete(lockout_key)
 
 -- Generate session ID from /dev/urandom (32 bytes → 64 hex chars)
 local urandom = io.open("/dev/urandom", "rb")
@@ -90,5 +117,5 @@ local session_id = table.concat(hex_parts)
 sessions:set(session_id, "1", 3600)  -- 1h TTL
 
 ngx.header["Set-Cookie"] = "admin_session=" .. session_id
-    .. "; HttpOnly; SameSite=Strict; Path=/internal/admin; Max-Age=3600"
+    .. "; HttpOnly; SameSite=Strict; Path=/internal/admin; Max-Age=3600" .. secure_suffix
 ngx.say('{"ok":true}')
