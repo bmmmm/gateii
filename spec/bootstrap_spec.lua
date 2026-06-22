@@ -143,8 +143,11 @@ local function install_keys_stub()
                     -- Return truthy like a real file handle: util.atomic_write
                     -- checks `f:write(...)`'s return value and aborts on falsy.
                     write = function(_, s) buf[#buf+1] = s; return true end,
+                    -- Return truthy: util.atomic_write also checks f:close()'s return
+                    -- (a close-flush failure must abort the rename), mirroring a real handle.
                     close = function()
                         _pending_write = table.concat(buf)
+                        return true
                     end,
                 }
             end

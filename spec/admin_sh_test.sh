@@ -28,12 +28,12 @@ run_test() {
 
     if [ "$exit_code" -eq "$expected_exit" ]; then
         echo -e "  ${GRN}✓${NC} $test_name"
-        ((TESTS_PASSED++))
+        TESTS_PASSED=$((TESTS_PASSED + 1))
         return 0
     else
         echo -e "  ${RED}✗${NC} $test_name (expected exit $expected_exit, got $exit_code)"
         [ -n "$output" ] && echo "    Output: $output" | head -3
-        ((TESTS_FAILED++))
+        TESTS_FAILED=$((TESTS_FAILED + 1))
         return 1
     fi
 }
@@ -50,13 +50,13 @@ run_test_output() {
 
     if echo "$output" | grep -q "$expected_output"; then
         echo -e "  ${GRN}✓${NC} $test_name"
-        ((TESTS_PASSED++))
+        TESTS_PASSED=$((TESTS_PASSED + 1))
         return 0
     else
         echo -e "  ${RED}✗${NC} $test_name"
         echo "    Expected substring: $expected_output"
         echo "    Got: $output" | head -3
-        ((TESTS_FAILED++))
+        TESTS_FAILED=$((TESTS_FAILED + 1))
         return 1
     fi
 }

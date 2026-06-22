@@ -112,8 +112,20 @@ describe("schema.validate_limits", function()
         assert.is_true(ok)
     end)
 
-    it("rejects negative limits", function()
-        local ok, err = schema.validate_limits({ alice = { tokens_per_day = -1 } })
-        assert.is_false(ok); assert.matches("must be a positive integer", err)
+    it("accepts a hard-zero cap", function()
+        -- is_nonneg_int: 0 is a deliberate block-everything cap, not an error.
+        local ok = schema.validate_limits({ alice = { tokens_per_day = 0 } })
+        assert.is_true(ok)
+    end)
+
+    it("drops invalid entries (tolerant) but keeps valid ones", function()
+        -- Per-entry tolerant: one bad entry must NOT drop the whole file, else a
+        -- single typo fails limits OPEN (every user's cap removed). Invalid entries
+        -- are removed in place + WARN-logged; valid entries survive.
+        local data = { alice = { tokens_per_day = -1 }, bob = { tokens_per_day = 100000 } }
+        local ok = schema.validate_limits(data)
+        assert.is_true(ok)
+        assert.is_nil(data.alice)
+        assert.is_not_nil(data.bob)
     end)
 end)
