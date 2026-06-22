@@ -23,13 +23,18 @@ local _keys     = {}
 local _keys_ts  = 0
 local _keys_gen = -1   -- last-seen generation; -1 forces the first load
 
-function _M.load_keys()
+-- load_keys([force]): return the per-worker keys.json snapshot.
+-- force=true bypasses the 10s no-change throttle and re-reads from disk — used
+-- by auth.lua on a lookup MISS to defeat the 60s 401 storm a freshly provisioned
+-- key would otherwise hit while this worker still holds a stale snapshot inside
+-- the throttle window. The hot positive path leaves force unset.
+function _M.load_keys(force)
     local now = ngx.now()
     local gen = ngx.shared.blocking:get(GEN_KEY) or 0
     -- Serve the cached snapshot only if it's fresh AND no writer bumped the
     -- generation since we loaded it. The gen check gives immediate cross-worker
     -- invalidation on add/revoke; the 10s window is just the no-change throttle.
-    if _keys_ts > 0 and (now - _keys_ts) < 10 and gen == _keys_gen then
+    if not force and _keys_ts > 0 and (now - _keys_ts) < 10 and gen == _keys_gen then
         return _keys
     end
     local f = io.open(KEYS_PATH, "r")

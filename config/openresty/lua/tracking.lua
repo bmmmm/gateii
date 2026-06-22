@@ -10,11 +10,33 @@ local rl_events = ngx.shared.rl_events
 local COUNTER_TTL = (tonumber(os.getenv("COUNTER_RETENTION_DAYS")) or 60) * 86400
 
 
-local function bump(key, value, ttl)
+-- Detect once whether this build exposes shared_dict:expire (added in
+-- lua-nginx-module 0.10.x). Falls back to get-then-set when absent.
+local _has_expire = type(counters.expire) == "function"
+
+-- bump(key, value, ttl[, slide])
+-- incr() only sets init_ttl when the key is CREATED — OpenResty does not refresh
+-- the TTL on later incr. For lifetime (per-user/provider/model) counters that
+-- means an active key resets to 0 ttl-seconds after its FIRST write. When
+-- slide=true we re-arm the TTL on every write so the retention window slides on
+-- activity. Daily (date-scoped) counters pass slide=false/nil so their 25h
+-- window stays anchored to the day they belong to.
+local function bump(key, value, ttl, slide)
     local _, err = counters:incr(key, value, 0, ttl)
     if err then
         ngx.log(ngx.ERR, "tracking: incr failed key=", key, " err=", err,
                 " free=", counters:free_space())
+        return
+    end
+    if slide and ttl then
+        if _has_expire then
+            -- expire() returns nil,"not found" only if the key vanished between
+            -- incr and here (eviction) — harmless to ignore.
+            counters:expire(key, ttl)
+        else
+            local cur = counters:get(key)
+            if cur ~= nil then counters:set(key, cur, ttl) end
+        end
     end
 end
 
@@ -27,33 +49,39 @@ function _M.record(user, provider, model, input_tokens, output_tokens, opts)
     model    = util.sanitize(model)
     opts = opts or {}
 
+    -- Defense-in-depth: a provider returning nil tokens must not crash the whole
+    -- record() (which would drop every counter for this request). Per-provider
+    -- coercion stays harmless.
+    input_tokens  = tonumber(input_tokens) or 0
+    output_tokens = tonumber(output_tokens) or 0
+
     local prefix = user .. "|" .. provider .. "|" .. model
 
     -- Token counts (only on successful upstream responses)
     if input_tokens > 0 then
-        bump(prefix .. "|input", input_tokens, COUNTER_TTL)
+        bump(prefix .. "|input", input_tokens, COUNTER_TTL, true)
     end
     if output_tokens > 0 then
-        bump(prefix .. "|output", output_tokens, COUNTER_TTL)
+        bump(prefix .. "|output", output_tokens, COUNTER_TTL, true)
     end
 
     -- Cache token counts
     if opts.cache_creation and opts.cache_creation > 0 then
-        bump(prefix .. "|cache_creation", opts.cache_creation, COUNTER_TTL)
+        bump(prefix .. "|cache_creation", opts.cache_creation, COUNTER_TTL, true)
     end
     if opts.cache_read and opts.cache_read > 0 then
-        bump(prefix .. "|cache_read", opts.cache_read, COUNTER_TTL)
+        bump(prefix .. "|cache_read", opts.cache_read, COUNTER_TTL, true)
     end
 
     -- Request count + latency sum (for average latency computation in Grafana)
-    bump(prefix .. "|requests", 1, COUNTER_TTL)
+    bump(prefix .. "|requests", 1, COUNTER_TTL, true)
     if opts.latency_ms then
-        bump(prefix .. "|latency_ms_sum", math.floor(opts.latency_ms + 0.5), COUNTER_TTL)
+        bump(prefix .. "|latency_ms_sum", math.floor(opts.latency_ms + 0.5), COUNTER_TTL, true)
     end
 
     -- Upstream error count (4xx/5xx — 2xx/3xx are not errors)
     if opts.status and opts.status >= 400 then
-        bump(prefix .. "|errors", 1, COUNTER_TTL)
+        bump(prefix .. "|errors", 1, COUNTER_TTL, true)
     end
 
     -- Status code bucket: 2xx, 3xx, 4xx, 429 (special bucket for rate limiting), 5xx, other
@@ -72,15 +100,16 @@ function _M.record(user, provider, model, input_tokens, output_tokens, opts)
         else
             status_bucket = "other"
         end
-        bump(prefix .. "|status|" .. status_bucket, 1, COUNTER_TTL)
+        bump(prefix .. "|status|" .. status_bucket, 1, COUNTER_TTL, true)
     end
 
     -- Stop reason counter
     if opts.stop_reason and opts.stop_reason ~= ngx.null and opts.stop_reason ~= "" then
-        bump(prefix .. "|stop|" .. util.sanitize(opts.stop_reason), 1, COUNTER_TTL)
+        bump(prefix .. "|stop|" .. util.sanitize(opts.stop_reason), 1, COUNTER_TTL, true)
     end
 
-    -- Daily counters (for limit checks) — with TTL (25h = 90000s)
+    -- Daily counters (for limit checks) — with TTL (25h = 90000s). No slide:
+    -- the window must stay anchored to the day the counter belongs to.
     local today = util.get_today()
     local day_prefix = "day|" .. user .. "|" .. today
     if input_tokens > 0 then
@@ -89,11 +118,16 @@ function _M.record(user, provider, model, input_tokens, output_tokens, opts)
     if output_tokens > 0 then
         bump(day_prefix .. "|output", output_tokens, 90000)
     end
+    -- omlx reports real prompt size in cache_creation_input_tokens (input_tokens=0);
+    -- include cache tokens so tokens_per_day is enforced correctly for omlx users.
+    -- This is also correct for real Anthropic prompt-cache usage.
     local combined = (input_tokens or 0) + (output_tokens or 0)
+                     + (opts.cache_creation or 0) + (opts.cache_read or 0)
     if combined > 0 then
         bump(day_prefix .. "|total", combined, 90000)
     end
-    bump(day_prefix .. "|requests", 1, 90000)
+    -- NOTE: the daily |requests counter is bumped ATOMICALLY at admission in
+    -- auth.lua (incr-then-check) — bumping it again here would double-count.
 end
 
 -- Per-effort counters (effort = "none" when request has no output_config.effort).
@@ -102,13 +136,16 @@ function _M.record_effort(user, provider, model, effort, input_tokens, output_to
     provider = util.sanitize(provider)
     model    = util.sanitize(model)
     effort   = util.sanitize(effort)
+    -- Defense-in-depth: coerce before the >0 guards so nil tokens can't crash.
+    input_tokens  = tonumber(input_tokens) or 0
+    output_tokens = tonumber(output_tokens) or 0
     local prefix = user .. "|" .. provider .. "|" .. model .. "|effort|" .. effort
-    bump(prefix .. "|requests", 1, COUNTER_TTL)
+    bump(prefix .. "|requests", 1, COUNTER_TTL, true)
     if input_tokens > 0 then
-        bump(prefix .. "|input", input_tokens, COUNTER_TTL)
+        bump(prefix .. "|input", input_tokens, COUNTER_TTL, true)
     end
     if output_tokens > 0 then
-        bump(prefix .. "|output", output_tokens, COUNTER_TTL)
+        bump(prefix .. "|output", output_tokens, COUNTER_TTL, true)
     end
 end
 
@@ -117,14 +154,17 @@ end
 function _M.record_modality(user, provider, model, has_vision, input_tokens, output_tokens)
     provider = util.sanitize(provider)
     model    = util.sanitize(model)
+    -- Defense-in-depth: coerce before the >0 guards so nil tokens can't crash.
+    input_tokens  = tonumber(input_tokens) or 0
+    output_tokens = tonumber(output_tokens) or 0
     local modality = has_vision and "vision" or "text"
     local prefix = user .. "|" .. provider .. "|" .. model .. "|modality|" .. modality
-    bump(prefix .. "|requests", 1, COUNTER_TTL)
+    bump(prefix .. "|requests", 1, COUNTER_TTL, true)
     if input_tokens > 0 then
-        bump(prefix .. "|input", input_tokens, COUNTER_TTL)
+        bump(prefix .. "|input", input_tokens, COUNTER_TTL, true)
     end
     if output_tokens > 0 then
-        bump(prefix .. "|output", output_tokens, COUNTER_TTL)
+        bump(prefix .. "|output", output_tokens, COUNTER_TTL, true)
     end
 end
 
@@ -142,7 +182,9 @@ end
 local RL_EVENT_TTL = 86400 * 30
 
 function _M.set_rate_limit_wait(user, model, limit_type, seconds)
-    local key = "ratelimit_wait|" .. user .. "|" .. model .. "|" .. limit_type
+    -- Sanitize like record() does: a raw "|" in model/limit_type would corrupt
+    -- metric label parsing downstream.
+    local key = "ratelimit_wait|" .. user .. "|" .. util.sanitize(model) .. "|" .. util.sanitize(limit_type)
     local d = rl_events
     local ok, err = d:set(key, seconds, RL_EVENT_TTL)
     if not ok then
@@ -151,7 +193,9 @@ function _M.set_rate_limit_wait(user, model, limit_type, seconds)
 end
 
 function _M.set_rate_limit_tokens_at_hit(user, model, limit_type, tokens)
-    local key = "ratelimit_tokens|" .. user .. "|" .. model .. "|" .. limit_type
+    -- Sanitize like record() does: a raw "|" in model/limit_type would corrupt
+    -- metric label parsing downstream.
+    local key = "ratelimit_tokens|" .. user .. "|" .. util.sanitize(model) .. "|" .. util.sanitize(limit_type)
     local d = rl_events
     local ok, err = d:set(key, tokens, RL_EVENT_TTL)
     if not ok then
