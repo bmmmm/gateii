@@ -50,6 +50,10 @@ def _run(cmd):
 # field starting with "bench:").
 BENCH_SCRIPT = "/workspace/scripts/agent-bench"
 ACTIVE_FILE  = "/workspace/data/agents/active.json"
+# Same lock path scripts/agent-bench uses. os.mkdir is OS-atomic, so two
+# near-simultaneous /run-bench POSTs can't both claim it — closes the TOCTOU
+# gap where _bench_in_flight() stays False until a trial writes active.json.
+BENCH_LOCK_DIR = "/workspace/data/agents/bench.lock.d"
 
 
 def _bench_in_flight() -> bool:
@@ -66,6 +70,16 @@ def run_bench(force: bool = False):
         return 500, {"error": f"bench script not found at {BENCH_SCRIPT}"}
     if _bench_in_flight():
         return 409, {"error": "bench already in progress (see active.json)"}
+    # Atomic claim before spawn — agent-bench reclaims and releases this lock in
+    # its own finally, so we leave it in place once Popen succeeds (the spawned
+    # process owns its lifecycle). We only clean it up if Popen itself fails.
+    try:
+        os.makedirs(os.path.dirname(BENCH_LOCK_DIR), exist_ok=True)
+        os.mkdir(BENCH_LOCK_DIR)
+    except FileExistsError:
+        return 409, {"error": "bench already in progress (lock held)"}
+    except OSError as e:
+        return 500, {"error": f"could not acquire bench lock: {e}"}
     args = [BENCH_SCRIPT]
     if force:
         args.append("--force")
@@ -81,6 +95,11 @@ def run_bench(force: bool = False):
             cwd="/workspace",
         )
     except Exception as e:
+        # Spawn failed — release the lock we just claimed so a retry can run.
+        try:
+            os.rmdir(BENCH_LOCK_DIR)
+        except OSError:
+            pass
         return 500, {"error": f"spawn failed: {e}"}
     return 202, {"status": "started", "force": force}
 
@@ -294,7 +313,26 @@ def do_action(service, action):
     if service == PROXY_SERVICE_NAME and action in {"restart", "recreate"}:
         def _delayed():
             time.sleep(SELF_RESTART_DELAY_SECONDS)
-            _run(cmd)
+            # Caller already got 202; the only place a failure surfaces is here,
+            # so log the outcome explicitly instead of discarding the result.
+            try:
+                out = _run(cmd)
+                if out.returncode != 0:
+                    print(
+                        f"self-restart FAILED ({action} {service}): "
+                        f"exit={out.returncode} stderr={out.stderr.strip()}",
+                        flush=True,
+                    )
+                else:
+                    print(f"self-restart ok ({action} {service})", flush=True)
+            except subprocess.TimeoutExpired:
+                print(
+                    f"self-restart TIMEOUT ({action} {service}) after "
+                    f"{SUBPROCESS_TIMEOUT_SECONDS}s",
+                    flush=True,
+                )
+            except Exception as e:
+                print(f"self-restart ERROR ({action} {service}): {e}", flush=True)
         threading.Thread(target=_delayed, daemon=True).start()
         return 202, {
             "ok": True, "service": service, "action": action,
@@ -302,7 +340,19 @@ def do_action(service, action):
             "note": "proxy is restarting itself — wait a few seconds then refresh",
         }
 
-    out = _run(cmd)
+    try:
+        out = _run(cmd)
+    except subprocess.TimeoutExpired:
+        return 504, {
+            "error": f"'{action} {service}' timed out after "
+                     f"{SUBPROCESS_TIMEOUT_SECONDS}s — image pull still in progress?",
+            "service": service, "action": action,
+        }
+    except OSError as e:
+        return 500, {
+            "error": f"could not run docker compose: {e}",
+            "service": service, "action": action,
+        }
     if out.returncode != 0:
         return 500, {
             "error": out.stderr.strip() or out.stdout.strip(),
@@ -326,20 +376,23 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("Content-Type", "application/json")
         self.send_header("Content-Length", str(len(payload)))
         self.end_headers()
-        self.wfile.write(payload)
+        try:
+            self.wfile.write(payload)
+        except BrokenPipeError:
+            # Client (or self-restarting proxy) hung up before we replied.
+            pass
 
     def _auth_ok(self) -> bool:
         """Defense-in-depth: only accept callers carrying X-Internal-Token
         matching env INTERNAL_TOKEN. The proxy injects this header when
         forwarding /internal/admin/services|agents/bench|agents/idle-config.
-        Without an INTERNAL_TOKEN set we keep the legacy "trust the docker
-        network" behavior so existing setups don't break — but we log a
-        WARN once at startup. /health is always allowed so probes work
+        Fail closed: with no INTERNAL_TOKEN set we never serve mutating
+        endpoints (see DegradedHandler / main()), so this only runs when a
+        token is configured. /health is always allowed so probes work
         regardless of auth state.
         """
-        if not INTERNAL_TOKEN:
-            return True   # legacy: no token configured, accept all
-        return self.headers.get("X-Internal-Token", "") == INTERNAL_TOKEN
+        return bool(INTERNAL_TOKEN) and \
+            self.headers.get("X-Internal-Token", "") == INTERNAL_TOKEN
 
     def do_GET(self):
         path = urlparse(self.path).path.rstrip("/") or "/"
@@ -387,6 +440,39 @@ class Handler(BaseHTTPRequestHandler):
         pass
 
 
+class DegradedHandler(BaseHTTPRequestHandler):
+    """Served when INTERNAL_TOKEN is unset: fail closed. Only /health works
+    (for container probes); every other path returns 503 so an unauthenticated
+    caller can never reach the docker-socket-backed mutating endpoints."""
+    server_version = "compose-ctl/1.0"
+
+    def _reply(self, code, body):
+        payload = json.dumps(body).encode()
+        self.send_response(code)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(payload)))
+        self.end_headers()
+        try:
+            self.wfile.write(payload)
+        except BrokenPipeError:
+            pass
+
+    def _degraded(self):
+        path = urlparse(self.path).path.rstrip("/") or "/"
+        if path == "/health":
+            return self._reply(200, {"ok": True, "project": PROJECT, "degraded": True})
+        return self._reply(503, {
+            "error": "INTERNAL_TOKEN not configured; control plane disabled",
+            "hint": "generate with: openssl rand -hex 32",
+        })
+
+    do_GET = _degraded
+    do_POST = _degraded
+
+    def log_message(self, fmt, *args):
+        pass
+
+
 def main():
     port = int(os.environ.get("CTL_PORT", "8090"))
     print(
@@ -394,14 +480,21 @@ def main():
         f"compose_cmd={' '.join(COMPOSE_CMD)} port={port}",
         flush=True,
     )
+    # Fail closed: without a shared secret the docker-socket-backed mutating
+    # endpoints would be reachable by any sibling on the gateii network. Serve
+    # a degraded handler (health-only, 503 for everything else) instead of the
+    # full Handler so probes still pass but the control plane stays disabled.
+    if not INTERNAL_TOKEN:
+        print("compose-ctl: ERROR — INTERNAL_TOKEN not set; refusing to serve "
+              "mutating endpoints. Generate with: openssl rand -hex 32 "
+              "and set INTERNAL_TOKEN in .env. Running degraded (health-only).",
+              flush=True)
+        HTTPServer(("0.0.0.0", port), DegradedHandler).serve_forever()
+        return
     # Idle-unload watcher in a daemon thread; outlives nothing — dies with the
     # main process (sane shutdown via SIGTERM in compose stop).
     threading.Thread(target=_idle_watcher_loop, daemon=True).start()
     print(f"compose-ctl: idle watcher started (tick={IDLE_TICK_SECONDS}s)", flush=True)
-    if not INTERNAL_TOKEN:
-        print("compose-ctl: WARN — INTERNAL_TOKEN not set; accepting all callers "
-              "on the docker network. Set INTERNAL_TOKEN in .env for defense in depth.",
-              flush=True)
     HTTPServer(("0.0.0.0", port), Handler).serve_forever()
 
 

@@ -11,6 +11,20 @@ local registry = {
     omlx       = require "providers.omlx",
 }
 
+-- Internal providers point at loopback / Docker-host-loopback model servers
+-- (oMLX, ollama, …). They must never be selectable via the CLIENT-supplied
+-- x-provider header (the passthrough fallback path) — otherwise a client with
+-- a valid passthrough key could POST x-provider:omlx and reach the internal
+-- oMLX control endpoints, bypassing ADMIN_TOKEN (SSRF / RAM-DoS). They remain
+-- reachable through a trusted per-user pin (ngx.ctx.upstream_provider). Set on
+-- the provider module so handler.lua can check provider.internal directly.
+local internal_providers = { omlx = true }
+for name, p in pairs(registry) do
+    if p and internal_providers[name] then
+        p.internal = true
+    end
+end
+
 -- SSRF defense-in-depth: reject any provider whose upstream is not HTTPS,
 -- with the explicit exception of loopback / Docker-host loopback for local
 -- model servers (omlx, ollama, etc.). You can't SSRF yourself: the attack
