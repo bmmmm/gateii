@@ -13,10 +13,14 @@ function _M.atomic_write(path, content)
         return nil, "open " .. tmp .. " failed: " .. tostring(open_err)
     end
     local ok_w, write_err = f:write(content)
-    f:close()
-    if not ok_w then
+    -- Buffered stdio flushes at close, so a close-flush failure (ENOSPC/quota/IO)
+    -- means the temp is truncated even though write() returned ok. Treat a close
+    -- failure as a write failure so we never rename a half-written temp over the
+    -- good original.
+    local ok_c, close_err = f:close()
+    if not ok_w or not ok_c then
         os.remove(tmp)
-        return nil, "write " .. tmp .. " failed: " .. tostring(write_err)
+        return nil, "write " .. tmp .. " failed: " .. tostring(write_err or close_err)
     end
     local ok, rename_err = os.rename(tmp, path)
     if not ok then

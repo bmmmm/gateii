@@ -279,34 +279,42 @@ for _, l in ipairs(err_lines) do add(l) end
 add("# HELP gateii_cost_dollars_total Estimated API cost in USD (Anthropic pricing)")
 add("# TYPE gateii_cost_dollars_total counter")
 for upm, data in pairs(usage) do
-    local user, provider, model = upm:match("^([^|]+)|([^|]+)|(.+)$")
-    local price = user and model_price(model) or nil
-    local eu, ep, em
-    if user then eu, ep, em = labels_upm(user, provider, model) end
-    if price then
-        -- Standard input/output tokens
-        for _, typ in ipairs({"input", "output"}) do
-            local tokens = data[typ] or 0
-            if tokens > 0 then
-                local cost = tokens * price[typ] / 1000000
+    -- A malformed pricing entry (e.g. missing pattern) makes model_price raise
+    -- inside m:find(nil). pcall per model so one bad config row degrades to a
+    -- WARN + skipped line instead of 500ing the whole /metrics scrape.
+    local ok_cost, cost_err = pcall(function()
+        local user, provider, model = upm:match("^([^|]+)|([^|]+)|(.+)$")
+        local price = user and model_price(model) or nil
+        local eu, ep, em
+        if user then eu, ep, em = labels_upm(user, provider, model) end
+        if price then
+            -- Standard input/output tokens
+            for _, typ in ipairs({"input", "output"}) do
+                local tokens = data[typ] or 0
+                if tokens > 0 then
+                    local cost = tokens * price[typ] / 1000000
+                    add(string.format('gateii_cost_dollars_total{user="%s",provider="%s",model="%s",type="%s"} %.6f',
+                        eu, ep, em, typ, cost))
+                end
+            end
+            -- Cache write tokens
+            local cache_create = data.cache_creation or 0
+            if cache_create > 0 then
+                local cost = cache_create * (price.input * cache_write_mult) / 1000000
                 add(string.format('gateii_cost_dollars_total{user="%s",provider="%s",model="%s",type="%s"} %.6f',
-                    eu, ep, em, typ, cost))
+                    eu, ep, em, "cache_write", cost))
+            end
+            -- Cache read tokens
+            local cache_rd = data.cache_read or 0
+            if cache_rd > 0 then
+                local cost = cache_rd * (price.input * cache_read_mult) / 1000000
+                add(string.format('gateii_cost_dollars_total{user="%s",provider="%s",model="%s",type="%s"} %.6f',
+                    eu, ep, em, "cache_read", cost))
             end
         end
-        -- Cache write tokens
-        local cache_create = data.cache_creation or 0
-        if cache_create > 0 then
-            local cost = cache_create * (price.input * cache_write_mult) / 1000000
-            add(string.format('gateii_cost_dollars_total{user="%s",provider="%s",model="%s",type="%s"} %.6f',
-                eu, ep, em, "cache_write", cost))
-        end
-        -- Cache read tokens
-        local cache_rd = data.cache_read or 0
-        if cache_rd > 0 then
-            local cost = cache_rd * (price.input * cache_read_mult) / 1000000
-            add(string.format('gateii_cost_dollars_total{user="%s",provider="%s",model="%s",type="%s"} %.6f',
-                eu, ep, em, "cache_read", cost))
-        end
+    end)
+    if not ok_cost then
+        ngx.log(ngx.WARN, "metrics: cost calc failed for '", upm, "', skipping: ", cost_err)
     end
 end
 
@@ -372,7 +380,15 @@ local rl_7d_expired  = reset_7d_unix and reset_7d_unix <= now_unix or false
 -- dashboard from showing yesterday's utilization indefinitely.
 if rl_5h_expired then
     rl_5h_util = 0
-    if tokens_window_limit then rl_win_remaining = tokens_window_limit end
+    -- Symmetric reset: with a limit configured, remaining = the full window;
+    -- without one, clear remaining so the emit-guard suppresses the gauge
+    -- (otherwise a stale gateii_rate_limit_tokens_remaining lingers next to util 0
+    -- after switching to a provider that has no tokens_window_limit).
+    if tokens_window_limit then
+        rl_win_remaining = tokens_window_limit
+    else
+        rl_win_remaining = nil
+    end
 end
 if rl_7d_expired then
     rl_7d_util = 0
@@ -531,10 +547,11 @@ add(string.format('gateii_admin_login_failures_total %d', counters:get("admin_lo
 add("# HELP gateii_model_pricing_per_mtok Current Anthropic pricing per 1M tokens (USD)")
 add("# TYPE gateii_model_pricing_per_mtok gauge")
 for _, p in ipairs(pricing) do
-    add(string.format('gateii_model_pricing_per_mtok{pattern="%s",type="input"} %.2f', p.pattern, p.input))
-    add(string.format('gateii_model_pricing_per_mtok{pattern="%s",type="output"} %.2f', p.pattern, p.output))
-    add(string.format('gateii_model_pricing_per_mtok{pattern="%s",type="cache_write"} %.2f', p.pattern, p.input * cache_write_mult))
-    add(string.format('gateii_model_pricing_per_mtok{pattern="%s",type="cache_read"} %.2f', p.pattern, p.input * cache_read_mult))
+    local ep = escape_label(p.pattern)
+    add(string.format('gateii_model_pricing_per_mtok{pattern="%s",type="input"} %.2f', ep, p.input))
+    add(string.format('gateii_model_pricing_per_mtok{pattern="%s",type="output"} %.2f', ep, p.output))
+    add(string.format('gateii_model_pricing_per_mtok{pattern="%s",type="cache_write"} %.2f', ep, p.input * cache_write_mult))
+    add(string.format('gateii_model_pricing_per_mtok{pattern="%s",type="cache_read"} %.2f', ep, p.input * cache_read_mult))
 end
 
 -- Shared dict health (free space in bytes — alert if approaching 0)
@@ -579,9 +596,10 @@ local function _bench_to_metrics()
     for k, c in pairs(bdata.cells) do
         local task, model = k:match("^([^|]+)|(.+)$")
         if task and model then
-            add(string.format('gateii_omlx_bench_pass_rate{task="%s",model="%s"} %.3f', task, model, c.pass_rate))
-            add(string.format('gateii_omlx_bench_latency_seconds{task="%s",model="%s",quantile="0.5"} %.3f', task, model, c.latency_p50))
-            add(string.format('gateii_omlx_bench_trials_total{task="%s",model="%s"} %d', task, model, c.runs))
+            local et, emo = escape_label(task), escape_label(model)
+            add(string.format('gateii_omlx_bench_pass_rate{task="%s",model="%s"} %.3f', et, emo, c.pass_rate))
+            add(string.format('gateii_omlx_bench_latency_seconds{task="%s",model="%s",quantile="0.5"} %.3f', et, emo, c.latency_p50))
+            add(string.format('gateii_omlx_bench_trials_total{task="%s",model="%s"} %d', et, emo, c.runs))
         end
     end
 
@@ -590,7 +608,7 @@ local function _bench_to_metrics()
         add("# HELP gateii_omlx_model_created_timestamp_seconds When a benched model was registered with omlx (Unix epoch)")
         add("# TYPE gateii_omlx_model_created_timestamp_seconds gauge")
         for model, created in pairs(bdata.model_created) do
-            add(string.format('gateii_omlx_model_created_timestamp_seconds{model="%s"} %d', model, created))
+            add(string.format('gateii_omlx_model_created_timestamp_seconds{model="%s"} %d', escape_label(model), created))
         end
     end
 
@@ -611,7 +629,7 @@ local function _routing_to_metrics()
     add("# TYPE gateii_omlx_routing_choice gauge")
     for task, route in pairs(r.routes) do
         if route.model then
-            add(string.format('gateii_omlx_routing_choice{task="%s",model="%s"} 1', task, route.model))
+            add(string.format('gateii_omlx_routing_choice{task="%s",model="%s"} 1', escape_label(task), escape_label(route.model)))
         end
     end
 end

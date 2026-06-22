@@ -90,7 +90,17 @@ function _M.record(provider, status, transport_err)
     local state = cd:get(key(provider, "state")) or "closed"
 
     if is_failure then
+        -- incr returns nil when the dict must allocate but is full; coerce to 0 so
+        -- the `failures >= FAILURE_THRESHOLD` compare below never blows up on nil
+        -- (no record() call site wraps this in pcall). A full-dict round just
+        -- doesn't trip the breaker instead of crashing the request.
         local failures = cd:incr(key(provider, "failures"), 1, 0, STATE_TTL)
+        if not failures then
+            ngx.log(ngx.WARN, "circuit_breaker: ", provider,
+                    " failures incr returned nil (counters dict full, free_space=",
+                    cd:free_space(), ") — not tripping breaker this round")
+            failures = 0
+        end
 
         if state == "half_open" then
             -- Probe failed — release claim, reopen with a fresh cooldown timer.
