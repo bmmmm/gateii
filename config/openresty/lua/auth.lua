@@ -16,21 +16,13 @@ local RATE_LIMIT_BURST   = tonumber(os.getenv("RATE_LIMIT_BURST"))  or 10
 -- Console URL surfaced in 429 error bodies so clients know where to manage their key.
 local CONSOLE_URL        = os.getenv("CONSOLE_URL") or "http://localhost:8888/console"
 
--- Seed RNG once per worker (module-level, runs on first require per worker process)
-math.randomseed(ngx.now() * 1000 + ngx.worker.pid())
-
-local function new_request_id()
-    local first_ip_byte = string.byte(ngx.var.remote_addr or "", 1) or 0
-    local t = ngx.now()
-    return string.format("%08x%08x%04x",
-        math.floor(t * 1000) % 0xffffffff,
-        (ngx.worker.pid() * 0x01000193) + first_ip_byte,
-        math.random(0, 0xffff))
-end
-
+-- Request id: honor a valid incoming X-Request-Id, otherwise use nginx's native
+-- request_id (32 hex chars, collision-free). The previous custom generator ran
+-- math.randomseed per request with only 16 bits of entropy → same-ms same-worker
+-- ids collided and defeated log tracing.
 local incoming_rid = ngx.var.http_x_request_id or ""
 local rid = (#incoming_rid > 0 and #incoming_rid <= 128 and incoming_rid:match("^[A-Za-z0-9%-]+$"))
-            and incoming_rid or new_request_id()
+            and incoming_rid or ngx.var.request_id
 ngx.ctx.request_id = rid
 ngx.header["X-Request-Id"] = rid
 
@@ -46,6 +38,25 @@ end
 local function ttl_until_midnight()
     local now = os.time()
     return (86400 - (now % 86400)) + 60
+end
+
+-- Daily-limit enforcement counters live in the LRU `counters` dict and can be
+-- evicted under memory pressure, silently disabling enforcement. We can't
+-- relocate the dict from here (cross-file change), but we can make the silent
+-- loss observable: when a user with an active daily limit is being checked and
+-- the dict is near-full, log a WARN at most once per minute (rate-limited via a
+-- short-TTL flag in the quiet `blocking` dict, so this never spams the log).
+local function warn_if_counters_near_full(user)
+    local free = counters:free_space()
+    -- free_space() reports free bytes in fully-free slab pages; a small value
+    -- means the dict is close to forcing LRU eviction of enforcement counters.
+    if free and free < 8192 then
+        if blocking_dict:add("warn|counters_full", 1, 60) then
+            ngx.log(ngx.WARN, "[rid=", rid, "] counters dict near-full (free=", free,
+                    " bytes); daily-limit enforcement counters for user ", user,
+                    " may be evicted — limits could be silently bypassed")
+        end
+    end
 end
 
 -- Reject request with a JSON error response
@@ -77,6 +88,7 @@ local user
 if proxy_mode == "passthrough" then
     -- Use configured name, else fall back to a generic identifier (never log key fragments)
     user = proxy_config.PASSTHROUGH_USER
+    ngx.ctx.auth_type = "passthrough"
     ngx.ctx.upstream_key = api_key
     -- Remember original auth format — OAuth tokens must stay as Bearer, not x-api-key
     if ngx.var.http_x_api_key and ngx.var.http_x_api_key ~= "" then
@@ -85,6 +97,7 @@ if proxy_mode == "passthrough" then
         ngx.ctx.upstream_auth_type = "bearer"
     end
 else
+    ngx.ctx.auth_type = "apikey"
     -- Apikey mode: check shared dict cache, then keys.json.
     -- keys.json entries are structured: {user, provider, upstream_key}; per-user
     -- upstream routing — each proxy key pins to its own provider + upstream credential.
@@ -100,6 +113,14 @@ else
     if not entry then
         local keys = proxy_config.load_keys()
         local val = keys[api_key]
+        if type(val) ~= "table" or not val.user or not val.provider or not val.upstream_key then
+            -- MISS on the throttled snapshot. A freshly provisioned key may not
+            -- be in this worker's cache yet (10s no-change throttle). Force one
+            -- fresh disk read before negative-caching, so onboarding doesn't hit
+            -- a 60s 401 storm.
+            keys = proxy_config.load_keys(true)
+            val = keys[api_key]
+        end
         if type(val) ~= "table" or not val.user or not val.provider or not val.upstream_key then
             auth_cache:set(api_key, false, AUTH_CACHE_NEG_TTL)
             return reject(401, "Invalid API key — check your key or run admin.sh add <user>")
@@ -148,10 +169,19 @@ do
         if not limits then
             ngx.log(ngx.WARN, "[rid=", rid, "] failed to decode limits for user ", user, ": ", decode_err)
         else
-            local today = proxy_config.get_today()
+            -- Use util.get_today() (flips exactly at UTC midnight) so the day
+            -- bucket matches tracking.lua's. proxy_config.get_today() lags up to
+            -- 60s post-midnight, which could 429 + 24h-block a zero-usage user.
+            local today = util.get_today()
             local day_prefix = "day|" .. user .. "|" .. today
 
+            -- Make eviction-driven silent enforcement loss observable.
+            warn_if_counters_near_full(user)
+
             if limits.tokens_per_day then
+                -- Soft check: tokens_per_day stays a pre-request read of the
+                -- post-response total — the future request's token count is
+                -- unknown, so it can't be enforced atomically at admission.
                 local used_total = counters:get(day_prefix .. "|total") or 0
                 if used_total >= limits.tokens_per_day then
                     local ttl = ttl_until_midnight()
@@ -170,8 +200,16 @@ do
             end
 
             if limits.requests_per_day then
-                local used_reqs = counters:get(day_prefix .. "|requests") or 0
-                if used_reqs >= limits.requests_per_day then
+                -- Atomic incr-then-check at admission: a known +1 per request,
+                -- so we can count this request before deciding. Avoids the burst
+                -- overshoot of a pre-request read of a post-response counter.
+                -- tracking.record() no longer bumps day|...|requests (would
+                -- double-count). incr returns nil when the dict is full → treat
+                -- as fail-open ("or limits.requests_per_day - 1" keeps it under
+                -- the limit so a full dict never wrongly blocks).
+                local used_reqs = counters:incr(day_prefix .. "|requests", 1, 0, 90000)
+                                  or (limits.requests_per_day - 1)
+                if used_reqs > limits.requests_per_day then
                     local ttl = ttl_until_midnight()
                     blocking_dict:set("blocked|" .. user, "auto:requests_per_day", ttl)
                     ngx.status = 429
@@ -190,10 +228,12 @@ do
     end
 end
 
--- 4. Rate limit per user (applies in both modes — defense against runaway clients)
--- In passthrough the PASSTHROUGH_USER is a single bucket; burst 10 covers normal
--- interactive use, sustained rate is 1 req/s. Tune via limit_req.new() if needed.
-if lim then
+-- 4. Rate limit per user — apikey mode only (documented invariant).
+-- In passthrough every client shares the single PASSTHROUGH_USER bucket, so a
+-- shared limiter would penalize unrelated clients; passthrough is intentionally
+-- unmetered. Burst 10 covers normal interactive use, sustained rate is 1 req/s.
+-- Tune via limit_req.new() if needed.
+if lim and proxy_config.PROXY_MODE ~= "passthrough" then
     local delay, err = lim:incoming(user, true)
     if not delay then
         if err == "rejected" then
