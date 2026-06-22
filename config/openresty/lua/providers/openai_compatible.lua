@@ -2,6 +2,18 @@
 local cjson = require "cjson.safe"
 local _M = {}
 
+-- Map OpenAI finish_reason → Anthropic stop_reason so metrics.lua's
+-- STOP_REASON_ALLOWED whitelist (Anthropic-only) doesn't collapse every
+-- OpenAI reason to "other" and lose truncation vs tool-use vs stop.
+-- Unknown/nil reasons are left as-is.
+local FINISH_REASON_MAP = {
+    stop           = "end_turn",
+    length         = "max_tokens",
+    tool_calls     = "tool_use",
+    function_call  = "tool_use",
+    content_filter = "refusal",
+}
+
 -- Read once at module load time — never changes during worker lifetime
 local OPENAI_API_KEY    = os.getenv("OPENAI_API_KEY") or ""
 local OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY") or ""
@@ -28,6 +40,8 @@ function _M.extract_tokens(response_body)
     local obj = cjson.decode(response_body)
     if not obj or not obj.usage then return 0, 0, nil, 0, 0 end
     local stop = obj.choices and obj.choices[1] and obj.choices[1].finish_reason
+    -- Map OpenAI finish_reason → Anthropic stop_reason (unknown/nil left as-is).
+    if type(stop) == "string" then stop = FINISH_REASON_MAP[stop] or stop end
     -- tonumber: coerce string token counts / drop cjson.null so tracking.record's
     -- `> 0` comparison can't crash on a non-conformant upstream (vLLM/LM Studio/…).
     return tonumber(obj.usage.prompt_tokens) or 0, tonumber(obj.usage.completion_tokens) or 0, stop, 0, 0

@@ -4,6 +4,18 @@ local cjson = require "cjson.safe"
 
 local _M = {}
 
+-- Map OpenAI finish_reason → Anthropic stop_reason so metrics.lua's
+-- STOP_REASON_ALLOWED whitelist (Anthropic-only) doesn't collapse every
+-- OpenAI reason to "other" and lose truncation vs tool-use vs stop.
+-- Unknown/nil reasons are left as-is.
+local FINISH_REASON_MAP = {
+    stop           = "end_turn",
+    length         = "max_tokens",
+    tool_calls     = "tool_use",
+    function_call  = "tool_use",
+    content_filter = "refusal",
+}
+
 -- Returns: input_tokens, output_tokens, stop_reason, cache_creation, cache_read
 function _M.extract_tokens_streaming(body)
     local input_tokens, output_tokens, stop_reason = 0, 0, nil
@@ -25,7 +37,7 @@ function _M.extract_tokens_streaming(body)
                     -- type() check avoids indexing userdata.
                     if type(obj.choices) == "table" and type(obj.choices[1]) == "table" then
                         local fr = obj.choices[1].finish_reason
-                        if type(fr) == "string" then stop_reason = fr end
+                        if type(fr) == "string" then stop_reason = FINISH_REASON_MAP[fr] or fr end
                     end
                 end
             end
