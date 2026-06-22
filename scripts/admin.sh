@@ -71,10 +71,14 @@ validate_key() {
     }
 }
 
-# Atomic write to keys.json via temp file
+# Atomic write to keys.json via temp file.
+# The `>` redirect creates the temp file with a fresh inode and umask perms, so
+# the entrypoint-set 600 mode on keys.json would be lost on mv — keys.json holds
+# plaintext upstream API keys. chmod the temp file to 600 before mv to preserve it.
 write_keys() {
     local tmp="${KEYS_FILE}.tmp"
     if jq "$@" "$KEYS_FILE" > "$tmp"; then
+        chmod 600 "$tmp"
         mv "$tmp" "$KEYS_FILE"
     else
         rm -f "$tmp"
@@ -85,6 +89,20 @@ write_keys() {
 
 reload_proxy() {
     docker compose -f "$PROJECT_DIR/docker-compose.yml" exec -T openresty nginx -s reload 2>/dev/null || true
+}
+
+# Evict a removed key from the shared-dict auth_cache across all workers.
+# lua_shared_dict auth_cache survives `nginx -s reload`, so a revoked key keeps
+# authenticating until AUTH_CACHE_POS_TTL (up to 5 min) expires. The admin API
+# deletes the entry immediately. Returns 0 on success, 1 if the API is
+# unreachable (caller falls back to reload + a TTL warning).
+evict_auth_cache() {
+    local key="$1"
+    local body
+    body=$(jq -nc --arg k "$key" '{key: $k}')
+    admin_curl -sf --max-time 5 -X POST "$ADMIN/revoke-key" \
+      -H 'Content-Type: application/json' -d "$body" 2>/dev/null | \
+      jq -e '.ok == true' >/dev/null 2>&1
 }
 
 case "$SUBCMD" in
@@ -134,22 +152,36 @@ case "$SUBCMD" in
     PROVIDER=""
     UPSTREAM_KEY=""
     PROXY_KEY=""
+    FORCE=0
     while [ $# -gt 0 ]; do
       case "$1" in
         --provider)     PROVIDER="${2:?}"; shift 2 ;;
         --upstream-key) UPSTREAM_KEY="${2:?}"; shift 2 ;;
         --key)          PROXY_KEY="${2:?}"; shift 2 ;;
+        --force)        FORCE=1; shift ;;
         -*) echo -e "${RED}Unknown flag: $1${NC}" >&2; exit 1 ;;
         *) [ -z "$USER" ] && USER="$1" || { echo -e "${RED}Too many positional args${NC}" >&2; exit 1; }; shift ;;
       esac
     done
     if [ -z "$USER" ] || [ -z "$PROVIDER" ] || [ -z "$UPSTREAM_KEY" ]; then
-      echo -e "${RED}Usage: admin.sh add <user> --provider <p> --upstream-key <k> [--key <proxy-key>]${NC}" >&2
+      echo -e "${RED}Usage: admin.sh add <user> --provider <p> --upstream-key <k> [--key <proxy-key>] [--force]${NC}" >&2
       echo -e "${DIM}  Example: admin.sh add alice --provider anthropic --upstream-key sk-ant-api03-...${NC}" >&2
+      echo -e "${DIM}  --force: add a second key for an existing user (default steers to rotate)${NC}" >&2
       echo -e "${DIM}  Hint: for provisioning via handshake use 'admin.sh bootstrap create'${NC}" >&2
       exit 1
     fi
     validate_user "$USER"
+    # `add` merges additively — re-running it for an existing user leaves the old
+    # key valid alongside the new one (credential sprawl). Default-steer to rotate;
+    # allow the legitimate multi-key case behind --force.
+    EXISTING_COUNT=$(jq --arg u "$USER" '[to_entries[] | select(.value.user == $u)] | length' "$KEYS_FILE" 2>/dev/null || echo 0)
+    if [ "$EXISTING_COUNT" -gt 0 ] && [ "$FORCE" -ne 1 ]; then
+      EXISTING_MASKED=$(jq -r --arg u "$USER" 'to_entries[] | select(.value.user == $u) | "\(.key[:12])...\(.key[-6:])"' "$KEYS_FILE" 2>/dev/null | head -1)
+      echo -e "${YEL}$USER already has $EXISTING_COUNT key(s) (e.g. ${EXISTING_MASKED})${NC}" >&2
+      echo -e "  ${DIM}To replace it: admin.sh rotate $USER${NC}" >&2
+      echo -e "  ${DIM}To add a second key anyway: admin.sh add $USER ... --force${NC}" >&2
+      exit 1
+    fi
     [ -z "$PROXY_KEY" ] && PROXY_KEY="sk-proxy-$(openssl rand -hex 16)"
     validate_key "$PROXY_KEY"
     CREATED_AT="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
@@ -176,7 +208,12 @@ case "$SUBCMD" in
     write_keys --arg key "$KEY" 'del(.[$key])'
     reload_proxy
     echo -e "${GRN}Revoked key for ${BOLD}$USER${NC}"
-    echo -e "  ${DIM}Auth cache expires in up to 5 minutes${NC}"
+    if evict_auth_cache "$KEY"; then
+      echo -e "  ${DIM}Auth cache entry evicted — revocation is effective now${NC}"
+    else
+      echo -e "  ${YEL}Admin API unreachable — could not evict auth cache${NC}" >&2
+      echo -e "  ${DIM}Revoked key may keep authenticating for up to 5 minutes${NC}"
+    fi
     ;;
 
   rotate)
@@ -191,11 +228,14 @@ case "$SUBCMD" in
     UPSTREAM_KEY=$(echo "$EXISTING" | jq -r '.value.upstream_key')
     NEW_KEY="sk-proxy-$(openssl rand -hex 16)"
     validate_key "$NEW_KEY"
-    # Show old keys being revoked
-    jq -r --arg user "$USER" 'to_entries[] | select(.value.user == $user) | .key' "$KEYS_FILE" | \
-      while read -r old_key; do
-        echo -e "  ${DIM}Revoked: ${old_key:0:12}...${old_key: -6}${NC}"
-      done
+    # Collect the old keys being revoked (need them later to evict the auth cache)
+    OLD_KEYS=()
+    while read -r old_key; do
+      [ -n "$old_key" ] && OLD_KEYS+=("$old_key")
+    done < <(jq -r --arg user "$USER" 'to_entries[] | select(.value.user == $user) | .key' "$KEYS_FILE")
+    for old_key in "${OLD_KEYS[@]}"; do
+      echo -e "  ${DIM}Revoked: ${old_key:0:12}...${old_key: -6}${NC}"
+    done
     CREATED_AT="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
     write_keys \
       --arg user "$USER" \
@@ -205,7 +245,18 @@ case "$SUBCMD" in
       --arg created "$CREATED_AT" \
       '[to_entries[] | select(.value.user != $user)] | from_entries + {($new_key): {user: $user, provider: $provider, upstream_key: $upstream, created_at: $created}}'
     reload_proxy
+    # Evict every old key from the auth cache so the cutover is effective now.
+    # lua_shared_dict auth_cache survives `nginx -s reload`, so without this the
+    # old keys would keep authenticating for up to AUTH_CACHE_POS_TTL (5 min).
+    EVICT_FAILED=0
+    for old_key in "${OLD_KEYS[@]}"; do
+      evict_auth_cache "$old_key" || EVICT_FAILED=1  # gitleaks:allow (loop variable, not a secret)
+    done
     echo -e "${GRN}New key for ${BOLD}$USER${NC} (${PROVIDER}): ${CYN}$NEW_KEY${NC}"
+    if [ "$EVICT_FAILED" -eq 1 ]; then
+      echo -e "  ${YEL}Admin API unreachable — could not evict old keys from auth cache${NC}" >&2
+      echo -e "  ${DIM}Old keys may keep authenticating for up to 5 minutes${NC}"
+    fi
     ;;
 
   block)
@@ -384,10 +435,12 @@ case "$SUBCMD" in
     PLUGIN="${2:-}"
     shift 2 2>/dev/null || shift $# 2>/dev/null || true
     OVERRIDE="$PROJECT_DIR/docker-compose.override.yml"
-    COMPOSE="docker compose --project-directory \"$PROJECT_DIR\" -f \"$PROJECT_DIR/docker-compose.yml\" --env-file \"$PROJECT_DIR/.env\""
+    # Use an array, not a string with embedded quotes — a string expanded
+    # unquoted word-splits on spaces in $PROJECT_DIR and leaves literal quotes in.
+    COMPOSE=(docker compose --project-directory "$PROJECT_DIR" -f "$PROJECT_DIR/docker-compose.yml" --env-file "$PROJECT_DIR/.env")
     # Include override if it exists
     if [ -f "$OVERRIDE" ]; then
-      COMPOSE="$COMPOSE -f \"$OVERRIDE\""
+      COMPOSE+=(-f "$OVERRIDE")
     fi
 
     # Available plugins (name → description)
@@ -425,7 +478,7 @@ git-tracking:Track git activity (commits, lines) alongside token usage"
           else
             echo "CONSOLE_ENABLED=1" >> "$ENV_FILE"
           fi
-          CONSOLE_ENABLED=1 $COMPOSE up -d --force-recreate openresty 2>&1
+          CONSOLE_ENABLED=1 "${COMPOSE[@]}" up -d --force-recreate openresty 2>&1
           echo -e "${GRN}Console enabled${NC} — open http://localhost:8888/console"
           exit 0
         fi
@@ -486,9 +539,9 @@ YAML
             echo "GIT_TRACKING_ENABLED=1" >> "$ENV_FILE"
           fi
 
-          # Start with override
-          COMPOSE_WITH_OVERRIDE="$COMPOSE -f $OVERRIDE"
-          $COMPOSE_WITH_OVERRIDE up -d git-tracking 2>&1
+          # Start with override (derived array — base may already include it)
+          COMPOSE_WITH_OVERRIDE=("${COMPOSE[@]}" -f "$OVERRIDE")
+          "${COMPOSE_WITH_OVERRIDE[@]}" up -d git-tracking 2>&1
           echo -e "${GRN}Plugin git-tracking enabled${NC}"
           exit 0
         fi
@@ -508,16 +561,16 @@ YAML
           else
             echo "CONSOLE_ENABLED=0" >> "$ENV_FILE"
           fi
-          CONSOLE_ENABLED=0 $COMPOSE up -d --force-recreate openresty 2>&1
+          CONSOLE_ENABLED=0 "${COMPOSE[@]}" up -d --force-recreate openresty 2>&1
           echo -e "${GRN}Console disabled${NC}"
           exit 0
         fi
         # git-tracking: stop container, remove override, set GIT_TRACKING_ENABLED=0
         if [ "$PLUGIN" = "git-tracking" ]; then
           if [ -f "$OVERRIDE" ]; then
-            COMPOSE_WITH_OVERRIDE="$COMPOSE -f $OVERRIDE"
-            $COMPOSE_WITH_OVERRIDE stop git-tracking 2>/dev/null || true
-            $COMPOSE_WITH_OVERRIDE rm -f git-tracking 2>/dev/null || true
+            COMPOSE_WITH_OVERRIDE=("${COMPOSE[@]}" -f "$OVERRIDE")
+            "${COMPOSE_WITH_OVERRIDE[@]}" stop git-tracking 2>/dev/null || true
+            "${COMPOSE_WITH_OVERRIDE[@]}" rm -f git-tracking 2>/dev/null || true
           fi
           rm -f "$OVERRIDE" 2>/dev/null || true
           rm -f "$PROJECT_DIR/data/git-metrics.txt" 2>/dev/null || true
@@ -539,8 +592,8 @@ YAML
         echo -e "${BOLD}Plugin status${NC}"
         echo ""
         echo "$PLUGINS" | while IFS=: read -r name desc; do
-          if $COMPOSE --profile "$name" ps --format '{{.Name}}' 2>/dev/null | grep -q "gateii-$name"; then
-            uptime=$($COMPOSE --profile "$name" ps --format '{{.Status}}' 2>/dev/null | grep "$name" | head -1)
+          if "${COMPOSE[@]}" --profile "$name" ps --format '{{.Name}}' 2>/dev/null | grep -q "gateii-$name"; then
+            uptime=$("${COMPOSE[@]}" --profile "$name" ps --format '{{.Status}}' 2>/dev/null | grep "$name" | head -1)
             echo -e "  ${CYN}$name${NC}  ${GRN}active${NC}  ($uptime)"
             # Show mounted repos
             if [ "$name" = "git-tracking" ] && [ -f "$OVERRIDE" ]; then
@@ -662,8 +715,9 @@ YAML
     echo ""
     echo "  ${BOLD}Key management${NC} (apikey mode — structured per-user upstream routing)"
     echo "  keys                                    All proxy keys (masked)"
-    echo "  add <user> --provider P --upstream-key K [--key sk-proxy-...]"
+    echo "  add <user> --provider P --upstream-key K [--key sk-proxy-...] [--force]"
     echo "                                          Add proxy key with per-user upstream binding"
+    echo "                                          (--force to add a 2nd key for an existing user)"
     echo "  revoke <key>                            Revoke a key"
     echo "  rotate <user>                           New key, preserves provider + upstream_key"
     echo ""

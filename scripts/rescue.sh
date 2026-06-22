@@ -14,7 +14,7 @@
 #   ./scripts/rescue.sh --no-sweep    — direct + restart only (skip project sweep)
 #
 # Project roots scanned (max depth 4):
-#   $GATEII_PROJECT_ROOTS (space-separated) if set, else any of these that exist:
+#   $GATEII_PROJECT_ROOTS (":"-separated) plus any of these defaults that exist:
 #     $HOME/offline_coding $HOME/coding $HOME/projects $HOME/dev $HOME/src
 #
 # After running: restart Claude Code, then test the fix, then:
@@ -54,7 +54,12 @@ if [ ! -f "$CLAUDE_SETTINGS" ]; then
 fi
 
 TMP="${CLAUDE_SETTINGS}.rescue.tmp"
-python3 - "$CLAUDE_SETTINGS" "$TMP" <<'PYEOF'
+trap 'rm -f "$TMP"' EXIT
+
+# Run the heredoc as the if-condition so set -e does not abort on a malformed
+# settings.json — we want to report a friendly, actionable error instead of a
+# raw Python traceback.
+if python3 - "$CLAUDE_SETTINGS" "$TMP" <<'PYEOF'
 import json, sys
 src, dst = sys.argv[1], sys.argv[2]
 with open(src) as f:
@@ -65,13 +70,15 @@ with open(dst, 'w') as f:
     f.write('\n')
 print('removed' if removed else 'already_direct')
 PYEOF
-
-if [ $? -eq 0 ] && mv "$TMP" "$CLAUDE_SETTINGS"; then
+then
+    mv "$TMP" "$CLAUDE_SETTINGS"
     echo -e "  ${GRN}✓${NC} Switched to direct Anthropic"
     echo -e "  ${DIM}  → Restart Claude Code now to reconnect${NC}"
 else
     rm -f "$TMP"
     echo -e "  ${RED}✗${NC} Failed to update $CLAUDE_SETTINGS" >&2
+    echo -e "  ${DIM}  → Check it is valid JSON: python3 -m json.tool \"$CLAUDE_SETTINGS\"${NC}" >&2
+    echo -e "  ${DIM}  → Or remove the ANTHROPIC_BASE_URL key from \"env\" by hand${NC}" >&2
     exit 1
 fi
 
@@ -82,36 +89,55 @@ if [ -n "$NO_SWEEP" ]; then
     echo -e "  ${DIM}Skipping project sweep (--no-sweep)${NC}"
     echo ""
 else
-    # Determine roots
+    # Determine roots — parse into an array so paths containing spaces survive.
+    # GATEII_PROJECT_ROOTS is ":"-separated (PATH-style); defaults are appended.
+    ROOT_ARR=()
     if [ -n "${GATEII_PROJECT_ROOTS:-}" ]; then
-        ROOTS="$GATEII_PROJECT_ROOTS"
-    else
-        ROOTS=""
-        for cand in "$HOME/offline_coding" "$HOME/coding" "$HOME/projects" "$HOME/dev" "$HOME/src"; do
-            [ -d "$cand" ] && ROOTS="$ROOTS $cand"
-        done
+        IFS=":" read -r -a ROOT_ARR <<< "$GATEII_PROJECT_ROOTS"
     fi
+    for cand in "$HOME/offline_coding" "$HOME/coding" "$HOME/projects" "$HOME/dev" "$HOME/src"; do
+        [ -d "$cand" ] && ROOT_ARR+=("$cand")
+    done
 
-    # Pull REMOTE_URL from .env (used to identify gateii-routed overrides)
+    # Pull REMOTE_URL from .env (used to identify gateii-routed overrides).
+    # Keep everything after the FIRST "=" (URLs may contain "=") and strip
+    # surrounding quotes — matches admin.sh's source-based read.
     REMOTE_URL=""
     if [ -f "$PROJECT_DIR/.env" ]; then
-        REMOTE_URL=$(awk -F= '/^REMOTE_URL=/{sub(/^[ \t]+/,"",$2); print $2; exit}' "$PROJECT_DIR/.env" 2>/dev/null)
+        REMOTE_URL=$(sed -n 's/^REMOTE_URL=//p' "$PROJECT_DIR/.env" 2>/dev/null | head -1)
+        REMOTE_URL="${REMOTE_URL#[\"\']}"
+        REMOTE_URL="${REMOTE_URL%[\"\']}"
     fi
 
-    if [ -z "$ROOTS" ]; then
+    if [ ${#ROOT_ARR[@]} -eq 0 ]; then
         echo -e "  ${DIM}No project roots found to sweep${NC}"
-        echo -e "  ${DIM}  Override with GATEII_PROJECT_ROOTS=\"/path/one /path/two\"${NC}"
+        echo -e "  ${DIM}  Override with GATEII_PROJECT_ROOTS=\"/path/one:/path/two\"${NC}"
     else
-        echo -e "  Sweeping project overrides under:${ROOTS}"
+        echo -e "  Sweeping project overrides under: ${ROOT_ARR[*]}"
         SWEEP_FILES=""
-        for root in $ROOTS; do
+        for root in "${ROOT_ARR[@]}"; do
+            if [ ! -d "$root" ]; then
+                echo -e "  ${YEL}⚠${NC}  Root path does not exist, skipping: $root" >&2
+                continue
+            fi
             FOUND=$(find "$root" -maxdepth 4 -type f -path '*/.claude/settings.local.json' 2>/dev/null)
             [ -n "$FOUND" ] && SWEEP_FILES="${SWEEP_FILES}${FOUND}
 "
         done
         SWEEP_OUT=$(SWEEP_FILES="$SWEEP_FILES" REMOTE_URL="$REMOTE_URL" python3 <<'PYEOF'
 import json, os, sys
-remote = (os.environ.get("REMOTE_URL") or "").strip()
+from urllib.parse import urlsplit
+
+def _norm(u):
+    # Strip surrounding quotes and a single trailing slash so trivial drift
+    # (quotes / trailing slash) does not defeat the REMOTE_URL match.
+    u = (u or "").strip()
+    if len(u) >= 2 and u[0] == u[-1] and u[0] in "\"'":
+        u = u[1:-1]
+    u = u.strip()
+    return u[:-1] if u.endswith("/") else u
+
+remote = _norm(os.environ.get("REMOTE_URL") or "")
 files  = (os.environ.get("SWEEP_FILES") or "").splitlines()
 swept, scanned, skipped = [], 0, 0
 for path in files:
@@ -126,9 +152,13 @@ for path in files:
     url = env.get('ANTHROPIC_BASE_URL', '')
     if not url:
         continue
+    # Anchor on the URL authority (not an unanchored substring) so hosts like
+    # "not-localhost" are not misclassified as gateii. REMOTE_URL is matched by
+    # normalized equality so trivial scheme/quote/slash drift still resolves.
+    host = urlsplit(url).hostname or ""
     is_gateii = (
-        'localhost:' in url or '127.0.0.1:' in url
-        or (remote and url == remote)
+        host in ("localhost", "127.0.0.1")
+        or (remote and _norm(url) == remote)
     )
     if not is_gateii:
         continue

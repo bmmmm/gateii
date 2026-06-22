@@ -44,6 +44,16 @@ detect_platform() {
     esac
 }
 
+# Escape a string for use inside a Prometheus label value. Order matters:
+# backslash first (so we don't double-escape the escapes we add next), then
+# double-quote, then newline. An unescaped " or \ in an alias or repo basename
+# produces a malformed line that makes Prometheus reject the whole exposition.
+esc_label() {
+    printf '%s' "$1" \
+        | sed -e 's/\\/\\\\/g' -e 's/"/\\"/g' \
+        | awk 'NR>1{printf "\\n"} {printf "%s", $0}'
+}
+
 # Emit metric lines for one repo. Args: path, alias, author (may be empty), platform.
 emit_repo() {
     repo_path="$1"; alias="$2"; author="$3"; platform="$4"
@@ -63,7 +73,7 @@ emit_repo() {
         removed=$(echo "$stats" | awk '/files? changed/ { for(i=1;i<=NF;i++) { if($i ~ /deletion/)  sum += $(i-1) } } END { print sum+0 }')
     fi
 
-    labels="repo=\"$alias\",platform=\"$platform\""
+    labels="repo=\"$(esc_label "$alias")\",platform=\"$(esc_label "$platform")\""
     echo "gateii_git_commits_24h{$labels} $commits"
     echo "gateii_git_lines_added_24h{$labels} $added"
     echo "gateii_git_lines_removed_24h{$labels} $removed"
