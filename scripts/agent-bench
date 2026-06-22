@@ -36,6 +36,10 @@ from pathlib import Path
 ROOT      = Path(__file__).resolve().parent.parent
 DATA_DIR  = ROOT / "data" / "agents"
 ACTIVE    = DATA_DIR / "active.json"      # console reads this for the "running" card
+# Cross-component bench lock. EXACT path is shared with scripts/compose-ctl.py
+# (/run-bench) — both serialize on this same directory, so do not rename it.
+BENCH_LOCK = DATA_DIR / "bench.lock.d"
+BENCH_LOCK_STALE_S = 1800   # reclaim a lock dir older than 30 min (bench can run long)
 TASKS_JSON= ROOT / "config" / "agents" / "tasks.json"
 # Two upstream URLs:
 #   OMLX_URL  — used for model management (/v1/models/status, /unload). gateii
@@ -105,6 +109,65 @@ def http(method: str, path: str, body: dict | None = None,
         return 0, {"error": str(e)}
 
 
+# ─── locking & atomic writes ─────────────────────────────────────────────────
+_HOLD_BENCH_LOCK = False  # True only between a successful acquire and its release
+
+
+def acquire_bench_lock() -> None:
+    """Serialize bench runs via an atomic mkdir lock (portable, no flock).
+    Same convention as the scripts/agent run-lock: a lock dir older than
+    BENCH_LOCK_STALE_S is treated as abandoned and reclaimed. The path is
+    shared with scripts/compose-ctl.py /run-bench. Exits (without claiming
+    ownership) if a live holder refuses to yield."""
+    global _HOLD_BENCH_LOCK
+    DATA_DIR.mkdir(parents=True, exist_ok=True)
+    try:
+        os.mkdir(BENCH_LOCK)
+        _HOLD_BENCH_LOCK = True
+        return
+    except FileExistsError:
+        pass
+    # Lock held — reclaim only if stale by mtime, else refuse.
+    try:
+        age = time.time() - os.path.getmtime(BENCH_LOCK)
+    except OSError:
+        age = 0
+    if age > BENCH_LOCK_STALE_S:
+        try:
+            os.rmdir(BENCH_LOCK)
+        except OSError:
+            pass
+        try:
+            os.mkdir(BENCH_LOCK)
+            _HOLD_BENCH_LOCK = True
+            return
+        except FileExistsError:
+            pass  # someone else won the race — fall through to refuse
+    sys.exit(f"another agent-bench run holds {BENCH_LOCK} "
+             f"(age {int(age)}s; stale after {BENCH_LOCK_STALE_S}s) — refusing to clobber its writes")
+
+
+def release_bench_lock() -> None:
+    """Remove the lock dir only if THIS process acquired it — never delete a
+    lock we failed to claim (that would clobber the live holder)."""
+    global _HOLD_BENCH_LOCK
+    if not _HOLD_BENCH_LOCK:
+        return
+    try:
+        os.rmdir(BENCH_LOCK)
+    except OSError:
+        pass
+    _HOLD_BENCH_LOCK = False
+
+
+def _atomic_write(path: Path, content: str) -> None:
+    """Write content to a temp file then os.replace into place — concurrent
+    readers never observe a half-written file."""
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    tmp.write_text(content)
+    os.replace(tmp, path)
+
+
 # ─── task definitions ────────────────────────────────────────────────────────
 # Single source of truth: config/agents/tasks.json (shared with scripts/agent).
 # Each task contains: max_tokens, system, bench_prompt, compliant (regex string
@@ -155,8 +218,22 @@ def models_status():
 def gb(b): return b / (1024**3)
 
 
-def ensure_model(model_id: str, status: dict) -> dict:
-    """Load model_id; unload others if budget tight. Returns updated status."""
+def _headroom_for(status: dict, model_id: str) -> int:
+    """Bytes free for loading model_id, keeping RESERVE_GB headroom. If model_id
+    is already counted in current_model_memory (loaded), the caller shouldn't
+    use this — it's only meaningful for a model that isn't resident yet."""
+    return (status["max_model_memory"]
+            - status["current_model_memory"]
+            - RESERVE_GB * 1024**3)
+
+
+def ensure_model(model_id: str, status: dict) -> dict | None:
+    """Load model_id; unload others if budget tight.
+
+    Returns the updated status on success, or None if model_id cannot be made
+    to fit even after evicting the default — the caller should then record this
+    model's trials as skipped ("does not fit budget") so the report can tell
+    can't-fit apart from wrong-output."""
     info = next((m for m in status["models"] if m["id"] == model_id), None)
     if not info:
         sys.exit(f"unknown model: {model_id}")
@@ -164,16 +241,42 @@ def ensure_model(model_id: str, status: dict) -> dict:
     if info["loaded"]:
         return status  # already loaded, nothing to do
 
-    needed     = info["estimated_size"]
-    max_mem    = status["max_model_memory"]
-    headroom   = max_mem - status["current_model_memory"] - RESERVE_GB * 1024**3
+    needed = info["estimated_size"]
 
-    if needed > headroom:
+    if needed > _headroom_for(status, model_id):
         # Free space: evict everything except the default model (which we want sticky)
         for m in status["models"]:
             if m["loaded"] and m["id"] != DEFAULT_MODEL and m["id"] != model_id:
                 print(f"  ⤵ unload {m['id']} ({gb(m['estimated_size']):.1f}GB) to fit {model_id}", flush=True)
                 http("POST", f"/v1/models/{m['id']}/unload")
+
+        # oMLX unload may be async — poll status until RAM is actually reclaimed
+        # (or a short timeout) before trusting the new headroom for the fit check.
+        deadline = time.time() + 30
+        status = models_status()
+        while needed > _headroom_for(status, model_id) and time.time() < deadline:
+            time.sleep(1)
+            status = models_status()
+
+        # Post-eviction fit re-check (eviction kept DEFAULT_MODEL resident).
+        if needed > _headroom_for(status, model_id):
+            default_loaded = any(
+                m["loaded"] and m["id"] == DEFAULT_MODEL for m in status["models"]
+            )
+            if default_loaded and model_id != DEFAULT_MODEL:
+                # Last resort: temporarily evict the default too, reload it after.
+                print(f"  ⤵ temporarily unload {DEFAULT_MODEL} to fit {model_id} "
+                      f"(will reload after)", flush=True)
+                http("POST", f"/v1/models/{DEFAULT_MODEL}/unload")
+                deadline = time.time() + 30
+                status = models_status()
+                while needed > _headroom_for(status, model_id) and time.time() < deadline:
+                    time.sleep(1)
+                    status = models_status()
+            if needed > _headroom_for(status, model_id):
+                print(f"  ✗ {model_id} ({gb(needed):.1f}GB) does not fit budget "
+                      f"({gb(_headroom_for(status, model_id)):.1f}GB free) — skipping", flush=True)
+                return None
 
     print(f"  ⤴ loading {model_id} ({gb(needed):.1f}GB) — first call will be slow", flush=True)
     # oMLX has no public /v1/models/<id>/load endpoint via Bearer auth, so we
@@ -203,6 +306,7 @@ def _write_active(task_name: str, model: str, trial: int, max_trials: int) -> No
     """
     DATA_DIR.mkdir(parents=True, exist_ok=True)
     payload = {
+        "kind": "bench",  # distinguishes from scripts/agent's kind=="agent-run"
         "task": f"bench:{task_name} ({trial}/{max_trials})",
         "model": model,
         "max_tokens": TASKS[task_name]["max_tokens"],
@@ -219,8 +323,49 @@ def _write_active(task_name: str, model: str, trial: int, max_trials: int) -> No
 
 
 def _clear_active() -> None:
-    try: ACTIVE.unlink()
-    except FileNotFoundError: pass
+    """Remove active.json only if it still belongs to THIS bench process.
+
+    active.json is shared with scripts/agent (kind=="agent-run"). If a wrapper
+    run started during the bench's post-trials phase, it now owns active.json —
+    blindly unlinking would wipe its live "running" indicator. Only delete when
+    the file still carries this bench's own pid (and a bench: task / kind), and
+    leave anything carrying a different kind or pid untouched."""
+    try:
+        info = json.loads(ACTIVE.read_text())
+    except FileNotFoundError:
+        return
+    except Exception:
+        # Unreadable/garbled — could be a half-written file from another writer;
+        # leave it rather than risk deleting a live indicator.
+        return
+    is_ours = (
+        str(info.get("pid")) == str(os.getpid())
+        and (info.get("kind") == "bench"
+             or str(info.get("task", "")).startswith("bench:"))
+    )
+    if not is_ours:
+        return
+    try:
+        ACTIVE.unlink()
+    except FileNotFoundError:
+        pass
+
+
+def skipped_records(model: str, tasks: list[str], trials: int, reason: str) -> list[dict]:
+    """Synthesize stop=='skipped' records so a model we couldn't bench shows up
+    in the report as skipped (with a reason) rather than silently absent. The
+    output string carries the reason so the report distinguishes can't-fit from
+    wrong-output. aggregate() drops these rows, so they don't pollute pass_rate."""
+    out = []
+    for task in tasks:
+        for i in range(trials):
+            out.append(dict(
+                task=task, model=model, trial=i + 1,
+                latency_s=0, http=-2, stop="skipped",
+                tokens_in=0, tokens_out=0,
+                compliant=False, output=f"(skipped: {reason})",
+            ))
+    return out
 
 
 def call(model: str, task_name: str, trial: int, max_trials: int = 3,
@@ -239,12 +384,15 @@ def call(model: str, task_name: str, trial: int, max_trials: int = 3,
         body["tools"] = t["tools"]
     t0 = time.time()
     # Bench trials go THROUGH gateii so they're counted in metrics. Falls
-    # back to direct oMLX if gateii is down or unreachable — bench still
-    # produces results, just won't appear in the per-user counters.
+    # back to direct oMLX when gateii is down (code==0) OR up-but-broken
+    # (5xx, or 429 rate-limited) — those are gateii/proxy faults, not the
+    # MODEL's, so retrying direct avoids polluting the model's pass_rate.
+    # Bench still produces results, just won't appear in the per-user counters.
     code, resp = http("POST", "/v1/messages", body, timeout=180, via_gateii=True)
-    if code == 0:
-        # gateii unreachable — retry direct so bench still produces data
-        print(f"    (gateii unreachable; falling back to direct oMLX for {task_name}/{trial})", flush=True)
+    if code == 0 or code >= 500 or code == 429:
+        # gateii unreachable or proxy-side failure — retry direct so a broken
+        # proxy isn't scored as a model failure
+        print(f"    (gateii fault {code}; falling back to direct oMLX for {task_name}/{trial})", flush=True)
         code, resp = http("POST", "/v1/messages", body, timeout=180, via_gateii=False)
     dt = time.time() - t0
 
@@ -403,6 +551,7 @@ def aggregate(results: list[dict]) -> dict:
         warm_lats = lats[1:] if len(lats) > 1 else lats
         agg.setdefault(task, {})[model] = dict(
             trials=len(runs),
+            passes=passes,  # exact count — don't reconstruct from the rounded rate
             pass_rate=round(passes / len(runs), 2),
             latency_p50=round(statistics.median(lats), 2),
             latency_warm_p50=round(statistics.median(warm_lats), 2),
@@ -855,7 +1004,7 @@ def _load_existing_results():
         return {}
 
 
-def _models_already_benched(prev: dict, model: str, created: int) -> bool:
+def _model_unchanged(prev: dict, model: str, created: int) -> bool:
     """True iff prev has results for this model AND its omlx-registration
     timestamp matches (so the model wasn't re-imported with new weights)."""
     if not prev or "results" not in prev:
@@ -863,6 +1012,32 @@ def _models_already_benched(prev: dict, model: str, created: int) -> bool:
     if (prev.get("model_created") or {}).get(model) != created:
         return False
     return any(r.get("model") == model for r in prev["results"])
+
+
+# Backwards-compatible alias: carry-forward still asks "does prev cover this
+# (unchanged) model at all?" per-record.
+_models_already_benched = _model_unchanged
+
+
+def _tasks_benched_for(prev: dict, model: str) -> set:
+    """Set of task names for which prev has at least one (real, non-skipped)
+    result for this model."""
+    if not prev or "results" not in prev:
+        return set()
+    return {
+        r["task"] for r in prev["results"]
+        if r.get("model") == model and r.get("stop") != "skipped"
+    }
+
+
+def _missing_tasks(prev: dict, model: str, created: int, eligible: list[str]) -> list[str]:
+    """Task-aware smart-skip: of this model's eligible tasks, which ones are NOT
+    already covered by unchanged prev results. Empty list => fully cached (skip);
+    a strict subset => bench only the gaps (e.g. a newly added task)."""
+    if not _model_unchanged(prev, model, created):
+        return list(eligible)
+    done = _tasks_benched_for(prev, model)
+    return [t for t in eligible if t not in done]
 
 
 def main():
@@ -896,6 +1071,10 @@ def main():
     if args.reference_only and args.no_reference:
         sys.exit("--reference-only and --no-reference are mutually exclusive")
 
+    # Serialize result writes against a concurrent run / compose-ctl /run-bench.
+    # Held until the finally in __main__ releases it.
+    acquire_bench_lock()
+
     # --analyze: offline re-score of existing bench-results.json, no model calls
     if args.analyze:
         res_path = DATA_DIR / "bench-results.json"
@@ -922,13 +1101,13 @@ def main():
         if routing_path.exists():
             existing = json.loads(routing_path.read_text()).get("routes", {})
             routing = {**existing, **routing}
-        (DATA_DIR / "routing.json").write_text(json.dumps({
+        _atomic_write(DATA_DIR / "routing.json", json.dumps({
             "generated_at": started,
             "default_model": DEFAULT_MODEL,
             "routes": routing,
         }, indent=2) + "\n")
         report = render_report(agg, routing, started)
-        (DATA_DIR / "bench-report.md").write_text(report)
+        _atomic_write(DATA_DIR / "bench-report.md", report)
         print("\n" + report, flush=True)
         print(f"\nWrote: routing.json, bench-report.md  (bench-results.json unchanged)", flush=True)
         print("EXIT: 0", flush=True)
@@ -974,9 +1153,13 @@ def main():
         sizes = {m["id"]: m["estimated_size"] for m in status["models"]}
         model_created = {m["id"]: m.get("created") or 0 for m in status["models"]}
 
-        # Carry forward existing per-model results that we're choosing to skip
+        # Carry forward existing per-model results that we're choosing to skip.
+        # Never carry forward a model that matches an explicit --model filter —
+        # an explicit re-bench must replace its stale results, not keep them.
         if prev and prev.get("results"):
             for r in prev["results"]:
+                if args.model_filter and args.model_filter in r["model"]:
+                    continue
                 if _models_already_benched(prev, r["model"], model_created.get(r["model"])):
                     all_results.append(r)
 
@@ -984,27 +1167,56 @@ def main():
             size_gb = gb(sizes.get(model, 0))
             is_small = size_gb <= SMALL_MODEL_GB
             if model == DEFAULT_MODEL or args.task or args.quick or is_small:
-                tasks = tasks_full
+                eligible = tasks_full
             else:
-                tasks = [t for t in ["reasoning", "classify-yesno"] if t in tasks_full]
-                if not tasks:
+                eligible = [t for t in ["reasoning", "classify-yesno"] if t in tasks_full]
+                if not eligible:
                     continue
 
-            if not args.calibrate and _models_already_benched(prev, model, model_created.get(model)):
-                skipped.append(model)
-                print(f"\n=== {model} ({size_gb:.1f} GB) — SKIP (cached, model unchanged; --force to override) ===", flush=True)
-                continue
+            explicit = bool(args.model_filter and args.model_filter in model)
+            if args.calibrate or explicit:
+                # Calibration always re-runs; an explicit --model re-bench must
+                # cover the model's full eligible set (its prev results were not
+                # carried forward), so don't smart-skip either of these.
+                tasks = eligible
+            else:
+                # Task-aware smart-skip: only the eligible tasks not already
+                # covered by unchanged prev results. A newly added task to
+                # tasks.json is benched even for otherwise-cached models.
+                tasks = _missing_tasks(prev, model, model_created.get(model), eligible)
+                if not tasks:
+                    skipped.append(model)
+                    print(f"\n=== {model} ({size_gb:.1f} GB) — SKIP (cached, all tasks covered, model unchanged; --force to override) ===", flush=True)
+                    continue
+                if len(tasks) < len(eligible):
+                    print(f"\n=== {model} ({size_gb:.1f} GB) — partial: benching {len(tasks)} new/missing task(s), {len(eligible) - len(tasks)} cached ===", flush=True)
 
             size_label = f"{size_gb:.1f} GB" + (" — small, full bench" if (is_small and model != DEFAULT_MODEL) else "")
             print(f"\n=== {model} ({size_label}) — {len(tasks)} task(s) × {1 if args.quick else args.trials} trial(s) ===", flush=True)
-            status = ensure_model(model, status)
             trials = 1 if args.quick else args.trials
+            new_status = ensure_model(model, status)
+            if new_status is None:
+                # Couldn't make the model fit even after evicting the default —
+                # record skipped trials so the report shows can't-fit, not absent.
+                skipped.append(model)
+                all_results.extend(skipped_records(model, tasks, trials, "does not fit budget"))
+                status = models_status()  # refresh after the eviction attempts
+                continue
+            status = new_status
             all_results.extend(bench_model(
                 model, tasks, trials,
                 override_max_tokens=1024 if args.calibrate else None,
             ))
             unload_after_bench(model)
             status = models_status()
+            # ensure_model may have temporarily evicted the default to fit a big
+            # model — reload it so the wrapper isn't left with a cold default.
+            if model != DEFAULT_MODEL and not any(
+                m["loaded"] and m["id"] == DEFAULT_MODEL for m in status["models"]
+            ):
+                print(f"  ⤴ reloading {DEFAULT_MODEL} (was temporarily evicted)", flush=True)
+                reloaded = ensure_model(DEFAULT_MODEL, status)
+                status = reloaded if reloaded is not None else models_status()
 
     # Reference model bench (Claude Haiku via `claude` CLI).
     # Uses existing Claude Code auth — no ANTHROPIC_API_KEY needed.
@@ -1114,13 +1326,16 @@ def main():
                 results_to_write = kept + all_results
             except Exception:
                 pass
+    # These three writes are guarded by the bench lock acquired in main(), so an
+    # overlapping run can't interleave with them. Each is still written
+    # atomically (tmp + os.replace) so a reader never sees a half-written file.
     results_path = DATA_DIR / "bench-results.json"
     if results_path.exists():  # keep one rolling backup before every overwrite
         try:
             results_path.replace(DATA_DIR / "bench-results.prev.json")
         except Exception:
             pass
-    results_path.write_text(json.dumps({
+    _atomic_write(results_path, json.dumps({
         "started_at": started,
         "started_epoch": int(time.time()),
         "host": OMLX_URL,
@@ -1129,13 +1344,13 @@ def main():
         "skipped_models": skipped,
         "results": results_to_write,
     }, indent=2) + "\n")
-    (DATA_DIR / "routing.json").write_text(json.dumps({
+    _atomic_write(DATA_DIR / "routing.json", json.dumps({
         "generated_at": started,
         "default_model": DEFAULT_MODEL,
         "routes": routing,
     }, indent=2) + "\n")
     report = render_report(agg, routing, started)
-    (DATA_DIR / "bench-report.md").write_text(report)
+    _atomic_write(DATA_DIR / "bench-report.md", report)
 
     print("\n" + report, flush=True)
     print(f"\nWrote: data/agents/bench-results.json, routing.json, bench-report.md", flush=True)
@@ -1191,7 +1406,9 @@ def main():
     # shows when benches happened (mixed in with normal wrapper invocations).
     # The frontend treats "bench-summary" tasks as informational rows.
     cells_total  = sum(s["trials"] for tasks in agg.values() for s in tasks.values())
-    cells_passed = sum(int(s["pass_rate"] * s["trials"]) for tasks in agg.values() for s in tasks.values())
+    # Sum exact pass counts — never round-trip through the 2-decimal pass_rate
+    # (int(0.33*3)==0 would undercount a real 1-of-3).
+    cells_passed = sum(s["passes"] for tasks in agg.values() for s in tasks.values())
     summary = {
         "started_at":     started,
         "task":           "bench-summary",
@@ -1214,4 +1431,5 @@ if __name__ == "__main__":
     try:
         main()
     finally:
-        _clear_active()  # don't leave a stale "running" indicator
+        _clear_active()       # don't leave a stale "running" indicator
+        release_bench_lock()  # always drop the lock, even on error/Ctrl-C
