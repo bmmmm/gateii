@@ -10,6 +10,33 @@ local circuit_breaker = require "circuit_breaker"
 -- later in the chunk would not be visible to functions defined above it.
 local rid = ngx.ctx.request_id or "-"
 
+-- Returns the upstream Content-Encoding lowercased, or nil if absent. A header
+-- table may carry a multi-value array (rare); take the first entry.
+local function response_content_encoding(res)
+    local h = res and res.headers
+    if not h then return nil end
+    local ce = h["Content-Encoding"] or h["content-encoding"]
+    if type(ce) == "table" then ce = ce[1] end
+    if type(ce) ~= "string" then return nil end
+    return ce:lower():match("^%s*(.-)%s*$")
+end
+
+-- Skip token extraction when the upstream sent a non-identity Content-Encoding.
+-- The body is forwarded verbatim (correct), but our extractors parse plaintext
+-- JSON/SSE — running them on gzip/br would yield 0 tokens. We do NOT decompress
+-- in-proxy; defense-in-depth only. Warned once per worker to avoid log spam.
+local encoding_warned = false
+local function tokens_extractable(res)
+    local ce = response_content_encoding(res)
+    if ce == nil or ce == "" or ce == "identity" then return true end
+    if not encoding_warned then
+        encoding_warned = true
+        ngx.log(ngx.WARN, "[rid=", rid, "] upstream Content-Encoding '", ce,
+                "' is non-identity — skipping token extraction (tokens recorded as 0)")
+    end
+    return false
+end
+
 local function track_rl_window(res)
     if not res.headers then return end
     local h = res.headers
@@ -44,9 +71,15 @@ local function track_rl_window(res)
         local remaining = math.floor(tokens_limit * (1.0 - util_5h))
         local prev_reset = tracking.get_rate_limit_reset()
         if prev_reset and prev_reset ~= reset_ts then
-            local old_remaining = tonumber(cd:get("ratelimit_remaining")) or 0
-            tracking.set_rate_limit_tokens_expired(old_remaining)
-            ngx.log(ngx.INFO, "[rid=", rid, "] rate limit window reset: ", old_remaining, " tokens expired")
+            -- Claim the reset atomically so only one worker records the expiry
+            -- snapshot. add() succeeds for the first caller and returns "exists"
+            -- for the rest, collapsing concurrent observers of the same reset.
+            local claimed = cd:add("ratelimit_expiry_claim|" .. reset_ts, 1, 600)
+            if claimed then
+                local old_remaining = tonumber(cd:get("ratelimit_remaining")) or 0
+                tracking.set_rate_limit_tokens_expired(old_remaining)
+                ngx.log(ngx.INFO, "[rid=", rid, "] rate limit window reset: ", old_remaining, " tokens expired")
+            end
         end
         tracking.set_rate_limit_remaining(remaining)
     end
@@ -134,15 +167,29 @@ end
 -- Get request headers once — reused for both provider selection and header forwarding
 local req_headers = ngx.req.get_headers()
 
--- Resolve provider. Prefer the per-user pin from auth.lua (ngx.ctx.upstream_provider).
--- x-provider header remains supported as an override for ad-hoc testing + passthrough mode.
-local provider_name = ngx.ctx.upstream_provider or req_headers["x-provider"] or "anthropic"
+-- Resolve provider. Prefer the per-user pin from auth.lua (ngx.ctx.upstream_provider),
+-- which is trusted apikey config. The x-provider header is a CLIENT-supplied fallback
+-- (passthrough mode + ad-hoc testing) — track which source won so we can reject
+-- client selection of internal/loopback providers below.
+local trusted_provider = ngx.ctx.upstream_provider
+local provider_name = trusted_provider or req_headers["x-provider"] or "anthropic"
+local provider_from_client = (trusted_provider == nil) and (req_headers["x-provider"] ~= nil)
 local provider = providers.get(provider_name)
 if not provider then
     ngx.status = 400
     ngx.header["Content-Type"] = "application/json"
     -- Don't reflect raw header value — could contain JSON-breaking characters
     ngx.say('{"error":"Unknown provider — available: anthropic, openai, openrouter"}')
+    return
+end
+-- Internal providers (omlx, …) only via the trusted per-user pin. A client must
+-- not be able to select them through x-provider — that would route passthrough
+-- traffic at the internal loopback model server, bypassing ADMIN_TOKEN.
+if provider.internal and provider_from_client then
+    ngx.log(ngx.WARN, "[rid=", rid, "] client x-provider selected internal provider, refused: ", provider_name)
+    ngx.status = 400
+    ngx.header["Content-Type"] = "application/json"
+    ngx.say('{"error":"provider not selectable"}')
     return
 end
 if not provider.upstream_url or provider.upstream_url == "" then
@@ -305,7 +352,9 @@ if not is_streaming then
 
     local input_tokens, output_tokens, stop_reason, cache_creation, cache_read = 0, 0, nil, 0, 0
     if res.status == 200 then
-        input_tokens, output_tokens, stop_reason, cache_creation, cache_read = provider.extract_tokens(response_body)
+        if tokens_extractable(res) then
+            input_tokens, output_tokens, stop_reason, cache_creation, cache_read = provider.extract_tokens(response_body)
+        end
         track_rl_window(res)
     end
     if res.status == 429 then track_rl_429(res, user, model, provider_name) end
@@ -401,11 +450,19 @@ for k, v in pairs(res.headers) do
     end
 end
 
--- Accumulate only what the SSE parser needs: first chunk (Anthropic message_start
--- lives here) + a rolling tail (message_delta / OpenAI final-usage chunk). Avoids
--- buffering the entire response body, which can be hundreds of KB on long streams.
+-- Accumulate only what the SSE parser needs: the head of the stream (Anthropic
+-- message_start lives here) + a rolling tail (message_delta / OpenAI final-usage
+-- chunk). Avoids buffering the entire response body, which can be hundreds of KB
+-- on long streams.
+--
+-- The head keeps growing into first_parts until it holds a complete SSE event
+-- (terminated by a "\n\n" boundary) — only then do we freeze it and switch to
+-- the rolling tail. Freezing at exactly reader(8192) #1 would lose message_start
+-- when it spans chunk #1 → #2, and the front-trimming tail could later evict it.
 local TAIL_BYTES = 32 * 1024
-local first_chunk
+local first_parts = {}      -- head chunks until a full SSE event boundary is seen
+local first_done = false    -- head sealed once it contains "\n\n"
+local first_chunk           -- sealed head, concatenated
 local tail = {}
 local tail_bytes = 0
 local had_read_err = false
@@ -425,8 +482,13 @@ repeat
     if chunk then
         ngx.print(chunk)
         ngx.flush(true)
-        if not first_chunk then
-            first_chunk = chunk
+        if not first_done then
+            first_parts[#first_parts+1] = chunk
+            -- Seal the head once it spans a full SSE event boundary.
+            if chunk:find("\n\n", 1, true) then
+                first_chunk = table.concat(first_parts)
+                first_done = true
+            end
         else
             tail[#tail+1] = chunk
             tail_bytes = tail_bytes + #chunk
@@ -437,6 +499,11 @@ repeat
         end
     end
 until not chunk
+-- Stream ended before any "\n\n" boundary (single short/partial event): seal
+-- whatever head we collected so the parser still gets the message_start bytes.
+if not first_done and #first_parts > 0 then
+    first_chunk = table.concat(first_parts)
+end
 if had_read_err then
     httpc:close()
 else
@@ -449,7 +516,8 @@ end
 -- since it carries no token-accounting data for any supported provider.
 local input_tokens, output_tokens, stop_reason = 0, 0, nil
 local cache_creation, cache_read = 0, 0
-if res.status == 200 and provider.extract_tokens_streaming and first_chunk then
+if res.status == 200 and provider.extract_tokens_streaming and first_chunk
+   and tokens_extractable(res) then
     local body = #tail > 0 and (first_chunk .. table.concat(tail)) or first_chunk
     input_tokens, output_tokens, stop_reason, cache_creation, cache_read =
         provider.extract_tokens_streaming(body)
@@ -458,12 +526,25 @@ end
 if res.status == 200 then track_rl_window(res) end
 if res.status == 429 then track_rl_429(res, user, model, provider_name) end
 
+-- A mid-stream read error after headers were already committed leaves the client
+-- with a truncated SSE body. We can't change the HTTP status (it's flushed), but
+-- record a synthetic 5xx so tracking's error/5xx counters fire instead of logging
+-- the failure as a clean 200. circuit_breaker.record keeps the real status — its
+-- "read_error" reason already accounts for the failure.
+local track_status = had_read_err and 599 or res.status
+
 circuit_breaker.record(provider_name, res.status, had_read_err and "read_error" or nil)
 local _ok, _err = pcall(tracking.record, user, provider_name, model, input_tokens, output_tokens,
-      { latency_ms = (ngx.now() - t0_stream) * 1000, status = res.status, stop_reason = stop_reason,
+      { latency_ms = (ngx.now() - t0_stream) * 1000, status = track_status, stop_reason = stop_reason,
         cache_creation = cache_creation, cache_read = cache_read })
 if not _ok then ngx.log(ngx.WARN, "[rid=", rid, "] tracking.record failed: ", tostring(_err)) end
 _ok, _err = pcall(tracking.record_effort,   user, provider_name, model, request_effort,     input_tokens, output_tokens)
 if not _ok then ngx.log(ngx.WARN, "[rid=", rid, "] tracking.record_effort failed: ", tostring(_err)) end
 _ok, _err = pcall(tracking.record_modality, user, provider_name, model, request_has_vision, input_tokens, output_tokens)
 if not _ok then ngx.log(ngx.WARN, "[rid=", rid, "] tracking.record_modality failed: ", tostring(_err)) end
+
+-- Terminate the response as broken (no clean chunked EOF) so the client can tell
+-- the stream was truncated rather than completed. Done last, after tracking.
+if had_read_err then
+    ngx.exit(ngx.ERROR)
+end
