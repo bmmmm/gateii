@@ -50,9 +50,19 @@ gateii up
 # Point Claude Code at the proxy
 gateii switch local-proxy
 
+# Optional: remind yourself when a Claude Code session is NOT routed through gateii
+gateii hook install
+
 # Open the dashboard
 open http://localhost:3001
 ```
+
+The `gateii hook install` step registers a `UserPromptSubmit` hook in
+`~/.claude/settings.json` that warns (up to 3× per session) when
+`ANTHROPIC_BASE_URL` is not pointed at this gateii. It is opt-in on purpose —
+it only makes sense once you actively route Claude Code through gateii. Remove
+it with `gateii hook uninstall`. If you manage `~/.claude/settings.json` via
+dotfiles, mirror the entry there too.
 
 Full walkthrough: [Getting started](docs/getting-started.md).
 

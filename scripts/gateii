@@ -45,6 +45,7 @@ ${BOLD}Stack${NC}
 ${BOLD}Claude Code routing${NC}
   ${CYN}switch${NC} <target>         local-proxy | remote-proxy | direct | status
   ${CYN}sessions${NC}                Show active Claude Code sessions (needs claudii)
+  ${CYN}hook${NC} <action>           install | uninstall | status the proxy-routing reminder
 
 ${BOLD}Admin${NC}
   ${CYN}status${NC}                  Key count, blocked users, current route
@@ -113,6 +114,9 @@ case "$cmd" in
         ;;
     switch)
         exec "$SCRIPT_DIR/admin.sh" switch "$@"
+        ;;
+    hook)
+        exec bash "$SCRIPT_DIR/proxy-hook.sh" "$@"
         ;;
     sessions)
         if command -v claudii >/dev/null 2>&1; then

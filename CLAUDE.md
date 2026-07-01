@@ -115,6 +115,8 @@ company proxies) are left alone.
 | `scripts/statusline-omlx.sh`, `scripts/statusline-compose.sh` | Optional Claude Code statusLine indicator + composer for non-claudii setups (claudii integrates natively via `data/agents/active.json`) |
 | `scripts/compose-ctl.py` | Sidecar HTTP control plane — start/stop/restart/recreate any compose service via Console Services panel. Mounts docker socket; whitelisted to services in this compose project |
 | `scripts/git-tracking.sh` | Plugin script: reads `data/git-tracking.json` if present (per-repo author + platform), else falls back to filesystem scan. Auto-detects platform from `git remote -v` if not pinned |
+| `scripts/proxy-hint.sh` | The reminder itself — `UserPromptSubmit` hook body; warns ≤3×/session when `ANTHROPIC_BASE_URL` is not this gateii. Not wired up by default |
+| `scripts/proxy-hook.sh` | Opt-in installer (`gateii hook install/uninstall/status`) — registers/removes `proxy-hint.sh` in `~/.claude/settings.json` via jq (idempotent, atomic). Not global: you wire it in when setting gateii up |
 
 ## Architecture decisions
 
