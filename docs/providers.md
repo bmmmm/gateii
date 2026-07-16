@@ -56,18 +56,26 @@ to `"other"`.
 ### Free-tier restriction (OpenRouter)
 
 The `openrouter` provider is pinned free-tier-only: `providers/openrouter.lua`
-sets `_M.free_only = true`, and `handler.lua` rejects any request whose
-`model` does not end in `:free` with `400 {"error":"This provider is
-free-tier only — append :free to the model id (...)"}` before it ever
-reaches OpenRouter. This guards an unfunded OpenRouter account against
-accidentally dispatching a paid model (402 / unexpected spend).
+sets `_M.free_only = true`, and `handler.lua` handles any non-`:free` model
+routed to it based on the admin config (below): it is either rewritten to the
+configured **default** `:free` model, or — if no default is set — refused with
+`400 {"error":"This provider is free-tier only — ..."}` before it ever reaches
+OpenRouter. This guards an unfunded OpenRouter account against accidentally
+dispatching a paid model (402 / unexpected spend).
 
 OpenRouter's free tier is capped at **20 requests/min and 50 requests/day**
-per account. To smooth over per-model rate limiting within that quota,
-gateii auto-injects a `models` fallback array (from
-`_M.free_fallback_pool`, capped at 3 entries) whenever a `:free` request
-doesn't already specify one — OpenRouter then retries the next pool entry
-on a 429 or provider error, transparently to the client.
+per account. To smooth over per-model rate limiting within that quota, gateii
+auto-injects a `models` fallback array (capped at 3 entries) whenever a `:free`
+request doesn't already specify one — OpenRouter then retries the next pool
+entry on a 429 or provider error, transparently to the client.
+
+**Configuring the pool + default.** Both are managed at runtime, persisted to
+`data/openrouter-free.json` `{pool, default}` (validated by
+`schema.validate_openrouter_free`, read by `openrouter_free.lua` with a ~10s
+cache). Edit them in the console's **Free Models** tab (`/console/free`), which
+lists the currently-available `:free` models live and lets you pick an ordered
+pool and a default. When no config file exists, handler.lua falls back to the
+provider's hardcoded `_M.free_fallback_pool` and the reject-with-400 behaviour.
 
 ## Provider interface
 

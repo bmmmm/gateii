@@ -67,7 +67,8 @@ for alerting on brute-force attempts.
 | `GET` | `/internal/admin/keys` | All keys (masked `upstream_key`) |
 | `GET` | `/internal/admin/providers` | `providers.json` contents |
 | `GET` | `/internal/admin/llm-prices` | Cached llm-prices.com snapshot |
-| `GET` | `/internal/admin/openrouter-models` | Top-10 weekly programming models (12 h cache) |
+| `GET` | `/internal/admin/openrouter-models` | Top weekly programming models with pricing (12 h cache). `?free=1`: all currently-listed `:free` models with `context_length` (1 h cache) |
+| `GET` | `/internal/admin/openrouter-free` | OpenRouter free-tier config `{pool, default}`; `{"pool":[],"default":""}` if none set yet |
 | `GET` | `/internal/admin/health` | Component reachability: proxy, Prometheus, Grafana + upstream error rate |
 | `GET` | `/internal/admin/bootstrap` | Pending codes + active confirm sessions |
 | `GET` | `/internal/admin/agents` | Local-omlx-agent state: active, recent runs, routing, bench matrix, omlx_status |
@@ -129,6 +130,16 @@ including this one.
 
 Consumed by `scripts/git-tracking.sh` in the git-tracking sidecar and by
 the `/console/git` tab.
+
+### OpenRouter free tier
+
+| Method | Path | Body | Effect |
+|---|---|---|---|
+| `PUT` | `/internal/admin/openrouter-free` | `{pool:[":free" ids], default:":free" id \| ""}` | Replaces `data/openrouter-free.json`. `pool` is capped at 3 (OpenRouter's models-array limit), every id must end in `:free`, no dups; `default` is a `:free` id or empty. `400` on a schema violation; `500` on write failure. Returns `{ok, pool:<count>, default}`. |
+
+Read by `handler.lua` (via `openrouter_free.lua`) on every `:free` request and
+managed from the `/console/free` tab. `pool` drives the fallback `models` array;
+`default` is the model a non-`:free` request is rewritten to (empty → 400).
 
 ### Local agents (omlx)
 

@@ -182,3 +182,51 @@ describe("schema.validate_git_tracking", function()
         assert.is_true(ok)
     end)
 end)
+
+describe("schema.validate_openrouter_free", function()
+    it("accepts an empty object", function()
+        local ok = schema.validate_openrouter_free({}); assert.is_true(ok)
+    end)
+
+    it("accepts a pool of :free ids plus a :free default", function()
+        local ok = schema.validate_openrouter_free({
+            pool = { "google/gemma-4-31b-it:free", "qwen/qwen3-coder:free" },
+            default = "qwen/qwen3-coder:free",
+        })
+        assert.is_true(ok)
+    end)
+
+    it("accepts an empty-string default (no default)", function()
+        local ok = schema.validate_openrouter_free({ pool = {}, default = "" })
+        assert.is_true(ok)
+    end)
+
+    it("rejects a non-object root", function()
+        local ok, err = schema.validate_openrouter_free("nope")
+        assert.is_false(ok); assert.is_not_nil(err)
+    end)
+
+    it("rejects a pool entry that isn't a :free model", function()
+        local ok, err = schema.validate_openrouter_free({ pool = { "anthropic/claude-opus-4" } })
+        assert.is_false(ok); assert.is_not_nil(err)
+    end)
+
+    it("rejects a pool larger than 3 (OpenRouter models-array cap)", function()
+        local ok, err = schema.validate_openrouter_free({
+            pool = { "a:free", "b:free", "c:free", "d:free" },
+        })
+        assert.is_false(ok); assert.is_not_nil(err)
+    end)
+
+    it("rejects duplicate pool entries", function()
+        local ok, err = schema.validate_openrouter_free({
+            pool = { "a:free", "a:free" },
+        })
+        assert.is_false(ok); assert.is_not_nil(err)
+    end)
+
+    it("rejects a non-:free default", function()
+        local ok, err = schema.validate_openrouter_free({ default = "gpt-4o" })
+        assert.is_false(ok); assert.is_not_nil(err)
+    end)
+end)
