@@ -13,7 +13,7 @@ security posture and the controls in place. Full admin-API reference:
 | Request size limit | 10 MB max body (supports vision payloads) — set in `nginx.conf` |
 | Admin API auth | Internal-only: IP allow-list + `ADMIN_TOKEN` (cookie or header), constant-time compare |
 | Admin login brute-force | `limit_req_zone adminauth 5r/m` with burst 3 on `/internal/admin/login` (429 on exhaustion) |
-| Admin fail-closed | `apikey` mode without `ADMIN_TOKEN` returns 503 on `/internal/admin/*` (passthrough stays open) |
+| Admin fail-closed | `apikey` mode without `ADMIN_TOKEN` returns 503 on `/internal/admin/*`. `passthrough` without `ADMIN_TOKEN`: `GET` (read-only console) stays open, every mutating method is refused with 403 |
 | Admin session | HttpOnly, SameSite=Strict cookie (Secure added over HTTPS); crypto-random id; 1 h TTL; per-IP login lockout |
 | Control plane (compose-ctl) | `INTERNAL_TOKEN` required — fails closed (health-only, 503) when unset; no host port, gateii-network-only |
 | Console CSP | `script-src 'self' 'nonce-<N>'` — no inline scripts without per-request nonce |
@@ -39,7 +39,7 @@ Set `ADMIN_TOKEN` (≥ 32 random hex bytes) in `.env` for production.
 | `apikey` | yes | Normal — cookie or header required |
 | `apikey` | **no** | **503 on every request** (fail-closed — there are server-side keys to protect) |
 | `passthrough` | yes | Normal |
-| `passthrough` | no | Open behind IP allow-list (no server-side secrets to protect) |
+| `passthrough` | no | Read-only: `GET` allowed behind the IP allow-list (console works zero-config), every mutating method (`POST`/`PUT`/`DELETE`) refused with 403 |
 
 Token compares are constant-time. `/internal/admin/login` is rate-limited
 at 5 req/min per IP.

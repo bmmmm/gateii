@@ -44,7 +44,7 @@ Prometheus scrape endpoint: `http://localhost:8888/metrics`
 | Metric | Labels | What it tells you |
 |--------|--------|-------------------|
 | `gateii_tokens_total` | user, provider, model, type | Input/output tokens consumed |
-| `gateii_cost_dollars_total` | user, provider, model, type | Estimated cost (active provider pricing) |
+| `gateii_cost_dollars_total` | user, provider, model, type | Estimated cost — priced per-provider (each bucket billed against the pricing table of the provider it was actually served by, not the single `active_provider`) |
 | `gateii_requests_total` | user, provider, model | Request count |
 | `gateii_request_duration_ms_total` | user, provider, model | Cumulative latency (/ requests = avg) |
 | `gateii_upstream_errors_total` | user, provider, model | Non-200 upstream responses |
@@ -63,14 +63,26 @@ prompt-caching effectiveness.
 
 ## How cost is calculated
 
-Cost is computed in `metrics.lua` from the token counts, using the pricing
-in `config/openresty/lua/providers.json`. The `active_provider` entry
-selects which pricing table drives `gateii_cost_dollars_total`.
+Cost is computed in `metrics.lua` from the token counts, priced
+**per-provider**: every `providers.json` entry that declares a `models`
+pricing table is loaded into a per-provider price map, and each
+`gateii_cost_dollars_total` bucket is billed against the table of the
+provider it was actually served by — not the single `active_provider`.
+This matters as soon as traffic is mixed across providers: local `omlx`
+(free) and `openrouter` (free-tier) usage aren't mispriced against the
+Anthropic table just because `active_provider` happens to be `anthropic`.
+`active_provider` still selects the table used as a fallback when a
+serving provider has no pricing entry of its own (and for the legacy
+`pricing.json` path, which only ever had one table).
 
-For Anthropic prompt-caching, the per-token price is multiplied by:
+For Anthropic-style prompt-caching, the per-token price is multiplied by
+that provider's own:
 
 - `cache_write_multiplier` (default 1.25)
 - `cache_read_multiplier` (default 0.1)
+
+falling back to the active provider's multipliers if a serving provider
+doesn't declare its own.
 
 Edit `providers.json` to adjust prices — no rebuild needed, just
 `gateii reload`.

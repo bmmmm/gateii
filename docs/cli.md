@@ -31,6 +31,7 @@ sourcing `.zshrc`/`.bashrc`.
 | `gateii reload` | `openresty -s reload` inside the proxy container. Use after editing Lua or nginx config. |
 | `gateii logs [service]` | Tail logs. Default: `gateii-proxy`. |
 | `gateii smoke` | Run `scripts/smoke-test.sh`. |
+| `gateii env-check [--verbose]` | Audit `.env` for required + recommended vars — never prints secret values. `--verbose` also lists optional/hardening vars and stale (removed-feature) entries. |
 
 ### Claude Code routing
 

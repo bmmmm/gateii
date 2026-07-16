@@ -13,8 +13,14 @@ cp .env.example .env
 |----------|---------|-------------|
 | `PROXY_MODE` | `passthrough` | `passthrough` or `apikey`. See [modes.md](modes.md). |
 | `PASSTHROUGH_USER` | _(key suffix)_ | Display name in passthrough mode (shown in Grafana). |
-| `ANTHROPIC_API_KEY` | — | Required when `PROXY_MODE=apikey`. |
-| `ADMIN_TOKEN` | — | ≥ 32 random hex bytes. Required in `apikey` mode (fail-closes the admin API otherwise). |
+| `ANTHROPIC_API_KEY` | — | Fallback upstream key for `apikey` mode users whose `keys.json` entry has an empty `upstream_key`. Prefer pinning per-user keys via `admin.sh add`. |
+| `OPENROUTER_API_KEY` | — | Same fallback role as `ANTHROPIC_API_KEY`, for users routed to the `openrouter` provider. OpenRouter is free-tier-only — see [providers.md](providers.md). |
+| `OPENAI_API_KEY` | — | Same fallback role, for users routed to the `openai` provider. |
+| `OMLX_URL` | `http://host.docker.internal:8000` | Base URL of a local [oMLX](https://github.com/jundot/omlx) instance for the `omlx` provider / local-agent wrapper. Override if oMLX runs on a different port or as a sibling container. |
+| `OMLX_API_KEY` | — | Bearer token for oMLX, if your instance enforces auth. Most local setups run without one. |
+| `ADMIN_TOKEN` | — | ≥ 32 random hex bytes. Required in `apikey` mode (fail-closes the admin API otherwise). In `passthrough` mode it's optional: unset, the console stays readable (`GET`) but every mutating admin call is refused with 403. See [security.md](security.md). |
+| `INTERNAL_TOKEN` | — | **Required for the compose-ctl control plane.** Shared secret the proxy injects when forwarding to the `compose-ctl` sidecar (Console Services panel, agent-bench trigger, idle-config). If unset, `compose-ctl` fails closed — it serves only `/health` and 503s every mutating endpoint. |
+| `GRAFANA_ADMIN_PASSWORD` | — | Grafana admin password. Only enforced by a strict-env/hardened compose variant — the local dev compose has anonymous access enabled and ignores this. |
 
 ## Startup (`gateii up`)
 
@@ -103,9 +109,14 @@ Cost metrics are driven by `config/openresty/lua/providers.json`:
 }
 ```
 
-- `active_provider` selects the pricing table used for `gateii_cost_dollars_total`.
-- `cache_write_multiplier` / `cache_read_multiplier` apply to Anthropic
-  prompt-caching tokens.
+- `gateii_cost_dollars_total` is priced **per-provider**: each usage bucket
+  is billed against the `models` table of the provider it was actually
+  served by. `active_provider` only selects the fallback table for a
+  provider that declares no pricing entry of its own (see
+  [monitoring.md](monitoring.md)).
+- `cache_write_multiplier` / `cache_read_multiplier` apply per-provider to
+  that provider's own prompt-caching tokens, falling back to the active
+  provider's multipliers when a serving provider doesn't declare its own.
 - `comparison_models` is a **static fallback** for the console comparison
   panel. At runtime the console fetches the current top-10 weekly
   programming models from OpenRouter (12 h cache) and replaces this list

@@ -6,9 +6,68 @@ exposes a small interface.
 
 ## Built-in providers
 
-- `anthropic` — Anthropic Messages API (native)
-- More to come — see `config/openresty/lua/providers/` for the current
-  list.
+Registered in `config/openresty/lua/providers/init.lua` — selectable via a
+`keys.json` entry's `provider` field (apikey mode) or the `x-provider`
+header (passthrough mode, non-internal providers only):
+
+- **`anthropic`** (`providers/anthropic.lua`) — native Anthropic Messages
+  API (`https://api.anthropic.com`). Builds `x-api-key` or `Authorization:
+  Bearer` headers depending on the original auth type (OAuth Bearer tokens
+  are never downgraded to `x-api-key`); parses both streaming
+  (`message_start`/`message_delta` SSE events) and non-streaming `usage`
+  for token counts.
+- **`openai`** (`providers/openai.lua`) — OpenAI API
+  (`https://api.openai.com`). Delegates header building and non-streaming
+  token extraction to `openai_compatible.lua`, streaming extraction to
+  `openai_format.lua`; sets `stream_options_usage = true` so handler.lua
+  injects `stream_options: {include_usage: true}` (OpenAI only returns
+  usage in streaming responses when explicitly asked).
+- **`openrouter`** (`providers/openrouter.lua`) — OpenRouter via its
+  Anthropic-compatible `/v1/messages` endpoint (Bearer auth). **Free-tier
+  only** — see [Free-tier restriction](#free-tier-restriction-openrouter)
+  below. Reuses `anthropic.lua`'s token extractors since OpenRouter's
+  Anthropic-format responses match verbatim.
+- **`omlx`** (`providers/omlx.lua`) — local [oMLX](https://github.com/jundot/omlx)
+  server (`OMLX_URL`, default `http://host.docker.internal:8000`).
+  **Internal-only**: not selectable via the client-supplied `x-provider`
+  header, only through a trusted per-user `keys.json` pin — otherwise a
+  passthrough client could reach the internal model server directly
+  (SSRF / RAM-DoS). Uses Anthropic-format token extraction; oMLX reports
+  the real prompt size in `cache_creation_input_tokens` with
+  `input_tokens=0`, so gateii sums all three input fields.
+
+Two more modules live in the same directory but are shared logic, not
+independently selectable providers:
+
+- **`openai_compatible.lua`** — shared `build_headers` (Bearer, falling
+  back through `OPENAI_API_KEY` / `OPENROUTER_API_KEY`) and non-streaming
+  `extract_tokens` for any OpenAI-wire-format upstream. Used by
+  `openai.lua` and (for header building only) `omlx.lua`.
+- **`openai_format.lua`** — shared streaming SSE token parser
+  (`extract_tokens_streaming`) for OpenAI-format upstreams. Used by
+  `openai.lua`.
+
+Both map OpenAI `finish_reason` values to the Anthropic `stop_reason`
+vocabulary (`stop→end_turn`, `length→max_tokens`,
+`tool_calls`/`function_call→tool_use`, `content_filter→refusal`) so
+`metrics.lua`'s stop-reason whitelist doesn't collapse every OpenAI reason
+to `"other"`.
+
+### Free-tier restriction (OpenRouter)
+
+The `openrouter` provider is pinned free-tier-only: `providers/openrouter.lua`
+sets `_M.free_only = true`, and `handler.lua` rejects any request whose
+`model` does not end in `:free` with `400 {"error":"This provider is
+free-tier only — append :free to the model id (...)"}` before it ever
+reaches OpenRouter. This guards an unfunded OpenRouter account against
+accidentally dispatching a paid model (402 / unexpected spend).
+
+OpenRouter's free tier is capped at **20 requests/min and 50 requests/day**
+per account. To smooth over per-model rate limiting within that quota,
+gateii auto-injects a `models` fallback array (from
+`_M.free_fallback_pool`, capped at 3 entries) whenever a `:free` request
+doesn't already specify one — OpenRouter then retries the next pool entry
+on a 429 or provider error, transparently to the client.
 
 ## Provider interface
 
