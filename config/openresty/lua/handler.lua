@@ -4,6 +4,15 @@ local http     = require "resty.http"
 local providers = require "providers.init"
 local tracking  = require "tracking"
 local circuit_breaker = require "circuit_breaker"
+local util     = require "util"
+
+-- Allow-list for output_config.effort. The value is client-controlled and lands
+-- in shared-dict counter keys + a Prometheus label; without clamping, arbitrary
+-- values create unbounded counter cardinality that can LRU-evict the daily-limit
+-- enforcement counters sharing the same dict (see auth.warn_if_counters_near_full).
+local EFFORT_ALLOWED = {
+    none = true, low = true, medium = true, high = true, xhigh = true, max = true,
+}
 
 -- Request ID is set by auth.lua into ngx.ctx.request_id. Declare at top of
 -- chunk so the closures below capture it as an upvalue — a local declared
@@ -115,7 +124,10 @@ local function track_rl_429(res, u, m, pname)
     local hit_tokens = 0
     local cd = ngx.shared.counters
     if cd and u and m then
-        local base = u .. "|" .. pname .. "|" .. m .. "|"
+        -- Match how tracking.record() stored these keys: it sanitizes provider
+        -- and model. Without the same sanitize here, models containing ':' or
+        -- whitespace (e.g. OpenRouter '<id>:free') never match → hit_tokens=0.
+        local base = u .. "|" .. util.sanitize(pname) .. "|" .. util.sanitize(m) .. "|"
         for _, t in ipairs({"input", "output", "cache_creation", "cache_read"}) do
             local v = cd:get(base .. t)
             if v then hit_tokens = hit_tokens + v end
@@ -214,11 +226,14 @@ else
     model = "unknown"
 end
 
--- Opus 4.7 output_config.effort (low|medium|high|xhigh|max) — "none" if unset
+-- Opus 4.7 output_config.effort (low|medium|high|xhigh|max) — "none" if unset.
+-- Clamp to the known enum; anything else buckets to "other" so a client can't
+-- mint unbounded counter keys / Prometheus label values (see EFFORT_ALLOWED).
 local request_effort = "none"
 if type(body_obj.output_config) == "table"
    and type(body_obj.output_config.effort) == "string" then
-    request_effort = body_obj.output_config.effort
+    local eff = body_obj.output_config.effort
+    request_effort = EFFORT_ALLOWED[eff] and eff or "other"
 end
 
 -- Vision detection: one pass over messages[].content[] looking for image blocks.
