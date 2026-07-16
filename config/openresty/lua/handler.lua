@@ -5,6 +5,7 @@ local providers = require "providers.init"
 local tracking  = require "tracking"
 local circuit_breaker = require "circuit_breaker"
 local util     = require "util"
+local openrouter_free = require "openrouter_free"
 
 -- Allow-list for output_config.effort. The value is client-controlled and lands
 -- in shared-dict counter keys + a Prometheus label; without clamping, arbitrary
@@ -226,16 +227,34 @@ else
     model = "unknown"
 end
 
--- Free-tier-only providers (unfunded OpenRouter): refuse anything that isn't a
--- ":free" model so a paid model can never be dispatched (402 / unexpected spend).
+-- Admin-managed OpenRouter free-tier config { pool, default } — only loaded for
+-- free-only providers. Drives both the default-rewrite below and the fallback
+-- `models` array injection further down.
+local free_cfg = provider.free_only and openrouter_free.load() or nil
+-- body_mutated tracks whether we changed body_obj (re-encode before forwarding).
+-- Declared here so the default-rewrite can set it.
+local body_mutated = false
+
+-- Free-tier-only providers (unfunded OpenRouter): a non-":free" model is either
+-- rewritten to the admin-configured default :free model, or — if no default is
+-- set — refused so a paid model can never be dispatched (402 / unexpected spend).
 if provider.free_only and model:sub(-5) ~= ":free" then
-    ngx.log(ngx.WARN, "[rid=", rid, "] refused non-:free model on free-only provider ",
-            provider_name, " (model=", model, ")")
-    ngx.status = 400
-    ngx.header["Content-Type"] = "application/json"
-    ngx.say('{"error":"This provider is free-tier only — append :free to the model id '
-            .. '(e.g. meta-llama/llama-3.3-70b-instruct:free)"}')
-    return
+    local default_model = free_cfg and free_cfg.default
+    if type(default_model) == "string" and default_model:sub(-5) == ":free" then
+        ngx.log(ngx.INFO, "[rid=", rid, "] rewrote non-:free model '", model,
+                "' to configured default '", default_model, "' for ", provider_name)
+        model = default_model
+        body_obj.model = default_model
+        body_mutated = true
+    else
+        ngx.log(ngx.WARN, "[rid=", rid, "] refused non-:free model on free-only provider ",
+                provider_name, " (model=", model, ")")
+        ngx.status = 400
+        ngx.header["Content-Type"] = "application/json"
+        ngx.say('{"error":"This provider is free-tier only — append :free to the model id '
+                .. '(e.g. meta-llama/llama-3.3-70b-instruct:free), or set a default in the console"}')
+        return
+    end
 end
 
 -- Opus 4.7 output_config.effort (low|medium|high|xhigh|max) — "none" if unset.
@@ -266,7 +285,6 @@ if type(body_obj.messages) == "table" then
 end
 
 -- Inject stream_options so OpenAI-format providers return usage in streaming responses
-local body_mutated = false
 if is_streaming and provider.stream_options_usage then
     body_obj.stream_options = body_obj.stream_options or {}
     body_obj.stream_options.include_usage = true
@@ -274,16 +292,19 @@ if is_streaming and provider.stream_options_usage then
 end
 
 -- OpenRouter free-tier auto-fallback: if the requested model ends with ":free"
--- and the caller didn't already supply a `models` array, inject one from the
--- provider's free_fallback_pool. OR then retries the next entry on upstream
--- 429/provider errors, transparently to the client.
-if provider.free_fallback_pool and type(body_obj.models) ~= "table"
+-- and the caller didn't already supply a `models` array, inject one. Prefer the
+-- admin-configured pool (openrouter-free.json); fall back to the provider's
+-- hardcoded free_fallback_pool when none is set. OR then retries the next entry
+-- on upstream 429/provider errors, transparently to the client.
+local fallback_pool = (free_cfg and type(free_cfg.pool) == "table" and #free_cfg.pool > 0)
+    and free_cfg.pool or provider.free_fallback_pool
+if fallback_pool and type(body_obj.models) ~= "table"
    and type(body_obj.model) == "string" and body_obj.model:sub(-5) == ":free" then
     -- OpenRouter caps the `models` array at 3 entries; truncate silently.
     local MAX_FALLBACK = 3
     local seen = { [body_obj.model] = true }
     local pool = { body_obj.model }
-    for _, m in ipairs(provider.free_fallback_pool) do
+    for _, m in ipairs(fallback_pool) do
         if #pool >= MAX_FALLBACK then break end
         if not seen[m] then
             seen[m] = true
