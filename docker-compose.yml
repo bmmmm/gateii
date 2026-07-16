@@ -18,6 +18,13 @@ services:
     user: "65534:65534"
     environment:
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
+      # Upstream-key fallbacks for the openrouter / openai providers. nginx.conf
+      # whitelists them and the provider Lua reads them via os.getenv, but they
+      # were never passed into the container — so the documented .env fallback
+      # (used when a keys.json entry has an empty upstream_key) silently did
+      # nothing. OpenRouter/OpenAI only worked via per-key upstream_key without these.
+      - OPENROUTER_API_KEY=${OPENROUTER_API_KEY:-}
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
       - PROXY_MODE=${PROXY_MODE:-passthrough}
       - PASSTHROUGH_USER=${PASSTHROUGH_USER:-}
       - CONSOLE_ENABLED=${CONSOLE_ENABLED:-0}
