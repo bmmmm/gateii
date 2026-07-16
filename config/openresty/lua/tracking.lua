@@ -11,8 +11,16 @@ local COUNTER_TTL = (tonumber(os.getenv("COUNTER_RETENTION_DAYS")) or 60) * 8640
 
 
 -- Detect once whether this build exposes shared_dict:expire (added in
--- lua-nginx-module 0.10.x). Falls back to get-then-set when absent.
+-- lua-nginx-module 0.10.x — present in every supported OpenResty). When absent
+-- we simply don't slide the TTL: counters then expire COUNTER_RETENTION_DAYS
+-- after their FIRST write instead of after last activity. That degradation is
+-- safe; the previous get-then-set fallback was NOT — it could drop a concurrent
+-- worker's incr between the get and the set (lost update).
 local _has_expire = type(counters.expire) == "function"
+if not _has_expire then
+    ngx.log(ngx.WARN, "tracking: shared_dict:expire() unavailable — lifetime ",
+            "counter TTLs will not slide on activity")
+end
 
 -- bump(key, value, ttl[, slide])
 -- incr() only sets init_ttl when the key is CREATED — OpenResty does not refresh
@@ -28,15 +36,11 @@ local function bump(key, value, ttl, slide)
                 " free=", counters:free_space())
         return
     end
-    if slide and ttl then
-        if _has_expire then
-            -- expire() returns nil,"not found" only if the key vanished between
-            -- incr and here (eviction) — harmless to ignore.
-            counters:expire(key, ttl)
-        else
-            local cur = counters:get(key)
-            if cur ~= nil then counters:set(key, cur, ttl) end
-        end
+    if slide and ttl and _has_expire then
+        -- expire() returns nil,"not found" only if the key vanished between
+        -- incr and here (eviction) — harmless to ignore. No get-then-set
+        -- fallback: it was a lost-update race across workers.
+        counters:expire(key, ttl)
     end
 end
 

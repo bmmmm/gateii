@@ -161,6 +161,25 @@ do
         return reject(429, "Usage limit reached — contact admin to unblock")
     end
 
+    -- 3a-bis. Per-second rate limit — apikey mode only (documented invariant).
+    -- Runs BEFORE the daily requests_per_day admission incr (3b) so a request
+    -- rejected by the burst limiter never consumes the caller's daily budget
+    -- (which could otherwise 24h-block a user for requests that were never
+    -- served). In passthrough every client shares PASSTHROUGH_USER, so a shared
+    -- limiter would penalize unrelated clients; passthrough stays unmetered.
+    if lim and proxy_config.PROXY_MODE ~= "passthrough" then
+        local delay, err = lim:incoming(user, true)
+        if not delay then
+            if err == "rejected" then
+                ngx.header["Retry-After"] = "60"
+                return reject(429, "Rate limit exceeded — max 60 requests/min per key")
+            end
+            ngx.log(ngx.WARN, "[rid=", rid, "] rate limiter error: ", err)
+        elseif delay > 0 then
+            ngx.sleep(delay)
+        end
+    end
+
     -- 3b. Daily limit checks
     -- Soft limit: pre-request check reads combined post-response total; cannot pre-enforce unknown future token count
     local limits_raw = blocking_dict:get("limits|" .. user)
@@ -228,20 +247,7 @@ do
     end
 end
 
--- 4. Rate limit per user — apikey mode only (documented invariant).
--- In passthrough every client shares the single PASSTHROUGH_USER bucket, so a
--- shared limiter would penalize unrelated clients; passthrough is intentionally
--- unmetered. Burst 10 covers normal interactive use, sustained rate is 1 req/s.
--- Tune via limit_req.new() if needed.
-if lim and proxy_config.PROXY_MODE ~= "passthrough" then
-    local delay, err = lim:incoming(user, true)
-    if not delay then
-        if err == "rejected" then
-            ngx.header["Retry-After"] = "60"
-            return reject(429, "Rate limit exceeded — max 60 requests/min per key")
-        end
-        ngx.log(ngx.WARN, "[rid=", rid, "] rate limiter error: ", err)
-    elseif delay > 0 then
-        ngx.sleep(delay)
-    end
-end
+-- Rate limiting now runs in section 3a-bis (before the daily requests_per_day
+-- admission incr) so limiter-rejected requests don't consume the daily budget.
+-- Burst 10 covers normal interactive use, sustained rate is 1 req/s. Tune via
+-- limit_req.new() if needed.
