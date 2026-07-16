@@ -9,18 +9,24 @@ local OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY") or ""
 
 _M.upstream_url = "https://openrouter.ai/api"
 
+-- The account is unfunded and must only ever use ":free" models (20 req/min,
+-- 50 req/day). handler.lua reads this marker and rejects any non-":free" model
+-- routed here, so a paid model can never be dispatched (402 / unexpected spend).
+_M.free_only = true
+
 -- Free-tier fallback pool. When handler.lua sees provider=openrouter +
 -- model ends with ":free", it injects a `models` array into the request so
 -- OpenRouter automatically retries the next entry on 429/provider errors.
 -- Order = preference. Edit here to add/remove entries.
--- Pool selected from live probe on 2026-04-23 — only models that returned 200
--- without OpenRouter's "providers may train on inputs" privacy opt-in. If the
--- OR account later enables that opt-in, openai/gpt-oss-120b:free, minimax and
--- nvidia models become reachable and can be added here.
+-- Originally selected from a live probe (2026-04-23) — only models that returned
+-- 200 without OpenRouter's "providers may train on inputs" privacy opt-in.
+-- Re-validated 2026-07-16 against the live /models list: both gemma entries are
+-- still listed; the former third entry (arcee-ai/trinity-large-preview:free) was
+-- delisted and removed — a delisted id in the injected `models` array can fail
+-- the whole request. Only add ids confirmed reachable without the opt-in.
 _M.free_fallback_pool = {
     "google/gemma-4-31b-it:free",
     "google/gemma-4-26b-a4b-it:free",
-    "arcee-ai/trinity-large-preview:free",
 }
 
 function _M.build_headers(upstream_key, _auth_type)

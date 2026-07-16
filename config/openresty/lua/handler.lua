@@ -226,6 +226,18 @@ else
     model = "unknown"
 end
 
+-- Free-tier-only providers (unfunded OpenRouter): refuse anything that isn't a
+-- ":free" model so a paid model can never be dispatched (402 / unexpected spend).
+if provider.free_only and model:sub(-5) ~= ":free" then
+    ngx.log(ngx.WARN, "[rid=", rid, "] refused non-:free model on free-only provider ",
+            provider_name, " (model=", model, ")")
+    ngx.status = 400
+    ngx.header["Content-Type"] = "application/json"
+    ngx.say('{"error":"This provider is free-tier only — append :free to the model id '
+            .. '(e.g. meta-llama/llama-3.3-70b-instruct:free)"}')
+    return
+end
+
 -- Opus 4.7 output_config.effort (low|medium|high|xhigh|max) — "none" if unset.
 -- Clamp to the known enum; anything else buckets to "other" so a client can't
 -- mint unbounded counter keys / Prometheus label values (see EFFORT_ALLOWED).

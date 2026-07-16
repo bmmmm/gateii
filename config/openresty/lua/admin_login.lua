@@ -86,6 +86,12 @@ local bootstrap = require "bootstrap"
 if not bootstrap._consttime_eq(supplied, ADMIN_TOKEN) then
     ngx.shared.counters:incr("admin_login_failures", 1, 0, 86400 * 7)
     ngx.shared.counters:incr(lockout_key, 1, 0, LOCKOUT_WINDOW)
+    -- incr's init_ttl only arms the TTL when the key is CREATED, so the window
+    -- would otherwise be fixed to the first failure (not sliding as intended).
+    -- Re-arm on every failure so sustained attempts keep the client locked.
+    if type(ngx.shared.counters.expire) == "function" then
+        ngx.shared.counters:expire(lockout_key, LOCKOUT_WINDOW)
+    end
     ngx.status = 401
     ngx.say('{"error":"Invalid token"}')
     return
