@@ -206,14 +206,17 @@ def put_idle_config(body: dict):
         if not isinstance(rule, dict):
             return 400, {"error": f"rule for {mid} must be an object"}
         ttl = rule.get("ttl_seconds", 0)
-        if not isinstance(ttl, int) or ttl < 0 or ttl > 86400:
+        # bool is an int subclass, so {"ttl_seconds": true} would pass isinstance
+        # and later int(True)==1 silently installs a 1s idle-unload. Reject it.
+        if isinstance(ttl, bool) or not isinstance(ttl, int) or ttl < 0 or ttl > 86400:
             return 400, {"error": f"{mid}.ttl_seconds must be int in [0, 86400]"}
         cleaned[mid] = {
             "ttl_seconds": ttl,
             "enabled": bool(rule.get("enabled", True)),
         }
     default_ttl = body.get("default_ttl_seconds", 0)
-    if not isinstance(default_ttl, int) or default_ttl < 0 or default_ttl > 86400:
+    if isinstance(default_ttl, bool) or not isinstance(default_ttl, int) \
+            or default_ttl < 0 or default_ttl > 86400:
         return 400, {"error": "default_ttl_seconds must be int in [0, 86400]"}
     out = {"models": cleaned, "default_ttl_seconds": default_ttl}
     os.makedirs(os.path.dirname(IDLE_CONFIG), exist_ok=True)
@@ -228,10 +231,16 @@ def put_idle_config(body: dict):
 def list_services():
     """All containers belonging to this compose project (running OR stopped),
     plus any configured services that have no container yet."""
-    out = _run([
-        "docker", "ps", "-a", "--format", "{{json .}}",
-        "--filter", f"label=com.docker.compose.project={PROJECT}",
-    ])
+    try:
+        out = _run([
+            "docker", "ps", "-a", "--format", "{{json .}}",
+            "--filter", f"label=com.docker.compose.project={PROJECT}",
+        ])
+    except (subprocess.TimeoutExpired, OSError) as e:
+        # do_action() guards its _run calls; these two did not, so a stalled
+        # docker daemon raised out of do_GET/do_POST → the in-flight request got
+        # no HTTP response at all (bare reset) instead of a clean error body.
+        return {"error": f"docker ps failed: {e}"}
     if out.returncode != 0:
         return {"error": out.stderr.strip()}
 
@@ -283,7 +292,10 @@ def configured_services():
     now = time.monotonic()
     if _services_cache["value"] is not None and now < _services_cache["expires_at"]:
         return _services_cache["value"]
-    out = _run(COMPOSE_CMD + ["config", "--services"])
+    try:
+        out = _run(COMPOSE_CMD + ["config", "--services"])
+    except (subprocess.TimeoutExpired, OSError):
+        return []  # transient — treat as empty whitelist for this call, don't cache
     if out.returncode != 0:
         return []
     services = [s.strip() for s in out.stdout.splitlines() if s.strip()]

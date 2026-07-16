@@ -30,9 +30,14 @@ bar() {
     # usage: bar <pct_int> <width>  → filled/empty bar
     local pct=$1 width=${2:-20}
     local filled=$(( pct * width / 100 ))
+    [ "$filled" -lt 0 ] && filled=0
+    [ "$filled" -gt "$width" ] && filled=$width
     local empty=$((width - filled))
-    printf '%0.s█' $(seq 1 $filled 2>/dev/null) 2>/dev/null || true
-    printf '%0.s░' $(seq 1 $empty 2>/dev/null) 2>/dev/null || true
+    # Guard the seq calls: on BSD/macOS `seq 1 0` counts DOWN and prints "1 0"
+    # (2 chars) instead of nothing, corrupting the bar at exactly 0% and 100%.
+    [ "$filled" -gt 0 ] && printf '%0.s█' $(seq 1 "$filled")
+    [ "$empty" -gt 0 ] && printf '%0.s░' $(seq 1 "$empty")
+    return 0
 }
 
 # --- read metrics ---

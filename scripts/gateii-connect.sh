@@ -85,7 +85,10 @@ post_json() {
     if ! command -v curl >/dev/null 2>&1; then
         die "curl required for handshake (not just health checks)"
     fi
-    code=$(curl -sS -o "$tmp" -w '%{http_code}' \
+    # Bound the handshake calls (may hit a remote gateii over the internet), like
+    # http_get_ok() already does — a stall must not hang the client forever and
+    # leave a dangling server-side session between exchange and confirm.
+    code=$(curl -sS --connect-timeout 5 --max-time 20 -o "$tmp" -w '%{http_code}' \
                 -H 'Content-Type: application/json' \
                 -X POST "$URL$path" \
                 --data "$body") || { cat "$tmp" >&2; rm -f "$tmp"; die "POST $path failed"; }

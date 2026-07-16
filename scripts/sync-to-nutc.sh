@@ -25,7 +25,7 @@ fi
 
 echo "Syncing $REPO_DIR/ -> $REMOTE_HOST:$REMOTE_PATH/ ..."
 
-rsync -rlptz --inplace --delete $DRY_RUN \
+rsync -rlptz --inplace --delete --timeout=30 -e 'ssh -o ConnectTimeout=10' $DRY_RUN \
   --exclude='.env' \
   --exclude='.env.local' \
   --exclude='data/' \

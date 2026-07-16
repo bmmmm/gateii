@@ -26,7 +26,10 @@ if [ -z "${DOCKER_HOST:-}" ]; then
     [ -S "$COLIMA_SOCK" ] && export DOCKER_HOST="unix://$COLIMA_SOCK"
 fi
 
-COMPOSE="docker compose -f $PROJECT_DIR/docker-compose.yml"
+# Array (not a string) so a repo path containing spaces — e.g. an iCloud/Dropbox
+# folder like "~/My Projects/gateii" — doesn't word-split the -f argument. Same
+# fix admin.sh already applies to its plugin subcommand.
+COMPOSE=(docker compose -f "$PROJECT_DIR/docker-compose.yml")
 
 show_help() {
     cat <<EOF
@@ -82,15 +85,15 @@ case "$cmd" in
         ;;
     down)
         echo -e "${DIM}Running docker compose down...${NC}"
-        exec $COMPOSE down "$@"
+        exec "${COMPOSE[@]}" down "$@"
         ;;
     restart)
         if [ $# -eq 0 ]; then
-            exec $COMPOSE restart
+            exec "${COMPOSE[@]}" restart
         else
             svc="$(resolve_service "$1")"
             shift
-            exec $COMPOSE restart "$svc" "$@"
+            exec "${COMPOSE[@]}" restart "$svc" "$@"
         fi
         ;;
     reload)
@@ -104,7 +107,7 @@ case "$cmd" in
         ;;
     logs)
         service="$(resolve_service "${1:-gateii-proxy}")"
-        exec $COMPOSE logs -f "$service"
+        exec "${COMPOSE[@]}" logs -f "$service"
         ;;
     smoke)
         exec bash "$SCRIPT_DIR/smoke-test.sh" "$@"
