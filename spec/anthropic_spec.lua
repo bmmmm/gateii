@@ -112,5 +112,27 @@ describe("anthropic provider", function()
             assert.equals(0, cc)
             assert.equals(0, cr)
         end)
+
+        -- Mirrors handler.lua's real failure mode: a mid-stream read error leaves
+        -- a truncated body (message_start seen, message_delta never arrived, and
+        -- the final event cut off mid-JSON). The parser must extract what it can
+        -- from the valid head and not crash on the partial tail.
+        it("extracts input tokens from a stream truncated before message_delta", function()
+            local body = read_fixture("truncated_after_start.txt")
+            local inp, out, stop, cc, cr = anthropic.extract_tokens_streaming(body)
+            assert.equals(25, inp)
+            assert.equals(0, out)
+            assert.is_nil(stop)
+            assert.equals(0, cc)
+            assert.equals(0, cr)
+        end)
+
+        it("does not crash on a message_delta with malformed JSON at EOF", function()
+            local body = read_fixture("malformed_delta.txt")
+            local inp, out, stop = anthropic.extract_tokens_streaming(body)
+            assert.equals(25, inp)   -- head still parses
+            assert.equals(0, out)    -- unparseable delta contributes nothing
+            assert.is_nil(stop)
+        end)
     end)
 end)

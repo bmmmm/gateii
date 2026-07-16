@@ -40,12 +40,17 @@ jobs:
         run: |
           busted spec/
 
+      - name: Run admin.sh shell tests
+        run: |
+          bash spec/admin_sh_test.sh
+
       - name: Add job summary
         if: always()
         run: |
           cat >> $GITHUB_STEP_SUMMARY <<'EOF'
           ## CI Results
-          - **luacheck**: Syntax and style validation for Lua code
-          - **busted**: Unit tests for SSE parser and provider logic (spec/)
+          - **luacheck**: Syntax and style validation for Lua code (vendored resty/ excluded)
+          - **busted**: Unit tests for SSE parser, provider, schema, bootstrap, circuit-breaker logic (spec/)
+          - **admin.sh tests**: Shell arg-parsing / dispatch tests (spec/admin_sh_test.sh)
           - **Smoke tests**: Require a live Docker stack with Colima — must be run locally via `bash scripts/smoke-test.sh`
           EOF
