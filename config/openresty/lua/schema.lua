@@ -212,6 +212,41 @@ function _M.validate_git_tracking(data)
     return true, nil
 end
 
+-- Validate openrouter-free.json: { pool: [":free" ids], default: ":free" id | "" }
+-- pool = ordered fallback models injected for :free requests (OpenRouter caps at 3);
+-- default = the :free model a model-less / non-:free request is rewritten to.
+local function is_free_model(v)
+    return type(v) == "string" and v ~= "" and v:sub(-5) == ":free"
+end
+
+function _M.validate_openrouter_free(data)
+    if not is_table(data) then
+        return false, "openrouter-free.json: root must be an object"
+    end
+    if data.pool ~= nil then
+        if type(data.pool) ~= "table" then
+            return false, "openrouter-free.json: pool must be an array"
+        end
+        if #data.pool > 3 then
+            return false, "openrouter-free.json: pool may hold at most 3 models (OpenRouter caps the models array)"
+        end
+        local seen = {}
+        for i, m in ipairs(data.pool) do
+            if not is_free_model(m) then
+                return false, "openrouter-free.json: pool[" .. i .. "] must be a non-empty ':free' model id"
+            end
+            if seen[m] then
+                return false, "openrouter-free.json: pool[" .. i .. "] duplicate '" .. tostring(m) .. "'"
+            end
+            seen[m] = true
+        end
+    end
+    if data.default ~= nil and data.default ~= "" and not is_free_model(data.default) then
+        return false, "openrouter-free.json: default must be a ':free' model id (or empty)"
+    end
+    return true, nil
+end
+
 -- Load + parse + validate a JSON file.
 -- Returns (data, err). On validation failure, err contains the reason.
 -- Missing file is NOT an error -- returns (nil, nil).
