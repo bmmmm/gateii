@@ -85,7 +85,7 @@ company proxies) are left alone.
 - Before editing Lua/nginx: `admin.sh switch direct` first — broken proxy cuts off Claude Code
 - `data/keys.json` must use the structured schema (`{user, provider, upstream_key}`); flat `{key: "user"}` format is rejected by `schema.validate_keys` on startup — proxy then runs with empty auth cache (all requests 401)
 - `nginx.conf` is a single-file bind mount → every Edit forces a `compose up -d --force-recreate openresty` to be visible in the container. Batch all changes for a feature into ONE Edit. Lua under `config/openresty/lua/` is dir-mounted → no recreate needed
-- Console routes: `/console` → 302 → `/console/`; subpages `/console/compare` and `/console/git`; static assets at `/console/static/*` served with explicit MIME types (default `text/plain` trips strict-MIME on .css/.js)
+- Console routes: `/console` → 302 → `/console/`; subpages `/console/compare`, `/console/git`, `/console/agents`, `/console/free`; static assets at `/console/static/*` served with explicit MIME types (default `text/plain` trips strict-MIME on .css/.js)
 
 ## Key files
 
@@ -107,8 +107,9 @@ company proxies) are left alone.
 | `config/openresty/lua/util.lua` | Shared primitives — currently `atomic_write(path, content)` |
 | `config/openresty/lua/circuit_breaker.lua` | Per-upstream breaker for repeated failures |
 | `config/openresty/lua/rl_persist.lua` | Persist rate-limit gauges to `data/ratelimit_state.json` (loaded on worker-0 startup, flushed every 30s) — survives container restarts |
-| `config/openresty/html/console/{index,compare,git,agents}.html` | Four-tab console — Overview / Compare / Git / Agents. Shared CSS+JS in `static/` |
-| `config/openresty/lua/console_serve.lua` | Routes `/console/`, `/console/compare`, `/console/git`, `/console/agents` to their HTML files; sets CSP |
+| `config/openresty/html/console/{index,compare,git,agents,free}.html` | Five-tab console — Overview / Compare / Git / Agents / Free Models. Shared CSS+JS in `static/` |
+| `config/openresty/lua/console_serve.lua` | Routes `/console/`, `/console/compare`, `/console/git`, `/console/agents`, `/console/free` to their HTML files; sets CSP |
+| `config/openresty/lua/openrouter_free.lua` | Cached loader for `data/openrouter-free.json` (OpenRouter `:free` pool + default); read by handler.lua per `:free` request |
 | `config/openresty/lua/providers/omlx.lua` | Local oMLX provider — Anthropic-format upstream (`/v1/messages`); token extraction sums input+cache_creation+cache_read |
 | `scripts/agent` | Wrapper that POSTs simple tasks to gateii→omlx; per-task system prompts + max_tokens; mkdir-lock for max-1 concurrency; writes `data/agents/{active.json,log.jsonl}` |
 | `scripts/agent-bench` | Self-adapting benchmark: discovers loaded models, evicts to fit memory budget, runs N trials per (task, model), writes `data/agents/{bench-results.json,bench-report.md,routing.json}` |
