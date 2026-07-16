@@ -119,6 +119,33 @@ function _M.get_exhausted_until()
     return nil
 end
 
+-- Build the OpenRouter `models` fallback array for a pinned :free model, or
+-- nil when nothing should be injected. Pure — handler.lua owns the request
+-- mutation. Injection is skipped when the client opted out via the
+-- x-gateii-no-fallback header (presence-based; a pinned model must be served
+-- by exactly that model or fail visibly — evals/benchmarks would otherwise
+-- silently measure a model mix), when the client supplied its own `models`
+-- array, or when the model is not a :free id.
+function _M.fallback_models(model, existing_models, pool, no_fallback)
+    if no_fallback then return nil end
+    if type(pool) ~= "table" or #pool == 0 then return nil end
+    if type(existing_models) == "table" then return nil end
+    if type(model) ~= "string" or model:sub(-5) ~= ":free" then return nil end
+    -- OpenRouter caps the `models` array at 3 entries; truncate silently.
+    local MAX_FALLBACK = 3
+    local seen = { [model] = true }
+    local out = { model }
+    for _, m in ipairs(pool) do
+        if #out >= MAX_FALLBACK then break end
+        if not seen[m] then
+            seen[m] = true
+            out[#out + 1] = m
+        end
+    end
+    if #out > 1 then return out end
+    return nil
+end
+
 -- Current budget snapshot for /metrics and the admin API.
 -- Returns { minute = {used, limit, remaining}, day = {used, limit, remaining},
 --           exhausted_until = unix|nil, exhausted_limit = n|nil }
