@@ -129,3 +129,56 @@ describe("schema.validate_limits", function()
         assert.is_not_nil(data.bob)
     end)
 end)
+
+describe("schema.validate_git_tracking", function()
+    it("accepts an empty object", function()
+        local ok = schema.validate_git_tracking({}); assert.is_true(ok)
+    end)
+
+    it("accepts a full config with repos and platform_authors", function()
+        local ok = schema.validate_git_tracking({
+            default_author = "bma",
+            interval = 300,
+            platform_authors = { forgejo = "bma", github = "bmmmm" },
+            repos = {
+                { path = "/repo/a", alias = "a", author = "bma", platform = "forgejo" },
+                { path = "/repo/b" },
+            },
+        })
+        assert.is_true(ok)
+    end)
+
+    it("rejects a non-object root", function()
+        local ok, err = schema.validate_git_tracking("nope")
+        assert.is_false(ok); assert.is_not_nil(err)
+    end)
+
+    it("rejects interval below the 30s floor", function()
+        local ok, err = schema.validate_git_tracking({ interval = 5 })
+        assert.is_false(ok); assert.is_not_nil(err)
+    end)
+
+    it("rejects a repo missing its required path", function()
+        local ok, err = schema.validate_git_tracking({ repos = { { alias = "a" } } })
+        assert.is_false(ok); assert.is_not_nil(err)
+    end)
+
+    it("rejects a platform tag that isn't [a-z0-9_-]+", function()
+        local ok, err = schema.validate_git_tracking({
+            repos = { { path = "/r", platform = "Git Hub!" } },
+        })
+        assert.is_false(ok); assert.is_not_nil(err)
+    end)
+
+    it("rejects a platform_authors key that isn't a valid tag", function()
+        local ok, err = schema.validate_git_tracking({
+            platform_authors = { ["Bad Key"] = "x" },
+        })
+        assert.is_false(ok); assert.is_not_nil(err)
+    end)
+
+    it("treats repos as optional (nil repos is valid)", function()
+        local ok = schema.validate_git_tracking({ default_author = "bma" })
+        assert.is_true(ok)
+    end)
+end)
