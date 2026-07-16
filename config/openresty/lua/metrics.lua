@@ -1,5 +1,6 @@
 -- metrics.lua: Prometheus exposition format from shared dicts
 local cjson = require "cjson.safe"
+local openrouter_free = require "openrouter_free"
 local counters = ngx.shared.counters
 local blocking_dict = ngx.shared.blocking
 local rl_events = ngx.shared.rl_events
@@ -478,6 +479,31 @@ add("# HELP gateii_rate_limit_fallback_pct Extra token capacity fraction beyond 
 add("# TYPE gateii_rate_limit_fallback_pct gauge")
 if rl_fallback_pct ~= nil then
     add(string.format("gateii_rate_limit_fallback_pct %.4f", rl_fallback_pct))
+end
+
+-- OpenRouter free-tier budget — proxy-side request counting (estimate: success
+-- responses carry no rate-limit headers) plus the authoritative exhaustion
+-- signal captured from platform-limit 429s (handler.lua track_free_429).
+local orf = openrouter_free.budget_snapshot(openrouter_free.load())
+add("# HELP gateii_openrouter_free_requests Free-tier requests forwarded in the current window (proxy-side estimate)")
+add("# TYPE gateii_openrouter_free_requests gauge")
+add(string.format('gateii_openrouter_free_requests{window="minute"} %d', orf.minute.used))
+add(string.format('gateii_openrouter_free_requests{window="day"} %d', orf.day.used))
+
+add("# HELP gateii_openrouter_free_requests_remaining Estimated free-tier requests remaining in the current window")
+add("# TYPE gateii_openrouter_free_requests_remaining gauge")
+add(string.format('gateii_openrouter_free_requests_remaining{window="minute"} %d', orf.minute.remaining))
+add(string.format('gateii_openrouter_free_requests_remaining{window="day"} %d', orf.day.remaining))
+
+add("# HELP gateii_openrouter_free_exhausted 1 while the account-wide free-tier budget is exhausted (armed by an upstream 429)")
+add("# TYPE gateii_openrouter_free_exhausted gauge")
+add(string.format("gateii_openrouter_free_exhausted %d", orf.exhausted_until and 1 or 0))
+
+add("# HELP gateii_openrouter_free_seconds_until_reset Seconds until the exhausted free-tier window resets")
+add("# TYPE gateii_openrouter_free_seconds_until_reset gauge")
+if orf.exhausted_until then
+    add(string.format("gateii_openrouter_free_seconds_until_reset %d",
+        math.max(0, orf.exhausted_until - now_unix)))
 end
 
 -- Circuit breaker state per provider
