@@ -203,16 +203,22 @@ function _drainToasts() {
 // tab is a one-line change instead of four. Each page mounts an empty
 // <nav class="tabs" id="tabs-mount" data-active="overview"></nav> and
 // console.js renderTabs() fills it. Active tab comes from data-active.
+// Grafana/Prometheus live on the SAME host as the console (their own ports),
+// so derive the base from window.location instead of hardcoding localhost —
+// otherwise these links 404 on any non-local deployment.
+const _EXT_HOST = window.location.hostname || 'localhost';
+const _GRAFANA = `${window.location.protocol}//${_EXT_HOST}:3001`;
+const _PROM = `${window.location.protocol}//${_EXT_HOST}:9090`;
 const _TAB_HTML = `
     <a href="/console/" class="tab" data-tab="overview">Overview</a>
     <a href="/console/compare" class="tab" data-tab="compare">Compare</a>
     <a href="/console/git" class="tab" data-tab="git">Git</a>
     <a href="/console/agents" class="tab" data-tab="agents">Agents</a>
     <span class="ext">
-      <a href="http://localhost:3001/d/gateii-cost" target="_blank">Cost</a>
-      <a href="http://localhost:3001/d/gateii-eff" target="_blank">Efficiency</a>
-      <a href="http://localhost:3001/d/gateii-ops" target="_blank">Ops</a>
-      <a href="http://localhost:9090" target="_blank">Prometheus</a>
+      <a href="${_GRAFANA}/d/gateii-cost" target="_blank">Cost</a>
+      <a href="${_GRAFANA}/d/gateii-eff" target="_blank">Efficiency</a>
+      <a href="${_GRAFANA}/d/gateii-ops" target="_blank">Ops</a>
+      <a href="${_PROM}" target="_blank">Prometheus</a>
       <a href="/metrics" target="_blank">Raw</a>
       <button class="btn btn-blue" id="btn-diag" style="padding:4px 10px;font-size:11px">Diagnostics</button>
       <span class="mode-tag">Mode: <b id="mode-display">-</b></span>
