@@ -69,13 +69,31 @@ auto-injects a `models` fallback array (capped at 3 entries) whenever a `:free`
 request doesn't already specify one — OpenRouter then retries the next pool
 entry on a 429 or provider error, transparently to the client.
 
-**Configuring the pool + default.** Both are managed at runtime, persisted to
-`data/openrouter-free.json` `{pool, default}` (validated by
-`schema.validate_openrouter_free`, read by `openrouter_free.lua` with a ~10s
-cache). Edit them in the console's **Free Models** tab (`/console/free`), which
-lists the currently-available `:free` models live and lets you pick an ordered
-pool and a default. When no config file exists, handler.lua falls back to the
-provider's hardcoded `_M.free_fallback_pool` and the reject-with-400 behaviour.
+**Capability routing.** handler.lua classifies each free-tier request from cheap
+deterministic signals and routes it to a category-appropriate model:
+
+- category = `x-gateii-task` header (if it names a configured route) > **vision**
+  (request carries an image block) > **long_context** (estimated input tokens >
+  `long_context_threshold`, default 100k) > **general**.
+- the category's ordered `:free` model list (`routes.<category>`) supplies the
+  model (first entry) and the OpenRouter `models` fallback array (whole list), so
+  a per-model 429 retries the next capability-compatible model. Empty categories
+  fall through to the `general` route, then `pool`/`default`.
+
+**Configuring pool + default + routes.** All are managed at runtime, persisted to
+`data/openrouter-free.json` `{pool, default, routes, long_context_threshold}`
+(validated by `schema.validate_openrouter_free`, read by `openrouter_free.lua`
+with a ~10s cache). Edit them in the console's **Free Models** tab
+(`/console/free`), which lists the currently-available `:free` models live and
+provides pool/default plus a per-category routes editor. When no config file
+exists, handler.lua falls back to the provider's hardcoded `_M.free_fallback_pool`
+and the reject-with-400 behaviour.
+
+> **Note — free-tier budget is account-wide.** OpenRouter's 20 req/min · 50
+> req/day cap applies per unfunded account, not per model, so routing to "the
+> next free model" does not extend the daily budget. Per-*model* 429s are handled
+> by the `models` fallback array; account-budget exhaustion is a separate concern
+> (planned: escalate to local omlx or a clear 503).
 
 ## Provider interface
 

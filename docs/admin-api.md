@@ -135,11 +135,14 @@ the `/console/git` tab.
 
 | Method | Path | Body | Effect |
 |---|---|---|---|
-| `PUT` | `/internal/admin/openrouter-free` | `{pool:[":free" ids], default:":free" id \| ""}` | Replaces `data/openrouter-free.json`. `pool` is capped at 3 (OpenRouter's models-array limit), every id must end in `:free`, no dups; `default` is a `:free` id or empty. `400` on a schema violation; `500` on write failure. Returns `{ok, pool:<count>, default}`. |
+| `PUT` | `/internal/admin/openrouter-free` | `{pool:[":free" ids], default:":free" id \| "", routes:{<category>:[":free" ids]}, long_context_threshold:int}` | Replaces `data/openrouter-free.json`. Every `:free` array is capped at 3 (OpenRouter's models-array limit), ids must end in `:free`, no dups; category keys are `[a-z][a-z0-9_]*`; `long_context_threshold` a positive int. `400` on a schema violation; `500` on write failure. Returns `{ok, pool:<count>, default}`. |
 
 Read by `handler.lua` (via `openrouter_free.lua`) on every `:free` request and
-managed from the `/console/free` tab. `pool` drives the fallback `models` array;
-`default` is the model a non-`:free` request is rewritten to (empty → 400).
+managed from the `/console/free` tab. The capability router classifies each
+request (`x-gateii-task` header > vision > long-context > general) and routes it
+to that category's ordered model list; the first entry becomes the model, the
+whole list the fallback `models` array. `default`/`pool` are the fallback when a
+category has no route.
 
 ### Local agents (omlx)
 
