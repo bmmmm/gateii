@@ -136,6 +136,19 @@ company proxies) are left alone.
 - **Service control** — `gateii-compose-ctl` sidecar holds the docker socket; the proxy reverse-proxies `/internal/admin/services/*` to it under ADMIN_TOKEN. Whitelisted to services in the gateii compose project, actions limited to start/stop/restart/recreate. Self-restart of openresty is async with delay so the request can return first
 - **Per-repo git tracking** — `data/git-tracking.json` (managed via `/console/git`) drives the git-tracking sidecar. Each repo can pin its `platform` (forgejo/github/gitlab/…); auto-detected from `git remote get-url origin` if not pinned. Metric label `platform=` lets dashboards group across hosts
 
+## Routing boundary (proxy vs. orchestration)
+
+gateii routes per *request*, by capability — e.g. the OpenRouter free-tier router
+(`openrouter_free.lua` + `routes{}`) sends a vision request to a vision model and a
+large-context request to a big-context model. That is the proxy's job.
+
+It deliberately does NOT do quality/cost escalation (cheap→expensive model swaps).
+A proxy can't judge output quality, and swapping models mid-multi-turn is semantic
+chaos. Escalation belongs one layer up, in whatever orchestration drives gateii —
+the caller decides the next model per *task*. On free-tier budget exhaustion the
+proxy returns a clean 503 + reset time rather than silently downgrading; the caller
+decides whether to escalate.
+
 ## Providers
 
 Each provider in `config/openresty/lua/providers/` must export:
