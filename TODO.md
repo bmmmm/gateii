@@ -64,12 +64,17 @@ Orchestrator: distribute to agents when prioritized.
   (what `admin.sh revoke` does in two steps), then a per-row button.
   Files: `admin_api.lua`, `html/console/static/overview.js`.
 
-- **OpenRouter free-tier budget gauge**
-  The unfunded OR account is capped at 20 req/min, 50 req/day. gateii now rejects
-  non-`:free` models (handler.lua), but the remaining budget is invisible —
-  `track_rl_window` only parses Anthropic's unified headers. Parse OpenRouter's
-  `X-RateLimit-Remaining/Limit/Reset` when `provider_name=="openrouter"` and emit
-  a `gateii_openrouter_free_remaining` gauge for the console/Grafana.
+- **OpenRouter free-tier budget visibility (NOT proxy-side escalation)**
+  The unfunded OR account is capped at 20 req/min, 50 req/day (account-wide, not
+  per model). gateii capability-routes `:free` requests (handler.lua) but the
+  remaining budget is invisible. Track it from OpenRouter's `/api/v1/auth/key`
+  (account `limit`/`usage`/`remaining`) or the `X-RateLimit-*` response headers →
+  emit a `gateii_openrouter_free_remaining` gauge for the console/Grafana, and on
+  exhaustion return a clean 503 + reset time.
+  Do NOT auto-escalate to a different model/tier inside the proxy — escalation is
+  a per-task concern for the calling orchestration layer, not a per-request proxy
+  concern (see CLAUDE.md § Routing boundary). The proxy signals (503); the caller
+  decides the next tier.
   Files: `handler.lua`, `tracking.lua`, `metrics.lua`.
 
 - **Low-severity shell edge cases** (no current failure, left as-is)
