@@ -105,12 +105,16 @@ and the reject-with-400 behaviour.
 headers on successful responses (verified live), so gateii counts every
 forwarded free-tier request itself (current-minute + current-UTC-day windows in
 the shared dict — an *estimate*: clients hitting the same account outside
-gateii are invisible). 429s carry `X-RateLimit-*` headers — but *both* kinds
-do: per-model "high demand" RPM 429s report the model's own cap (e.g.
-`X-RateLimit-Limit: 8` on `qwen3-coder:free`, reset in unix ms), so gateii only
-treats a 429 as account-budget exhaustion when its `X-RateLimit-Limit` matches
-a configured account cap (`minute_limit`/`daily_limit`); anything else fails
-open. A matching reset timestamp is captured as the authoritative "exhausted
+gateii are invisible, and the counter includes 429-rejected requests, so after
+a client retry storm it over-counts what OpenRouter's own limiter consumed —
+conservative in the right direction). Three 429 shapes exist (all verified
+live): account-cap and per-model RPM 429s carry `X-RateLimit-*` headers —
+per-model RPM 429s report the model's own cap (e.g. `X-RateLimit-Limit: 8` on
+`qwen3-coder:free`, reset in unix ms) — while upstream-capacity rejections
+("Provider returned error" during high demand) carry no `X-RateLimit-*`
+headers at all. gateii therefore only treats a 429 as account-budget
+exhaustion when its `X-RateLimit-Limit` matches a configured account cap
+(`minute_limit`/`daily_limit`); anything else fails open. A matching reset timestamp is captured as the authoritative "exhausted
 until" signal. While armed, gateii
 answers every `:free` request with a clean
 `503 {"error":..., "reset_at":"<RFC3339>", "retry_after_seconds":N}` +

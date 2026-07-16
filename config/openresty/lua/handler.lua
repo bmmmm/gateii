@@ -143,11 +143,14 @@ local function track_rl_429(res, u, m, pname)
 end
 
 -- Free-tier account-budget capture (free-only providers, e.g. unfunded
--- OpenRouter). Empirically (2026-07-16) BOTH kinds of 429 carry X-RateLimit-*
--- headers: per-model "high demand" RPM limits report the MODEL's cap (e.g.
--- limit=8 for qwen3-coder:free), so the header presence alone cannot identify
--- an account-cap hit — the X-RateLimit-Limit match against the configured
--- account caps below is the discriminator. A matching 429 arms the exhaustion
+-- OpenRouter). Empirically (2026-07-16) account-cap AND per-model RPM 429s
+-- both carry X-RateLimit-* headers: per-model RPM limits report the MODEL's
+-- cap (e.g. limit=8 for qwen3-coder:free), so header presence alone cannot
+-- identify an account-cap hit — the X-RateLimit-Limit match against the
+-- configured account caps below is the discriminator. A THIRD shape exists
+-- (verified 2026-07-16): upstream-capacity rejections ("Provider returned
+-- error" during high demand) carry NO X-RateLimit-* headers at all — they
+-- take the fail-open branch below, correctly. A matching 429 arms the exhaustion
 -- signal that the free-only block below turns into a clean 503 + reset time —
 -- never a tier swap (escalation is the caller's per-task concern, see
 -- CLAUDE.md § Routing boundary).
