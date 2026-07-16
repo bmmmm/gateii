@@ -214,6 +214,7 @@ const _TAB_HTML = `
     <a href="/console/compare" class="tab" data-tab="compare">Compare</a>
     <a href="/console/git" class="tab" data-tab="git">Git</a>
     <a href="/console/agents" class="tab" data-tab="agents">Agents</a>
+    <a href="/console/free" class="tab" data-tab="free">Free Models</a>
     <span class="ext">
       <a href="${_GRAFANA}/d/gateii-cost" target="_blank">Cost</a>
       <a href="${_GRAFANA}/d/gateii-eff" target="_blank">Efficiency</a>
