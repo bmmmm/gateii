@@ -36,7 +36,7 @@ end
 -- error goes to ngx.log) so admin responses don't leak internal hostnames
 -- or lua-resty-http internals to anyone who got past the admin gate.
 -- Hoisted here so the /services and /agents endpoints can both use it.
-local function compose_ctl_forward(path, method, body)
+local function compose_ctl_forward(path, req_method, body)
     local http_ok, http = pcall(require, "resty.http")
     if not http_ok then
         ngx.status = 500; ngx.say(cjson.encode({error = "lua-resty-http unavailable"})); return
@@ -46,10 +46,10 @@ local function compose_ctl_forward(path, method, body)
     local headers = { ["Content-Type"] = "application/json" }
     if INTERNAL_TOKEN ~= "" then headers["X-Internal-Token"] = INTERNAL_TOKEN end
     local res, err = httpc:request_uri("http://compose-ctl:8090" .. path, {
-        method = method, headers = headers, body = body,
+        method = req_method, headers = headers, body = body,
     })
     if not res then
-        ngx.log(ngx.ERR, "compose-ctl forward ", method, " ", path, ": ", tostring(err))
+        ngx.log(ngx.ERR, "compose-ctl forward ", req_method, " ", path, ": ", tostring(err))
         ngx.status = 502
         ngx.say(cjson.encode({error = "upstream unavailable"}))
         return
@@ -1410,4 +1410,5 @@ end
 
 ngx.status = 404
 ngx.say('{"error":"Unknown admin endpoint — available: /internal/admin/{block,unblock,limit,status,'
-    .. 'usage,keys,addkey,revoke-key,overview,providers,llm-prices,openrouter-models,health,git-tracking,services,diagnostics,bootstrap,agents}"}')
+    .. 'usage,keys,addkey,revoke-key,overview,providers,llm-prices,openrouter-models,health,'
+    .. 'git-tracking,services,diagnostics,bootstrap,agents}"}')
