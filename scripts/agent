@@ -45,7 +45,16 @@ LOCK_FILE="$STATE_DIR/lock"
 ACTIVE_FILE="$STATE_DIR/active.json"
 LOG_FILE="$STATE_DIR/log.jsonl"
 
-JQ=/opt/homebrew/bin/jq
+# Resolve jq from PATH like every other script in the repo; keep the common
+# Homebrew path only as a fallback for minimal-PATH hook contexts. A hardcoded
+# path breaks on Intel Homebrew / Linux / nix, and task_config() would then
+# mask it as "unknown task". Fail loudly with an actionable message instead.
+JQ="$(command -v jq || true)"
+[ -z "$JQ" ] && [ -x /opt/homebrew/bin/jq ] && JQ=/opt/homebrew/bin/jq
+if [ -z "$JQ" ]; then
+    echo "[agent] jq not found on PATH — install jq (brew install jq)" >&2
+    exit 3
+fi
 
 # Resolve API key (passthrough mode forwards the client key to omlx as Bearer).
 # Strips surrounding single/double quotes and trailing CR (Windows-edited .env)
@@ -250,8 +259,13 @@ cmd_run() {
 
     # active.json + lock cleanup is set in the lock-acquire trap above
 
-    local body resp body_only http_code text stop in_tok out_tok dt
-    local t0=$(/usr/bin/python3 -c 'import time;print(time.time())')
+    local body resp body_only http_code text stop in_tok out_tok dt t0 t1
+    # Split `local` from the assignment: `local t0=$(...)` masks the command
+    # substitution's exit status (local's own status wins), so set -e can't catch
+    # a failing python3 here — the run would abort confusingly later in the dt
+    # calc instead of cleanly at the point python3 went missing.
+    t0=$(/usr/bin/python3 -c 'import time;print(time.time())') \
+        || { echo "[agent] python3 unavailable for timing" >&2; exit 4; }
 
     if [[ "$picked_model" == claude-* ]]; then
         # Claude CLI path — uses existing Claude Code auth (OAuth/proxy key).
@@ -319,7 +333,8 @@ cmd_run() {
         out_tok=$(printf '%s' "$body_only" | $JQ -r '.usage.output_tokens // 0')
     fi
 
-    local t1=$(/usr/bin/python3 -c 'import time;print(time.time())')
+    t1=$(/usr/bin/python3 -c 'import time;print(time.time())') \
+        || { echo "[agent] python3 unavailable for timing" >&2; exit 4; }
     dt=$(/usr/bin/python3 -c "print(round($t1-$t0,3))")
 
     # Strip markdown code fences if the task declares strip_fences=true.

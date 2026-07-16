@@ -20,6 +20,10 @@ PROJECT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 HOST="${GCTL_HOST:-http://localhost:8888}"
 SESSION_FILE="${GCTL_SESSION_FILE:-/tmp/gctl-session-$(id -u)}"
 SESSION_TTL=3300  # 55 min — slightly under server's 60 min cookie expiry
+# Bound every call: CLAUDE.md points sessions at gctl.sh as the admin-API path,
+# so a wedged openresty worker must not hang the caller forever. Intentionally
+# unquoted at use sites to word-split the fixed flags (no spaces in values).
+CURL_OPTS="--max-time 15 --connect-timeout 5"
 
 die() { echo "gctl: $*" >&2; exit 1; }
 
@@ -44,7 +48,7 @@ session_age() {
 
 login() {
     tok=$(read_admin_token)
-    cookie=$(curl -sS -X POST -H "Content-Type: application/json" \
+    cookie=$(curl -sS $CURL_OPTS -X POST -H "Content-Type: application/json" \
         -d "{\"token\":\"$tok\"}" -i "$HOST/internal/admin/login" \
         | grep -i '^set-cookie:' | sed -n 's/.*admin_session=\([a-f0-9]*\).*/\1/p' || true)
     [ -n "$cookie" ] || die "login failed — admin token rejected or proxy unreachable"
@@ -71,30 +75,30 @@ cmd_session() {
 cmd_get() {
     [ $# -ge 1 ] || die "usage: gctl get <path>"
     cookie=$(get_session)
-    curl -sS -b "admin_session=$cookie" "$HOST$1"
+    curl -sS $CURL_OPTS -b "admin_session=$cookie" "$HOST$1"
 }
 
 cmd_post() {
     [ $# -ge 1 ] || die "usage: gctl post <path> [json-body]"
     cookie=$(get_session)
     if [ $# -ge 2 ]; then
-        curl -sS -X POST -H "Content-Type: application/json" \
+        curl -sS $CURL_OPTS -X POST -H "Content-Type: application/json" \
             -b "admin_session=$cookie" -d "$2" "$HOST$1"
     else
-        curl -sS -X POST -b "admin_session=$cookie" "$HOST$1"
+        curl -sS $CURL_OPTS -X POST -b "admin_session=$cookie" "$HOST$1"
     fi
 }
 
 cmd_put() {
     [ $# -ge 2 ] || die "usage: gctl put <path> <json-body>"
     cookie=$(get_session)
-    curl -sS -X PUT -H "Content-Type: application/json" \
+    curl -sS $CURL_OPTS -X PUT -H "Content-Type: application/json" \
         -b "admin_session=$cookie" -d "$2" "$HOST$1"
 }
 
 cmd_raw() {
     [ $# -ge 1 ] || die "usage: gctl raw <path>"
-    curl -sS "$HOST$1"
+    curl -sS $CURL_OPTS "$HOST$1"
 }
 
 [ $# -ge 1 ] || die "usage: gctl {session|get|post|put|raw} ..."

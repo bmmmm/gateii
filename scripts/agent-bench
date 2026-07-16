@@ -236,7 +236,12 @@ def ensure_model(model_id: str, status: dict) -> dict | None:
     can't-fit apart from wrong-output."""
     info = next((m for m in status["models"] if m["id"] == model_id), None)
     if not info:
-        sys.exit(f"unknown model: {model_id}")
+        # An unregistered id (e.g. a stale DEFAULT_MODEL after an omlx upgrade
+        # renamed the model) must not sys.exit and kill the whole multi-minute
+        # run — every other registered model is still benchable. Degrade to the
+        # same skipped-records path used for "does not fit budget".
+        print(f"  ✗ {model_id} not registered with omlx — skipping", file=sys.stderr)
+        return None
 
     if info["loaded"]:
         return status  # already loaded, nothing to do

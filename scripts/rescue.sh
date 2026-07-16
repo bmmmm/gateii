@@ -195,11 +195,15 @@ else
     fi
 
     echo -e "  Restarting gateii-proxy..."
-    if docker compose -f "$PROJECT_DIR/docker-compose.yml" restart gateii-proxy 2>/dev/null; then
+    # Compose SERVICE name is 'openresty'; 'gateii-proxy' is only the
+    # container_name (cosmetic). `docker compose restart gateii-proxy` fails with
+    # "no such service" and silently drops to the else branch — so this emergency
+    # restart never actually ran. admin.sh/gateii already map to 'openresty'.
+    if docker compose -f "$PROJECT_DIR/docker-compose.yml" restart openresty 2>/dev/null; then
         echo -e "  ${GRN}✓${NC} Proxy container restarted"
         # Quick health check
         sleep 2
-        if docker compose -f "$PROJECT_DIR/docker-compose.yml" exec -T gateii-proxy \
+        if docker compose -f "$PROJECT_DIR/docker-compose.yml" exec -T openresty \
             wget -qO- http://127.0.0.1:8080/health >/dev/null 2>&1; then
             echo -e "  ${GRN}✓${NC} Proxy is healthy"
         else

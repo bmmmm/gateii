@@ -43,7 +43,13 @@ done
 # Module summary
 echo "--- Module summary ---"
 echo ""
-TOUCHED=$(git diff --name-only HEAD~"$N" HEAD 2>/dev/null || git diff --name-only HEAD~1 HEAD)
+# The final fallback needs its own error suppression too: on a single-commit or
+# shallow (--depth 1) clone, `git diff HEAD~1 HEAD` itself exits 128 (unknown
+# revision) and, under set -euo pipefail, would abort the whole script with a raw
+# git fatal instead of degrading to "no history".
+TOUCHED=$(git diff --name-only HEAD~"$N" HEAD 2>/dev/null \
+    || git diff --name-only HEAD~1 HEAD 2>/dev/null \
+    || echo "")
 for mod in "${MODULES[@]}"; do
     MATCHES=$(echo "$TOUCHED" | grep -i "$mod" || true)
     if [ -n "$MATCHES" ]; then
