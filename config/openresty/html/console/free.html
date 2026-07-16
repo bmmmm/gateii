@@ -1,0 +1,67 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>gateii console — Free Models</title>
+<link rel="icon" type="image/svg+xml" href="/console/static/favicon.svg">
+<link rel="stylesheet" href="/console/static/console.css?v=p5">
+</head>
+<body>
+<div class="shell">
+
+  <header class="header">
+    <div class="brand">
+      <span class="brand-name">gateii</span>
+      <span class="brand-tag">Free Models</span>
+    </div>
+    <div id="status-pill" class="status-pill offline">
+      <span class="status-dot"></span>
+      <span id="status-text">connecting...</span>
+    </div>
+  </header>
+
+  <nav class="tabs" id="tabs-mount" data-active="free"></nav>
+
+  <div class="sec-head">
+    <h2>OpenRouter free tier</h2>
+    <div class="controls">
+      <span class="count" id="free-count" style="background:var(--accent-subtle);color:var(--accent);padding:2px 10px;border-radius:10px;font-size:11px;font-weight:600">0</span>
+    </div>
+  </div>
+
+  <div class="panel">
+    <div class="panel-body">
+      <div style="color:var(--dim);font-size:12px;line-height:1.5;margin-bottom:12px">
+        The <b>pool</b> (max 3, ordered) is injected as OpenRouter's <code>models</code>
+        fallback array on every <code>:free</code> request — OpenRouter retries the next
+        entry on a 429 / provider error. The <b>default</b> is the <code>:free</code> model
+        a request with no (or a non-<code>:free</code>) model is rewritten to instead of being
+        rejected. Free tier is capped at <b>20 req/min, 50 req/day</b> per account.
+      </div>
+
+      <div class="form-row" style="margin-bottom:10px">
+        <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:13px">
+          <input type="radio" name="free-default" id="default-none" value="">
+          <span style="color:var(--dim)">No default — reject non-<code>:free</code> requests with 400</span>
+        </label>
+        <button class="btn btn-primary" id="btn-save-free" style="margin-left:auto">Save</button>
+      </div>
+
+      <div id="free-models-list"><div class="empty">loading free models…</div></div>
+    </div>
+  </div>
+
+  <div class="footer">
+    Last refresh <span id="last-refresh">-</span> &middot; live list cached 1h
+    &middot; pool changes apply within ~10s
+  </div>
+</div>
+
+<div class="toast" id="toast" role="status" aria-live="polite" aria-atomic="true"></div>
+
+<script src="/console/static/console.js?v=p5"></script>
+<script src="/console/static/free.js?v=p5"></script>
+<script>document.addEventListener('DOMContentLoaded', () => { renderTabs(); initFree(); initDiagnostics(); });</script>
+</body>
+</html>
