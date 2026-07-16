@@ -13,12 +13,15 @@
 --
 -- Budget model: OpenRouter's free tier is capped account-wide (20 req/min,
 -- 50 req/day unfunded; 1000/day with ≥10 lifetime credits). Success responses
--- carry NO X-RateLimit-* headers, so the proxy counts forwarded requests
--- itself (an estimate — clients hitting the same account outside gateii are
--- invisible). Platform-limit 429s DO carry X-RateLimit-* headers; their reset
--- timestamp is captured as the authoritative "exhausted until" signal that
--- drives handler.lua's 503 short-circuit. The proxy never swaps tiers on
--- exhaustion — the caller escalates (see CLAUDE.md § Routing boundary).
+-- carry NO X-RateLimit-* headers (verified live), so the proxy counts
+-- forwarded requests itself (an estimate — clients hitting the same account
+-- outside gateii are invisible). 429s carry X-RateLimit-* headers, but BOTH
+-- account-cap and per-model "high demand" 429s do (the latter report the
+-- model's own RPM cap, e.g. limit=8; reset is unix ms) — handler.lua only
+-- arms the "exhausted until" signal when X-RateLimit-Limit matches a
+-- configured account cap, and that signal drives its 503 short-circuit. The
+-- proxy never swaps tiers on exhaustion — the caller escalates (see
+-- CLAUDE.md § Routing boundary).
 local cjson = require "cjson.safe"
 local util  = require "util"
 

@@ -143,21 +143,27 @@ local function track_rl_429(res, u, m, pname)
 end
 
 -- Free-tier account-budget capture (free-only providers, e.g. unfunded
--- OpenRouter). Platform-limit 429s carry X-RateLimit-* headers; model-level
--- 429s don't (those are already absorbed by the `models` fallback array
--- upstream). A usable reset arms the exhaustion signal that the free-only
--- block below turns into a clean 503 + reset time — never a tier swap
--- (escalation is the caller's per-task concern, see CLAUDE.md § Routing
--- boundary).
+-- OpenRouter). Empirically (2026-07-16) BOTH kinds of 429 carry X-RateLimit-*
+-- headers: per-model "high demand" RPM limits report the MODEL's cap (e.g.
+-- limit=8 for qwen3-coder:free), so the header presence alone cannot identify
+-- an account-cap hit — the X-RateLimit-Limit match against the configured
+-- account caps below is the discriminator. A matching 429 arms the exhaustion
+-- signal that the free-only block below turns into a clean 503 + reset time —
+-- never a tier swap (escalation is the caller's per-task concern, see
+-- CLAUDE.md § Routing boundary).
 local function track_free_429(res)
     local h = res.headers or {}
     local reset = openrouter_free.parse_reset(h["x-ratelimit-reset"], ngx.time())
     local limit = tonumber(h["x-ratelimit-limit"])
     -- Only an ACCOUNT-window 429 may arm the global 503 gate: require the
     -- X-RateLimit-Limit to match one of the configured account caps. A 429
-    -- with a foreign/absent limit (e.g. per-model) fails open — requests keep
-    -- flowing and upstream 429s pass through — because a mis-attributed arm
-    -- would lock ALL :free traffic out for up to a day.
+    -- with a foreign/absent limit fails open — requests keep flowing and
+    -- upstream 429s pass through — because a mis-attributed arm would lock
+    -- ALL :free traffic out for up to a day. This match is load-bearing:
+    -- per-model 429s DO carry X-RateLimit-* headers with the model's own RPM
+    -- cap (verified live: limit=8 on qwen3-coder:free, reset in unix ms).
+    -- The account-cap 429's exact shape is still unverified empirically; if
+    -- its limit value never matches, the only cost is a missing 503 shortcut.
     local minute_limit, daily_limit = openrouter_free.limits(openrouter_free.load())
     if not reset or not limit or (limit ~= minute_limit and limit ~= daily_limit) then
         ngx.log(ngx.WARN, "[rid=", rid, "] free-tier 429 without account-cap ",
