@@ -90,10 +90,25 @@ exists, handler.lua falls back to the provider's hardcoded `_M.free_fallback_poo
 and the reject-with-400 behaviour.
 
 > **Note — free-tier budget is account-wide.** OpenRouter's 20 req/min · 50
-> req/day cap applies per unfunded account, not per model, so routing to "the
-> next free model" does not extend the daily budget. Per-*model* 429s are handled
-> by the `models` fallback array; account-budget exhaustion is a separate concern
-> (planned: escalate to local omlx or a clear 503).
+> req/day cap (1000/day with ≥10 lifetime credits) applies per unfunded account,
+> not per model, so routing to "the next free model" does not extend the daily
+> budget. Per-*model* 429s are handled by the `models` fallback array;
+> account-budget exhaustion is handled separately (below).
+
+**Budget visibility + exhaustion signalling.** OpenRouter sends no rate-limit
+headers on successful responses, so gateii counts every forwarded free-tier
+request itself (current-minute + current-UTC-day windows in the shared dict —
+an *estimate*: clients hitting the same account outside gateii are invisible).
+Platform-limit 429s *do* carry `X-RateLimit-*` headers; their reset timestamp is
+captured as the authoritative "exhausted until" signal. While armed, gateii
+answers every `:free` request with a clean
+`503 {"error":..., "reset_at":"<RFC3339>", "retry_after_seconds":N}` +
+`Retry-After` header instead of burning an upstream request — it never swaps to
+a different tier or provider (escalation is a per-task concern for the calling
+orchestration, see the routing-boundary note in the repo docs). Counts and the
+exhaustion state are exposed as `gateii_openrouter_free_*` Prometheus gauges and
+in the console's Free Models tab; the window caps are configurable there
+(`minute_limit`/`daily_limit`, display-only — OpenRouter enforces).
 
 ## Provider interface
 

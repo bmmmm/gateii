@@ -10,6 +10,34 @@ const CAT_LABELS = { vision: 'Vision', long_context: 'Long context', coding: 'Co
 let _config = { pool: [], default: '', routes: {}, long_context_threshold: 100000 };
 let _live = [];
 
+// Budget panel: proxy-side request counts (estimate — success responses carry
+// no rate-limit headers) + the exhaustion signal captured from upstream 429s.
+function renderBudget(b) {
+  const el = $('free-budget');
+  if (!el) return;
+  if (!b || !b.day) { el.innerHTML = ''; return; }
+  const bar = (w) => {
+    const pct = w.limit > 0 ? Math.min(100, Math.round(100 * w.used / w.limit)) : 0;
+    const color = pct >= 90 ? 'var(--err,#c33)' : pct >= 60 ? 'var(--warn,#c60)' : 'var(--accent)';
+    return `<span style="display:inline-block;width:90px;height:6px;background:var(--accent-subtle);border-radius:3px;vertical-align:middle;margin:0 8px">
+      <span style="display:block;width:${pct}%;height:6px;background:${color};border-radius:3px"></span></span>`;
+  };
+  let html = `<div style="font-size:12px">
+    <b>Budget</b> (proxy-side estimate) &middot;
+    today ${b.day.used}/${b.day.limit}${bar(b.day)}
+    this minute ${b.minute.used}/${b.minute.limit}${bar(b.minute)}
+  </div>`;
+  if (b.exhausted_until) {
+    const reset = new Date(b.exhausted_until * 1000);
+    const mins = Math.max(0, Math.round((reset - Date.now()) / 60000));
+    html += `<div style="font-size:12px;color:var(--err,#c33);margin-top:4px">
+      Exhausted — upstream reported the ${b.exhausted_limit === b.minute.limit ? 'per-minute' : 'daily'} cap hit.
+      :free requests get 503 until ${reset.toLocaleTimeString()} (~${mins} min).
+    </div>`;
+  }
+  el.innerHTML = html;
+}
+
 function ctxLabel(n) {
   if (!n) return '';
   return n >= 1000 ? Math.round(n / 1000) + 'k ctx' : n + ' ctx';
@@ -154,6 +182,9 @@ async function loadAll() {
     long_context_threshold: (cfg && Number.isFinite(cfg.long_context_threshold)) ? cfg.long_context_threshold : 100000,
   };
   $('lc-threshold').value = _config.long_context_threshold;
+  $('minute-limit').value = (cfg && Number.isFinite(cfg.minute_limit)) ? cfg.minute_limit : 20;
+  $('daily-limit').value = (cfg && Number.isFinite(cfg.daily_limit)) ? cfg.daily_limit : 50;
+  renderBudget(cfg && cfg.budget);
   renderModels();
   renderRoutes();
 }
@@ -167,6 +198,8 @@ async function saveFree(ev) {
     }
   }
   const thr = parseInt($('lc-threshold').value, 10);
+  const minLimit = parseInt($('minute-limit').value, 10);
+  const dayLimit = parseInt($('daily-limit').value, 10);
   await withBusy(ev?.currentTarget, async () => {
     try {
       const r = await fetch('/internal/admin/openrouter-free', {
@@ -177,6 +210,8 @@ async function saveFree(ev) {
           default: _config.default,
           routes,
           long_context_threshold: (Number.isFinite(thr) && thr >= 1000) ? thr : 100000,
+          minute_limit: (Number.isFinite(minLimit) && minLimit >= 1) ? minLimit : 20,
+          daily_limit: (Number.isFinite(dayLimit) && dayLimit >= 1) ? dayLimit : 50,
         }),
       });
       if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || 'HTTP ' + r.status);

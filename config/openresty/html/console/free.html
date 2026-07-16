@@ -37,7 +37,17 @@
         fallback array on every <code>:free</code> request — OpenRouter retries the next
         entry on a 429 / provider error. The <b>default</b> is the <code>:free</code> model
         a request with no (or a non-<code>:free</code>) model is rewritten to instead of being
-        rejected. Free tier is capped at <b>20 req/min, 50 req/day</b> per account.
+        rejected. Free-tier requests are capped <b>account-wide</b>, not per model.
+      </div>
+
+      <div id="free-budget" style="margin-bottom:12px"></div>
+
+      <div class="form-row" style="margin-bottom:10px;gap:10px">
+        <span class="form-label">Account limits</span>
+        <input class="input input-sm" id="minute-limit" type="number" min="1" step="1" style="width:70px" title="requests per minute">
+        <span style="color:var(--dim);font-size:11px">req/min</span>
+        <input class="input input-sm" id="daily-limit" type="number" min="1" step="1" style="width:70px" title="requests per day">
+        <span style="color:var(--dim);font-size:11px">req/day — 50 unfunded, 1000 with &ge;10 lifetime credits. Display only; OpenRouter enforces.</span>
       </div>
 
       <div class="form-row" style="margin-bottom:10px">

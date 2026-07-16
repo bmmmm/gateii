@@ -3,6 +3,7 @@ local cjson = require "cjson.safe"
 local schema = require "schema"
 local util = require "util"
 local proxy_config = require "proxy_config"
+local openrouter_free = require "openrouter_free"
 local blocking_dict = ngx.shared.blocking
 local counters = ngx.shared.counters
 local or_cache = ngx.shared.or_cache
@@ -1227,13 +1228,18 @@ end
 local OPENROUTER_FREE_PATH = "/etc/nginx/data/openrouter-free.json"
 
 if uri == "/internal/admin/openrouter-free" and method == "GET" then
+    local cfg = {}
     local f = io.open(OPENROUTER_FREE_PATH, "r")
-    if not f then
-        ngx.say('{"pool":[],"default":""}')
-        return
+    if f then
+        cfg = safe_decode(f:read("*a")) or {}
+        f:close()
     end
-    ngx.say(f:read("*a"))
-    f:close()
+    if type(cfg.pool) ~= "table" then cfg.pool = setmetatable({}, cjson.array_mt) end
+    if type(cfg.default) ~= "string" then cfg.default = "" end
+    -- Computed, never persisted: PUT normalization below drops unknown keys,
+    -- so a client echoing this field back can't write it into the config file.
+    cfg.budget = openrouter_free.budget_snapshot(cfg)
+    ngx.say(cjson.encode(cfg))
     return
 end
 
@@ -1257,9 +1263,17 @@ if uri == "/internal/admin/openrouter-free" and method == "PUT" then
         ngx.say(cjson.encode({error = err}))
         return
     end
-    -- Normalize: persist only the two known keys so unrelated payload fields
-    -- don't accumulate in the config file.
-    local normalized = { pool = data.pool or {}, default = data.default or "" }
+    -- Normalize: persist only the known keys so unrelated payload fields
+    -- (e.g. the computed `budget` object from GET) don't accumulate in the
+    -- config file.
+    local normalized = {
+        pool                   = data.pool or {},
+        default                = data.default or "",
+        routes                 = data.routes,                  -- nil-safe: omitted when absent
+        long_context_threshold = data.long_context_threshold,
+        daily_limit            = data.daily_limit,
+        minute_limit           = data.minute_limit,
+    }
     local ok2, write_err = util.atomic_write(OPENROUTER_FREE_PATH, cjson.encode(normalized))
     if not ok2 then
         ngx.status = 500

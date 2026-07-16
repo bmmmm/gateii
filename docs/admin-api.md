@@ -68,7 +68,7 @@ for alerting on brute-force attempts.
 | `GET` | `/internal/admin/providers` | `providers.json` contents |
 | `GET` | `/internal/admin/llm-prices` | Cached llm-prices.com snapshot |
 | `GET` | `/internal/admin/openrouter-models` | Top weekly programming models with pricing (12 h cache). `?free=1`: all currently-listed `:free` models with `context_length` (1 h cache) |
-| `GET` | `/internal/admin/openrouter-free` | OpenRouter free-tier config `{pool, default}`; `{"pool":[],"default":""}` if none set yet |
+| `GET` | `/internal/admin/openrouter-free` | OpenRouter free-tier config `{pool, default, routes, long_context_threshold, daily_limit, minute_limit}` plus a computed `budget` object (`{minute:{used,limit,remaining}, day:{...}, exhausted_until?, exhausted_limit?}` — proxy-side request counts + the exhaustion signal captured from upstream 429s). `budget` is never persisted (PUT drops unknown keys) |
 | `GET` | `/internal/admin/health` | Component reachability: proxy, Prometheus, Grafana + upstream error rate |
 | `GET` | `/internal/admin/bootstrap` | Pending codes + active confirm sessions |
 | `GET` | `/internal/admin/agents` | Local-omlx-agent state: active, recent runs, routing, bench matrix, omlx_status |
@@ -135,7 +135,7 @@ the `/console/git` tab.
 
 | Method | Path | Body | Effect |
 |---|---|---|---|
-| `PUT` | `/internal/admin/openrouter-free` | `{pool:[":free" ids], default:":free" id \| "", routes:{<category>:[":free" ids]}, long_context_threshold:int}` | Replaces `data/openrouter-free.json`. Every `:free` array is capped at 3 (OpenRouter's models-array limit), ids must end in `:free`, no dups; category keys are `[a-z][a-z0-9_]*`; `long_context_threshold` a positive int. `400` on a schema violation; `500` on write failure. Returns `{ok, pool:<count>, default}`. |
+| `PUT` | `/internal/admin/openrouter-free` | `{pool:[":free" ids], default:":free" id \| "", routes:{<category>:[":free" ids]}, long_context_threshold:int, daily_limit:int, minute_limit:int}` | Replaces `data/openrouter-free.json`. Every `:free` array is capped at 3 (OpenRouter's models-array limit), ids must end in `:free`, no dups; category keys are `[a-z][a-z0-9_]*`; `long_context_threshold`/`daily_limit`/`minute_limit` positive ints (limits are display-only budget caps: 20/min + 50/day unfunded, 1000/day with ≥10 lifetime credits). Unknown keys (e.g. the computed `budget` from GET) are dropped. `400` on a schema violation; `500` on write failure. Returns `{ok, pool:<count>, default}`. |
 
 Read by `handler.lua` (via `openrouter_free.lua`) on every `:free` request and
 managed from the `/console/free` tab. The capability router classifies each

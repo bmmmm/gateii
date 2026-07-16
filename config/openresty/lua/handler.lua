@@ -142,6 +142,34 @@ local function track_rl_429(res, u, m, pname)
     tracking.set_rate_limit_tokens_at_hit(u or "unknown", m or "unknown", limit_type, hit_tokens)
 end
 
+-- Free-tier account-budget capture (free-only providers, e.g. unfunded
+-- OpenRouter). Platform-limit 429s carry X-RateLimit-* headers; model-level
+-- 429s don't (those are already absorbed by the `models` fallback array
+-- upstream). A usable reset arms the exhaustion signal that the free-only
+-- block below turns into a clean 503 + reset time — never a tier swap
+-- (escalation is the caller's per-task concern, see CLAUDE.md § Routing
+-- boundary).
+local function track_free_429(res)
+    local h = res.headers or {}
+    local reset = openrouter_free.parse_reset(h["x-ratelimit-reset"], ngx.time())
+    local limit = tonumber(h["x-ratelimit-limit"])
+    -- Only an ACCOUNT-window 429 may arm the global 503 gate: require the
+    -- X-RateLimit-Limit to match one of the configured account caps. A 429
+    -- with a foreign/absent limit (e.g. per-model) fails open — requests keep
+    -- flowing and upstream 429s pass through — because a mis-attributed arm
+    -- would lock ALL :free traffic out for up to a day.
+    local minute_limit, daily_limit = openrouter_free.limits(openrouter_free.load())
+    if not reset or not limit or (limit ~= minute_limit and limit ~= daily_limit) then
+        ngx.log(ngx.WARN, "[rid=", rid, "] free-tier 429 without account-cap ",
+                "X-RateLimit headers (limit=", tostring(limit),
+                ", reset usable=", tostring(reset ~= nil), ") — not arming exhaustion")
+        return
+    end
+    openrouter_free.arm_exhaustion(reset, limit)
+    ngx.log(ngx.WARN, "[rid=", rid, "] free-tier budget exhausted (limit=",
+            tostring(limit), ") until ", os.date("!%Y-%m-%dT%H:%M:%SZ", reset))
+end
+
 -- Read body — with temp-file fallback for concurrent load (body buffered to disk)
 local body_str = ngx.req.get_body_data()
 if not body_str then
@@ -277,6 +305,28 @@ if is_streaming and provider.stream_options_usage then
 end
 
 if provider.free_only then
+    -- Budget exhausted (armed by a platform-limit 429, see track_free_429):
+    -- fail fast with a clean 503 + reset time instead of burning an upstream
+    -- request that would 429 anyway. No tier swap — the caller escalates.
+    local ok_ex, exhausted_until = pcall(openrouter_free.get_exhausted_until)
+    if ok_ex and exhausted_until then
+        local now = ngx.time()
+        local reset_iso = os.date("!%Y-%m-%dT%H:%M:%SZ", exhausted_until)
+        local retry_after = exhausted_until - now
+        ngx.log(ngx.WARN, "[rid=", rid, "] free-tier budget exhausted — 503, resets at ", reset_iso)
+        ngx.status = 503
+        ngx.header["Content-Type"] = "application/json"
+        ngx.header["Retry-After"]  = tostring(retry_after)
+        ngx.say(cjson.encode({
+            error = "OpenRouter free-tier budget exhausted — resets at " .. reset_iso,
+            reset_at = reset_iso,
+            retry_after_seconds = retry_after,
+        }))
+        pcall(tracking.record, user, provider_name, model, 0, 0,
+              { latency_ms = 0, status = 503 })
+        return
+    end
+
     local routes = (free_cfg and type(free_cfg.routes) == "table") and free_cfg.routes or {}
     -- 1. category: explicit x-gateii-task header > vision > long-context > general
     local category
@@ -421,6 +471,10 @@ if not is_streaming then
         return
     end
 
+    -- Upstream answered — this request counted against the account-wide
+    -- free-tier budget (locally-failed requests above never reached it).
+    if provider.free_only then pcall(openrouter_free.bump_budget) end
+
     local response_body = res.body
     ngx.status = res.status
     for k, v in pairs(res.headers) do
@@ -438,7 +492,10 @@ if not is_streaming then
         end
         track_rl_window(res)
     end
-    if res.status == 429 then track_rl_429(res, user, model, provider_name) end
+    if res.status == 429 then
+        track_rl_429(res, user, model, provider_name)
+        if provider.free_only then track_free_429(res) end
+    end
 
     ngx.print(response_body)
     ngx.flush(true)  -- send to client before tracking write
@@ -521,6 +578,10 @@ if not res then
           { latency_ms = (ngx.now() - t0_stream) * 1000, status = 502 })
     return
 end
+
+-- Upstream answered — counts against the free-tier budget (see the
+-- non-streaming path; locally-failed requests above never reached it).
+if provider.free_only then pcall(openrouter_free.bump_budget) end
 
 ngx.status = res.status
 for k, v in pairs(res.headers) do
@@ -605,7 +666,12 @@ if res.status == 200 and provider.extract_tokens_streaming and first_chunk
 end
 
 if res.status == 200 then track_rl_window(res) end
-if res.status == 429 then track_rl_429(res, user, model, provider_name) end
+if res.status == 429 then
+    track_rl_429(res, user, model, provider_name)
+    -- NOTE: a 429 arriving mid-stream as an SSE error event (OpenRouter quirk)
+    -- is not captured here — only HTTP-status 429s arm the exhaustion signal.
+    if provider.free_only then track_free_429(res) end
+end
 
 -- A mid-stream read error after headers were already committed leaves the client
 -- with a truncated SSE body. We can't change the HTTP status (it's flushed), but

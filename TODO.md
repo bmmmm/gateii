@@ -64,18 +64,14 @@ Orchestrator: distribute to agents when prioritized.
   (what `admin.sh revoke` does in two steps), then a per-row button.
   Files: `admin_api.lua`, `html/console/static/overview.js`.
 
-- **OpenRouter free-tier budget visibility (NOT proxy-side escalation)**
-  The unfunded OR account is capped at 20 req/min, 50 req/day (account-wide, not
-  per model). gateii capability-routes `:free` requests (handler.lua) but the
-  remaining budget is invisible. Track it from OpenRouter's `/api/v1/auth/key`
-  (account `limit`/`usage`/`remaining`) or the `X-RateLimit-*` response headers →
-  emit a `gateii_openrouter_free_remaining` gauge for the console/Grafana, and on
-  exhaustion return a clean 503 + reset time.
-  Do NOT auto-escalate to a different model/tier inside the proxy — escalation is
-  a per-task concern for the calling orchestration layer, not a per-request proxy
-  concern (see CLAUDE.md § Routing boundary). The proxy signals (503); the caller
-  decides the next tier.
-  Files: `handler.lua`, `tracking.lua`, `metrics.lua`.
+- ~~OpenRouter free-tier budget visibility (NOT proxy-side escalation)~~ ✅ Done —
+  proxy-side request counting (minute + UTC-day windows, an estimate: success
+  responses carry no rate-limit headers) + authoritative exhaustion signal from
+  platform-limit 429 `X-RateLimit-Reset` → 503 + reset time on `:free` requests
+  while exhausted. Gauges `gateii_openrouter_free_*`; console Free tab shows the
+  budget + configurable limits. No proxy-side escalation (routing boundary).
+  Note: `/api/v1/auth/key` was evaluated and rejected — it reports credit usage,
+  not free-request counts, so it can't see the 50/day window.
 
 - **Low-severity shell edge cases** (no current failure, left as-is)
   - `git-tracking.sh`: two tracked repos with the same basename collide on the

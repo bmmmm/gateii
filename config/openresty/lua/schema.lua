@@ -274,6 +274,14 @@ function _M.validate_openrouter_free(data)
     if data.long_context_threshold ~= nil and not is_pos_int(data.long_context_threshold) then
         return false, "openrouter-free.json: long_context_threshold must be a positive integer"
     end
+    -- Account-wide free-tier request caps (visibility only — the proxy never
+    -- enforces them, it only mirrors OpenRouter's own 429s; see handler.lua).
+    if data.daily_limit ~= nil and not is_pos_int(data.daily_limit) then
+        return false, "openrouter-free.json: daily_limit must be a positive integer"
+    end
+    if data.minute_limit ~= nil and not is_pos_int(data.minute_limit) then
+        return false, "openrouter-free.json: minute_limit must be a positive integer"
+    end
     return true, nil
 end
 
