@@ -22,6 +22,12 @@ local cache_write_mult = 1.25
 local cache_read_mult = 0.1
 local tokens_window_limit  -- set by try_providers_json() via closure
 
+-- Per-provider pricing keyed by provider id. Cost is billed against the pricing
+-- of the provider each usage bucket was actually served by (keys pin their own
+-- provider), not the single active_provider — otherwise local/omlx (free) or
+-- OpenRouter traffic gets mispriced against the Anthropic table.
+local pricing_by_provider = {}
+
 local schema = require "schema"
 
 local function try_providers_json()
@@ -35,16 +41,28 @@ local function try_providers_json()
     end
     if not cfg then return false end
     local active_id = cfg.active_provider or "anthropic"
+    local found_active = false
+    pricing_by_provider = {}
     for _, p in ipairs(cfg.providers) do
-        if p.id == active_id and p.models then
-            pricing = p.models
-            cache_write_mult = p.cache_write_multiplier or cache_write_mult
-            cache_read_mult = p.cache_read_multiplier or cache_read_mult
-            tokens_window_limit = p.tokens_window_limit  -- may be nil
-            _price_warn_logged = false  -- reset on successful load
-            _price_cache = {}           -- invalidate model price cache
-            return true
+        if p.models then
+            pricing_by_provider[p.id] = {
+                models           = p.models,
+                cache_write_mult = p.cache_write_multiplier or 1.25,
+                cache_read_mult  = p.cache_read_multiplier or 0.1,
+            }
+            if p.id == active_id then
+                pricing = p.models
+                cache_write_mult = p.cache_write_multiplier or cache_write_mult
+                cache_read_mult = p.cache_read_multiplier or cache_read_mult
+                tokens_window_limit = p.tokens_window_limit  -- may be nil
+                found_active = true
+            end
         end
+    end
+    if found_active then
+        _price_warn_logged = false  -- reset on successful load
+        _price_cache = {}           -- invalidate model price cache
+        return true
     end
     return false
 end
@@ -72,19 +90,24 @@ if not pricing_loaded then
     end
 end
 
-local function model_price(model)
+local function model_price(model, provider)
+    -- Select the provider's own pricing table; fall back to the active-provider
+    -- table (also the only table available on the legacy pricing.json path).
+    local entry = provider and pricing_by_provider[provider]
+    local tbl = (entry and entry.models) or pricing
     local m = model:lower()
-    local cached = _price_cache[m]
+    local ck = (provider or "") .. "|" .. m
+    local cached = _price_cache[ck]
     if cached ~= nil then
         return cached ~= false and cached or nil
     end
-    for _, p in ipairs(pricing) do
+    for _, p in ipairs(tbl) do
         if m:find(p.pattern, 1, true) then
-            _price_cache[m] = p
+            _price_cache[ck] = p
             return p
         end
     end
-    _price_cache[m] = false
+    _price_cache[ck] = false
     return nil
 end
 
@@ -275,8 +298,11 @@ add("# HELP gateii_upstream_errors_total Upstream non-200 responses")
 add("# TYPE gateii_upstream_errors_total counter")
 for _, l in ipairs(err_lines) do add(l) end
 
--- Cost (cache-aware: cache_write = 1.25x input, cache_read = 0.1x input)
-add("# HELP gateii_cost_dollars_total Estimated API cost in USD (Anthropic pricing)")
+-- Cost (cache-aware: cache_write = 1.25x input, cache_read = 0.1x input).
+-- Priced per-provider: each bucket bills against the pricing of the provider it
+-- was served by, so local/omlx (free) and OpenRouter traffic aren't mispriced
+-- against the active (Anthropic) table.
+add("# HELP gateii_cost_dollars_total Estimated API cost in USD (per-provider pricing)")
 add("# TYPE gateii_cost_dollars_total counter")
 for upm, data in pairs(usage) do
     -- A malformed pricing entry (e.g. missing pattern) makes model_price raise
@@ -284,7 +310,11 @@ for upm, data in pairs(usage) do
     -- WARN + skipped line instead of 500ing the whole /metrics scrape.
     local ok_cost, cost_err = pcall(function()
         local user, provider, model = upm:match("^([^|]+)|([^|]+)|(.+)$")
-        local price = user and model_price(model) or nil
+        local price = user and model_price(model, provider) or nil
+        -- Cache multipliers of the serving provider (fall back to active).
+        local pm = provider and pricing_by_provider[provider]
+        local cw_mult = (pm and pm.cache_write_mult) or cache_write_mult
+        local cr_mult = (pm and pm.cache_read_mult) or cache_read_mult
         local eu, ep, em
         if user then eu, ep, em = labels_upm(user, provider, model) end
         if price then
@@ -300,14 +330,14 @@ for upm, data in pairs(usage) do
             -- Cache write tokens
             local cache_create = data.cache_creation or 0
             if cache_create > 0 then
-                local cost = cache_create * (price.input * cache_write_mult) / 1000000
+                local cost = cache_create * (price.input * cw_mult) / 1000000
                 add(string.format('gateii_cost_dollars_total{user="%s",provider="%s",model="%s",type="%s"} %.6f',
                     eu, ep, em, "cache_write", cost))
             end
             -- Cache read tokens
             local cache_rd = data.cache_read or 0
             if cache_rd > 0 then
-                local cost = cache_rd * (price.input * cache_read_mult) / 1000000
+                local cost = cache_rd * (price.input * cr_mult) / 1000000
                 add(string.format('gateii_cost_dollars_total{user="%s",provider="%s",model="%s",type="%s"} %.6f',
                     eu, ep, em, "cache_read", cost))
             end
@@ -543,15 +573,20 @@ add("# HELP gateii_admin_login_failures_total Admin login attempts rejected with
 add("# TYPE gateii_admin_login_failures_total counter")
 add(string.format('gateii_admin_login_failures_total %d', counters:get("admin_login_failures") or 0))
 
--- Model pricing (gauge — tracks price changes over time via Prometheus)
-add("# HELP gateii_model_pricing_per_mtok Current Anthropic pricing per 1M tokens (USD)")
+-- Model pricing (gauge — tracks price changes over time via Prometheus).
+-- Type-guard each row: the legacy pricing.json path bypasses schema validation,
+-- so a hand-malformed entry (non-numeric input/output) would otherwise raise
+-- inside string.format and 500 the entire /metrics scrape. Skip bad rows.
+add("# HELP gateii_model_pricing_per_mtok Current active-provider pricing per 1M tokens (USD)")
 add("# TYPE gateii_model_pricing_per_mtok gauge")
 for _, p in ipairs(pricing) do
-    local ep = escape_label(p.pattern)
-    add(string.format('gateii_model_pricing_per_mtok{pattern="%s",type="input"} %.2f', ep, p.input))
-    add(string.format('gateii_model_pricing_per_mtok{pattern="%s",type="output"} %.2f', ep, p.output))
-    add(string.format('gateii_model_pricing_per_mtok{pattern="%s",type="cache_write"} %.2f', ep, p.input * cache_write_mult))
-    add(string.format('gateii_model_pricing_per_mtok{pattern="%s",type="cache_read"} %.2f', ep, p.input * cache_read_mult))
+    if type(p.pattern) == "string" and type(p.input) == "number" and type(p.output) == "number" then
+        local ep = escape_label(p.pattern)
+        add(string.format('gateii_model_pricing_per_mtok{pattern="%s",type="input"} %.2f', ep, p.input))
+        add(string.format('gateii_model_pricing_per_mtok{pattern="%s",type="output"} %.2f', ep, p.output))
+        add(string.format('gateii_model_pricing_per_mtok{pattern="%s",type="cache_write"} %.2f', ep, p.input * cache_write_mult))
+        add(string.format('gateii_model_pricing_per_mtok{pattern="%s",type="cache_read"} %.2f', ep, p.input * cache_read_mult))
+    end
 end
 
 -- Shared dict health (free space in bytes — alert if approaching 0)

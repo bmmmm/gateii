@@ -65,15 +65,24 @@ local HEALTH_CHECK_CONNECT_MS = tonumber(os.getenv("HEALTH_CHECK_CONNECT_MS")) o
 local HEALTH_CHECK_SEND_MS    = tonumber(os.getenv("HEALTH_CHECK_SEND_MS"))    or 1500
 local HEALTH_CHECK_READ_MS    = tonumber(os.getenv("HEALTH_CHECK_READ_MS"))    or 3000
 
-if ADMIN_TOKEN == "" and PROXY_MODE == "apikey" then
-    -- Fail-closed: apikey mode without token exposes keys.json/limits.json
-    -- mutations to anyone on the admin network. Require a token.
-    -- Passthrough mode: no server-side secrets are stored (no upstream keys in keys.json),
-    -- so mutations (git-tracking config, service restarts) carry no credential risk.
-    -- Intended for single-user zero-config local setups on a trusted Docker network.
-    ngx.status = 503
-    ngx.say('{"error":"Admin API disabled — set ADMIN_TOKEN in .env"}')
-    return ngx.exit(503)
+if ADMIN_TOKEN == "" then
+    if PROXY_MODE == "apikey" then
+        -- Fail-closed: apikey mode without token exposes keys.json/limits.json
+        -- mutations to anyone on the admin network. Require a token.
+        ngx.status = 503
+        ngx.say('{"error":"Admin API disabled — set ADMIN_TOKEN in .env"}')
+        return ngx.exit(503)
+    elseif method ~= "GET" then
+        -- Passthrough, no token: .env.example promises the console is "reachable
+        -- but cannot mutate state". Enforce it — reads (GET) stay open for the
+        -- zero-config local dashboard, but every mutating method is refused. This
+        -- also closes browser CSRF for mutations (a cross-site GET can't change
+        -- state) and unauthenticated sibling-container lateral movement into the
+        -- service-control / git-tracking / block-limit endpoints.
+        ngx.status = 403
+        ngx.say('{"error":"Admin mutations require ADMIN_TOKEN — set it in .env"}')
+        return ngx.exit(403)
+    end
 end
 
 if ADMIN_TOKEN ~= "" then
@@ -979,7 +988,12 @@ if uri == "/internal/admin/diagnostics" and method == "GET" then
         local http = require "resty.http"
         local httpc = http.new()
         httpc:set_timeouts(1000, 1000, 3000)
-        local res, err = httpc:request_uri("http://compose-ctl:8090/services")
+        -- compose-ctl exempts only /health from auth; without the shared secret
+        -- this probe 401s once INTERNAL_TOKEN is configured (the normal setup).
+        local svc_headers = INTERNAL_TOKEN ~= ""
+            and { ["X-Internal-Token"] = INTERNAL_TOKEN } or nil
+        local res, err = httpc:request_uri("http://compose-ctl:8090/services",
+            { headers = svc_headers })
         if res and res.status == 200 then
             out.services = cjson.decode(res.body) or { error = "decode failed" }
         else
@@ -1376,8 +1390,10 @@ if uri == "/internal/admin/models" and method == "POST" then
     end
     -- Validate model id: only chars omlx legitimately uses for model names.
     -- Without this, "model":"x/foo" would interpolate into the upstream URL
-    -- and reach arbitrary omlx endpoints (path injection).
-    if not model or not model:match("^[A-Za-z0-9._%-]+$") then
+    -- and reach arbitrary omlx endpoints (path injection). The char class allows
+    -- '.', so reject '..' explicitly — otherwise "model":".." traverses the
+    -- upstream path (.../v1/models/../load), matching the git-tracking guard.
+    if not model or not model:match("^[A-Za-z0-9._%-]+$") or model:find("%.%.", 1, true) then
         ngx.status = 400
         ngx.say(cjson.encode({error = "invalid model id (must match [A-Za-z0-9._-]+)"}))
         return
