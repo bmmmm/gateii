@@ -697,10 +697,19 @@ if uri == "/internal/admin/llm-prices" and method == "GET" then
     return
 end
 
--- GET /internal/admin/openrouter-models — proxy OpenRouter model list (12h cache)
--- Returns slim pricing index: {models:[{id,name,input,output},...]}
+-- GET /internal/admin/openrouter-models — proxy OpenRouter model list (cached)
+-- Default: slim pricing index of top-weekly programming models
+--          {models:[{id,name,input,output},...]} (12h cache, drives Compare tab).
+-- ?free=1: all currently-listed ":free" models
+--          {models:[{id,name,context_length},...]} (1h cache, drives Free Models tab).
 if uri == "/internal/admin/openrouter-models" and method == "GET" then
-    local cache_key = "openrouter_models"
+    local args = ngx.req.get_uri_args()
+    local free_only = args.free == "1" or args.free == "true"
+    local cache_key = free_only and "openrouter_free_models" or "openrouter_models"
+    local fetch_url = free_only
+        and "https://openrouter.ai/api/v1/models"
+        or  "https://openrouter.ai/api/v1/models?order=top-weekly&categories=programming"
+    local cache_ttl = free_only and 3600 or 43200
     local cache_dict = or_cache or counters
     local cached = cache_dict:get(cache_key)
     if cached then
@@ -713,7 +722,7 @@ if uri == "/internal/admin/openrouter-models" and method == "GET" then
     local http = require "resty.http"
     local httpc = http.new()
     httpc:set_timeouts(5000, 5000, 15000)
-    local res, err = httpc:request_uri("https://openrouter.ai/api/v1/models?order=top-weekly&categories=programming", {
+    local res, err = httpc:request_uri(fetch_url, {
         ssl_verify = true,
         headers = { ["User-Agent"] = "gateii-proxy/1.0", ["Accept"] = "application/json" },
     })
@@ -735,10 +744,19 @@ if uri == "/internal/admin/openrouter-models" and method == "GET" then
         return
     end
 
-    -- Extract only id + pricing to keep cache small
     local models = {}
     for _, m in ipairs(full.data) do
-        if m.id and m.pricing then
+        if free_only then
+            -- Only ":free" ids; carry context length so the tab can show capacity.
+            if type(m.id) == "string" and m.id:sub(-5) == ":free" then
+                models[#models + 1] = {
+                    id             = m.id,
+                    name           = m.name or m.id,
+                    context_length = tonumber(m.context_length) or 0,
+                }
+            end
+        elseif m.id and m.pricing then
+            -- Extract only id + pricing to keep cache small
             local inp = tonumber(m.pricing.prompt) or 0
             local out = tonumber(m.pricing.completion) or 0
             models[#models + 1] = {
@@ -751,7 +769,7 @@ if uri == "/internal/admin/openrouter-models" and method == "GET" then
     end
 
     local result = cjson.encode({ models = models })
-    local ok, cerr = cache_dict:set(cache_key, result, 43200)  -- 12h
+    local ok, cerr = cache_dict:set(cache_key, result, cache_ttl)
     if not ok then
         ngx.log(ngx.WARN, "openrouter cache write failed: ", cerr)
     end
@@ -1201,6 +1219,54 @@ if uri == "/internal/admin/git-tracking" and method == "PUT" then
         return
     end
     ngx.say(cjson.encode({ok = true, repos = #(data.repos or {})}))
+    return
+end
+
+-- OpenRouter free-tier config { pool, default } — managed by the Console "Free
+-- Models" tab, read by handler.lua (via openrouter_free.lua) on every :free request.
+local OPENROUTER_FREE_PATH = "/etc/nginx/data/openrouter-free.json"
+
+if uri == "/internal/admin/openrouter-free" and method == "GET" then
+    local f = io.open(OPENROUTER_FREE_PATH, "r")
+    if not f then
+        ngx.say('{"pool":[],"default":""}')
+        return
+    end
+    ngx.say(f:read("*a"))
+    f:close()
+    return
+end
+
+if uri == "/internal/admin/openrouter-free" and method == "PUT" then
+    ngx.req.read_body()
+    local body = ngx.req.get_body_data()
+    if not body or body == "" then
+        ngx.status = 400
+        ngx.say('{"error":"Empty body — PUT the full config JSON: {pool:[],default:\\"\\"}"}')
+        return
+    end
+    local data, decode_err = cjson.decode(body)
+    if not data then
+        ngx.status = 400
+        ngx.say(cjson.encode({error = "Invalid JSON: " .. tostring(decode_err)}))
+        return
+    end
+    local ok, err = schema.validate_openrouter_free(data)
+    if not ok then
+        ngx.status = 400
+        ngx.say(cjson.encode({error = err}))
+        return
+    end
+    -- Normalize: persist only the two known keys so unrelated payload fields
+    -- don't accumulate in the config file.
+    local normalized = { pool = data.pool or {}, default = data.default or "" }
+    local ok2, write_err = util.atomic_write(OPENROUTER_FREE_PATH, cjson.encode(normalized))
+    if not ok2 then
+        ngx.status = 500
+        ngx.say(cjson.encode({error = write_err}))
+        return
+    end
+    ngx.say(cjson.encode({ok = true, pool = #normalized.pool, default = normalized.default}))
     return
 end
 
