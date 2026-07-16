@@ -179,3 +179,46 @@ describe("openrouter_free exhaustion signal", function()
         assert.is_nil(orf.get_exhausted_until())
     end)
 end)
+
+describe("openrouter_free.fallback_models", function()
+    local orf
+    local POOL = { "a/x:free", "b/y:free", "c/z:free" }
+    before_each(function()
+        reset_state()
+        orf = require "openrouter_free"
+    end)
+
+    it("injects pinned model first, deduped, capped at 3", function()
+        local out = orf.fallback_models("b/y:free", nil, POOL, false)
+        assert.same({ "b/y:free", "a/x:free", "c/z:free" }, out)
+    end)
+
+    it("returns nil when the client opted out via no_fallback", function()
+        assert.is_nil(orf.fallback_models("b/y:free", nil, POOL, true))
+    end)
+
+    it("respects a client-supplied models array", function()
+        assert.is_nil(orf.fallback_models("b/y:free", { "keep/me:free" }, POOL, false))
+    end)
+
+    it("still injects when models is present but not a table (legacy behavior)", function()
+        local out = orf.fallback_models("b/y:free", "not-a-table", POOL, false)
+        assert.same({ "b/y:free", "a/x:free", "c/z:free" }, out)
+    end)
+
+    it("returns nil for non-:free models", function()
+        assert.is_nil(orf.fallback_models("claude-sonnet-5", nil, POOL, false))
+        assert.is_nil(orf.fallback_models(nil, nil, POOL, false))
+        assert.is_nil(orf.fallback_models(42, nil, POOL, false))
+    end)
+
+    it("returns nil without a usable pool", function()
+        assert.is_nil(orf.fallback_models("b/y:free", nil, nil, false))
+        assert.is_nil(orf.fallback_models("b/y:free", nil, {}, false))
+        assert.is_nil(orf.fallback_models("b/y:free", nil, false, false))
+    end)
+
+    it("returns nil when the pool only re-lists the pinned model", function()
+        assert.is_nil(orf.fallback_models("a/x:free", nil, { "a/x:free" }, false))
+    end)
+end)

@@ -69,6 +69,12 @@ auto-injects a `models` fallback array (capped at 3 entries) whenever a `:free`
 request doesn't already specify one — OpenRouter then retries the next pool
 entry on a 429 or provider error, transparently to the client.
 
+Clients that need a *pinned* model — evals and benchmarks, where a transparent
+model swap would silently corrupt the measurement — opt out per request with
+the `x-gateii-no-fallback` header (presence-based, any value): the `models`
+array is not injected, so the request is served by exactly the named model or
+fails visibly. The header is gateii-internal and never forwarded upstream.
+
 **Capability routing.** handler.lua classifies each free-tier request from cheap
 deterministic signals and routes it to a category-appropriate model:
 

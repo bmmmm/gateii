@@ -382,28 +382,21 @@ end
 -- request's resolved capability route, then the generic admin pool, then the
 -- provider's hardcoded free_fallback_pool. OR then retries the next entry on
 -- upstream 429/provider errors, transparently to the client.
+-- Opt-out: `x-gateii-no-fallback` suppresses the injection so a pinned model is
+-- served by exactly that model or fails visibly — evals/benchmarks would
+-- otherwise silently measure a model mix. (The header is gateii-internal; the
+-- upstream forwarding allowlist below never passes x-gateii-* headers on.)
 local fallback_pool = route_models
     or ((free_cfg and type(free_cfg.pool) == "table" and #free_cfg.pool > 0) and free_cfg.pool)
     or provider.free_fallback_pool
-if fallback_pool and type(body_obj.models) ~= "table"
-   and type(body_obj.model) == "string" and body_obj.model:sub(-5) == ":free" then
-    -- OpenRouter caps the `models` array at 3 entries; truncate silently.
-    local MAX_FALLBACK = 3
-    local seen = { [body_obj.model] = true }
-    local pool = { body_obj.model }
-    for _, m in ipairs(fallback_pool) do
-        if #pool >= MAX_FALLBACK then break end
-        if not seen[m] then
-            seen[m] = true
-            pool[#pool + 1] = m
-        end
-    end
-    if #pool > 1 then
-        body_obj.models = pool
-        body_mutated = true
-        ngx.log(ngx.INFO, "[rid=", rid, "] openrouter free-pool fallback: ",
-                table.concat(pool, ","))
-    end
+local injected_models = openrouter_free.fallback_models(
+    body_obj.model, body_obj.models, fallback_pool,
+    req_headers["x-gateii-no-fallback"] ~= nil)
+if injected_models then
+    body_obj.models = injected_models
+    body_mutated = true
+    ngx.log(ngx.INFO, "[rid=", rid, "] openrouter free-pool fallback: ",
+            table.concat(injected_models, ","))
 end
 
 if body_mutated then
