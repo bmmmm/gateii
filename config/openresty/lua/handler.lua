@@ -286,7 +286,9 @@ local upstream_headers = provider.build_headers(ngx.ctx.upstream_key, ngx.ctx.up
 for name, value in pairs(req_headers) do
     local lower = name:lower()
     -- string.sub prefix checks avoid the regex engine for the common case
-    if (lower:sub(1, 10) == "anthropic-" and lower ~= "anthropic-version") or lower:sub(1, 12) == "x-stainless-" or lower == "user-agent" then
+    local forwardable = (lower:sub(1, 10) == "anthropic-" and lower ~= "anthropic-version")
+        or lower:sub(1, 12) == "x-stainless-" or lower == "user-agent"
+    if forwardable then
         -- Strip CRLF to prevent header injection into upstream request
         if type(value) == "string" then
             upstream_headers[lower] = value:gsub("[\r\n]", "")
