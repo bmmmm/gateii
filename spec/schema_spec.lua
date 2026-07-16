@@ -229,4 +229,42 @@ describe("schema.validate_openrouter_free", function()
         local ok, err = schema.validate_openrouter_free({ default = "gpt-4o" })
         assert.is_false(ok); assert.is_not_nil(err)
     end)
+
+    it("accepts routes mapping categories to :free model arrays", function()
+        local ok = schema.validate_openrouter_free({
+            routes = {
+                vision = { "google/gemma-4-31b-it:free" },
+                coding = { "qwen/qwen3-coder:free", "cohere/north-mini-code:free" },
+                general = { "qwen/qwen3-next-80b-a3b-instruct:free" },
+            },
+            long_context_threshold = 100000,
+        })
+        assert.is_true(ok)
+    end)
+
+    it("rejects a route whose value holds a non-:free id", function()
+        local ok, err = schema.validate_openrouter_free({
+            routes = { coding = { "openai/gpt-4o" } },
+        })
+        assert.is_false(ok); assert.is_not_nil(err)
+    end)
+
+    it("rejects a route with more than 3 models", function()
+        local ok, err = schema.validate_openrouter_free({
+            routes = { general = { "a:free", "b:free", "c:free", "d:free" } },
+        })
+        assert.is_false(ok); assert.is_not_nil(err)
+    end)
+
+    it("rejects a bad category key", function()
+        local ok, err = schema.validate_openrouter_free({
+            routes = { ["Bad Cat"] = { "a:free" } },
+        })
+        assert.is_false(ok); assert.is_not_nil(err)
+    end)
+
+    it("rejects a non-positive long_context_threshold", function()
+        local ok, err = schema.validate_openrouter_free({ long_context_threshold = 0 })
+        assert.is_false(ok); assert.is_not_nil(err)
+    end)
 end)
