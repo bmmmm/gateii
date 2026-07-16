@@ -1112,13 +1112,270 @@
       }
     },
     {
+      "id": 310,
+      "type": "row",
+      "title": "OpenRouter \u2014 Free Tier",
+      "collapsed": false,
+      "gridPos": {
+        "x": 0,
+        "y": 25,
+        "w": 24,
+        "h": 1
+      }
+    },
+    {
+      "id": 311,
+      "title": "Daily Budget Used % (now)",
+      "type": "stat",
+      "gridPos": {
+        "x": 0,
+        "y": 26,
+        "w": 8,
+        "h": 3
+      },
+      "datasource": {
+        "type": "prometheus"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus"
+          },
+          "expr": "100 * gateii_openrouter_free_requests{window=\"day\"} / clamp_min(gateii_openrouter_free_requests{window=\"day\"} + gateii_openrouter_free_requests_remaining{window=\"day\"}, 1)",
+          "instant": true,
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "decimals": 0,
+          "min": 0,
+          "max": 100,
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "orange",
+                "value": 60
+              },
+              {
+                "color": "red",
+                "value": 90
+              }
+            ]
+          }
+        }
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ]
+        },
+        "colorMode": "background",
+        "graphMode": "none",
+        "orientation": "auto",
+        "textMode": "auto"
+      },
+      "description": "Share of the configured daily free-request cap consumed (proxy-side estimate)."
+    },
+    {
+      "id": 312,
+      "title": "Requests Remaining Today (now)",
+      "type": "stat",
+      "gridPos": {
+        "x": 8,
+        "y": 26,
+        "w": 8,
+        "h": 3
+      },
+      "datasource": {
+        "type": "prometheus"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus"
+          },
+          "expr": "gateii_openrouter_free_requests_remaining{window=\"day\"}",
+          "instant": true,
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "decimals": 0,
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "red",
+                "value": null
+              },
+              {
+                "color": "orange",
+                "value": 5
+              },
+              {
+                "color": "green",
+                "value": 15
+              }
+            ]
+          }
+        }
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ]
+        },
+        "colorMode": "background",
+        "graphMode": "none",
+        "orientation": "auto",
+        "textMode": "auto"
+      },
+      "description": "Estimated free-tier requests left in the current UTC day."
+    },
+    {
+      "id": 313,
+      "title": "Budget Exhausted (503 gate)",
+      "type": "stat",
+      "gridPos": {
+        "x": 16,
+        "y": 26,
+        "w": 8,
+        "h": 3
+      },
+      "datasource": {
+        "type": "prometheus"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus"
+          },
+          "expr": "gateii_openrouter_free_exhausted",
+          "instant": true,
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "decimals": 0,
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 1
+              }
+            ]
+          },
+          "mappings": [
+            {
+              "type": "value",
+              "options": {
+                "0": {
+                  "text": "OK"
+                },
+                "1": {
+                  "text": "EXHAUSTED"
+                }
+              }
+            }
+          ]
+        }
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ]
+        },
+        "colorMode": "background",
+        "graphMode": "none",
+        "orientation": "auto",
+        "textMode": "auto"
+      },
+      "description": "1 while an upstream account-cap 429 has armed the 503 gate; clears automatically at the reported reset time."
+    },
+    {
+      "id": 314,
+      "title": "Free Requests per Day (7d)",
+      "type": "timeseries",
+      "gridPos": {
+        "x": 0,
+        "y": 29,
+        "w": 24,
+        "h": 6
+      },
+      "datasource": {
+        "type": "prometheus"
+      },
+      "description": "Sawtooth: the day counter climbs during the UTC day and resets at midnight. Proxy-side estimate \u2014 traffic outside gateii on the same account is invisible.",
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus"
+          },
+          "expr": "gateii_openrouter_free_requests{window=\"day\"}",
+          "legendFormat": "used (day)",
+          "refId": "A"
+        },
+        {
+          "datasource": {
+            "type": "prometheus"
+          },
+          "expr": "gateii_openrouter_free_requests_remaining{window=\"day\"}",
+          "legendFormat": "remaining (day)",
+          "refId": "B"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "decimals": 0,
+          "custom": {
+            "fillOpacity": 8
+          }
+        }
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        }
+      }
+    },
+    {
       "id": 305,
       "type": "row",
       "title": "System Health",
       "collapsed": false,
       "gridPos": {
         "x": 0,
-        "y": 25,
+        "y": 35,
         "w": 24,
         "h": 1
       },
@@ -1131,7 +1388,7 @@
       "type": "bargauge",
       "gridPos": {
         "x": 0,
-        "y": 26,
+        "y": 36,
         "w": 16,
         "h": 6
       },
@@ -1188,7 +1445,7 @@
       "type": "gauge",
       "gridPos": {
         "x": 16,
-        "y": 26,
+        "y": 36,
         "w": 8,
         "h": 6
       },
@@ -1256,7 +1513,7 @@
       "collapsed": true,
       "gridPos": {
         "x": 0,
-        "y": 32,
+        "y": 42,
         "w": 24,
         "h": 1
       },
@@ -1539,7 +1796,7 @@
       "collapsed": true,
       "gridPos": {
         "x": 0,
-        "y": 33,
+        "y": 43,
         "w": 24,
         "h": 1
       },
