@@ -219,30 +219,60 @@ local function is_free_model(v)
     return type(v) == "string" and v ~= "" and v:sub(-5) == ":free"
 end
 
+-- Validate an ordered array of :free model ids (max 3, no dups). label is used
+-- in error messages. Returns (ok, err).
+local function validate_free_array(arr, label)
+    if type(arr) ~= "table" then
+        return false, "openrouter-free.json: " .. label .. " must be an array"
+    end
+    if #arr > 3 then
+        return false, "openrouter-free.json: " .. label
+            .. " may hold at most 3 models (OpenRouter caps the models array)"
+    end
+    local seen = {}
+    for i, m in ipairs(arr) do
+        if not is_free_model(m) then
+            return false, "openrouter-free.json: " .. label .. "[" .. i
+                .. "] must be a non-empty ':free' model id"
+        end
+        if seen[m] then
+            return false, "openrouter-free.json: " .. label .. "[" .. i
+                .. "] duplicate '" .. tostring(m) .. "'"
+        end
+        seen[m] = true
+    end
+    return true, nil
+end
+
 function _M.validate_openrouter_free(data)
     if not is_table(data) then
         return false, "openrouter-free.json: root must be an object"
     end
     if data.pool ~= nil then
-        if type(data.pool) ~= "table" then
-            return false, "openrouter-free.json: pool must be an array"
-        end
-        if #data.pool > 3 then
-            return false, "openrouter-free.json: pool may hold at most 3 models (OpenRouter caps the models array)"
-        end
-        local seen = {}
-        for i, m in ipairs(data.pool) do
-            if not is_free_model(m) then
-                return false, "openrouter-free.json: pool[" .. i .. "] must be a non-empty ':free' model id"
-            end
-            if seen[m] then
-                return false, "openrouter-free.json: pool[" .. i .. "] duplicate '" .. tostring(m) .. "'"
-            end
-            seen[m] = true
-        end
+        local ok, err = validate_free_array(data.pool, "pool")
+        if not ok then return false, err end
     end
     if data.default ~= nil and data.default ~= "" and not is_free_model(data.default) then
         return false, "openrouter-free.json: default must be a ':free' model id (or empty)"
+    end
+    -- routes: { <category> = [":free" ids], ... }. Category keys are lowercase
+    -- words; each value is a :free array (the ordered model list for that
+    -- request category, used by handler.lua's capability router).
+    if data.routes ~= nil then
+        if type(data.routes) ~= "table" then
+            return false, "openrouter-free.json: routes must be an object"
+        end
+        for cat, arr in pairs(data.routes) do
+            if type(cat) ~= "string" or not cat:match("^[a-z][a-z0-9_]*$") then
+                return false, "openrouter-free.json: routes key '" .. tostring(cat)
+                    .. "' must be a lowercase category name ([a-z][a-z0-9_]*)"
+            end
+            local ok, err = validate_free_array(arr, "routes." .. cat)
+            if not ok then return false, err end
+        end
+    end
+    if data.long_context_threshold ~= nil and not is_pos_int(data.long_context_threshold) then
+        return false, "openrouter-free.json: long_context_threshold must be a positive integer"
     end
     return true, nil
 end

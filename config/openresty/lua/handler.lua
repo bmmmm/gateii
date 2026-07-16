@@ -227,35 +227,28 @@ else
     model = "unknown"
 end
 
--- Admin-managed OpenRouter free-tier config { pool, default } — only loaded for
--- free-only providers. Drives both the default-rewrite below and the fallback
--- `models` array injection further down.
-local free_cfg = provider.free_only and openrouter_free.load() or nil
--- body_mutated tracks whether we changed body_obj (re-encode before forwarding).
--- Declared here so the default-rewrite can set it.
-local body_mutated = false
-
--- Free-tier-only providers (unfunded OpenRouter): a non-":free" model is either
--- rewritten to the admin-configured default :free model, or — if no default is
--- set — refused so a paid model can never be dispatched (402 / unexpected spend).
-if provider.free_only and model:sub(-5) ~= ":free" then
-    local default_model = free_cfg and free_cfg.default
-    if type(default_model) == "string" and default_model:sub(-5) == ":free" then
-        ngx.log(ngx.INFO, "[rid=", rid, "] rewrote non-:free model '", model,
-                "' to configured default '", default_model, "' for ", provider_name)
-        model = default_model
-        body_obj.model = default_model
-        body_mutated = true
-    else
-        ngx.log(ngx.WARN, "[rid=", rid, "] refused non-:free model on free-only provider ",
-                provider_name, " (model=", model, ")")
-        ngx.status = 400
-        ngx.header["Content-Type"] = "application/json"
-        ngx.say('{"error":"This provider is free-tier only — append :free to the model id '
-                .. '(e.g. meta-llama/llama-3.3-70b-instruct:free), or set a default in the console"}')
-        return
+-- Request signals — used by the free-tier capability router below and by
+-- tracking. One pass over messages: detect image blocks (vision) and estimate
+-- input size (rough char→token ≈ /4) for long-context routing.
+local request_has_vision = false
+local est_input_chars = 0
+if type(body_obj.messages) == "table" then
+    for _, msg in ipairs(body_obj.messages) do
+        if type(msg.content) == "string" then
+            est_input_chars = est_input_chars + #msg.content
+        elseif type(msg.content) == "table" then
+            for _, block in ipairs(msg.content) do
+                if type(block) == "table" then
+                    if block.type == "image" then request_has_vision = true end
+                    if type(block.text) == "string" then
+                        est_input_chars = est_input_chars + #block.text
+                    end
+                end
+            end
+        end
     end
 end
+local est_input_tokens = math.floor(est_input_chars / 4)
 
 -- Opus 4.7 output_config.effort (low|medium|high|xhigh|max) — "none" if unset.
 -- Clamp to the known enum; anything else buckets to "other" so a client can't
@@ -267,22 +260,14 @@ if type(body_obj.output_config) == "table"
     request_effort = EFFORT_ALLOWED[eff] and eff or "other"
 end
 
--- Vision detection: one pass over messages[].content[] looking for image blocks.
--- Usage tokens from Anthropic aren't split by modality, so we only track the boolean.
-local request_has_vision = false
-if type(body_obj.messages) == "table" then
-    for _, msg in ipairs(body_obj.messages) do
-        if type(msg.content) == "table" then
-            for _, block in ipairs(msg.content) do
-                if type(block) == "table" and block.type == "image" then
-                    request_has_vision = true
-                    break
-                end
-            end
-        end
-        if request_has_vision then break end
-    end
-end
+-- ── Free-tier capability router (free-only providers, e.g. unfunded OpenRouter) ──
+-- openrouter-free.json { routes:{category→[:free ids]}, default, pool,
+-- long_context_threshold }. Classify the request by cheap deterministic signals,
+-- resolve to an ordered :free model list, use its first entry as the model and
+-- the whole list as the OpenRouter `models` fallback array (injected below).
+local free_cfg = provider.free_only and openrouter_free.load() or nil
+local body_mutated = false
+local route_models   -- resolved ordered :free fallback list for this request
 
 -- Inject stream_options so OpenAI-format providers return usage in streaming responses
 if is_streaming and provider.stream_options_usage then
@@ -291,13 +276,59 @@ if is_streaming and provider.stream_options_usage then
     body_mutated = true
 end
 
+if provider.free_only then
+    local routes = (free_cfg and type(free_cfg.routes) == "table") and free_cfg.routes or {}
+    -- 1. category: explicit x-gateii-task header > vision > long-context > general
+    local category
+    local hdr = req_headers["x-gateii-task"]
+    if type(hdr) == "string" and routes[hdr:lower()] then
+        category = hdr:lower()
+    elseif request_has_vision then
+        category = "vision"
+    elseif est_input_tokens > ((free_cfg and tonumber(free_cfg.long_context_threshold)) or 100000) then
+        category = "long_context"
+    else
+        category = "general"
+    end
+    -- 2. resolve category → ordered :free list; fall through to the general route
+    local list = routes[category]
+    if type(list) ~= "table" or #list == 0 then
+        list = (type(routes.general) == "table" and #routes.general > 0) and routes.general or nil
+    end
+    if list and #list > 0 then route_models = list end
+    -- 3. rewrite a non-:free model to the route's first entry (or legacy default);
+    --    a client that named its own :free model is left untouched.
+    if model:sub(-5) ~= ":free" then
+        local chosen = (route_models and route_models[1])
+            or (free_cfg and type(free_cfg.default) == "string"
+                and free_cfg.default:sub(-5) == ":free" and free_cfg.default)
+            or nil
+        if chosen then
+            ngx.log(ngx.INFO, "[rid=", rid, "] free-router category=", category,
+                    " '", model, "' → '", chosen, "'")
+            model = chosen
+            body_obj.model = chosen
+            body_mutated = true
+        else
+            ngx.log(ngx.WARN, "[rid=", rid, "] refused non-:free model on free-only provider ",
+                    provider_name, " (model=", model, ", no route/default)")
+            ngx.status = 400
+            ngx.header["Content-Type"] = "application/json"
+            ngx.say('{"error":"This provider is free-tier only — append :free to the model id '
+                    .. '(e.g. meta-llama/llama-3.3-70b-instruct:free), or configure routes/default in the console"}')
+            return
+        end
+    end
+end
+
 -- OpenRouter free-tier auto-fallback: if the requested model ends with ":free"
--- and the caller didn't already supply a `models` array, inject one. Prefer the
--- admin-configured pool (openrouter-free.json); fall back to the provider's
--- hardcoded free_fallback_pool when none is set. OR then retries the next entry
--- on upstream 429/provider errors, transparently to the client.
-local fallback_pool = (free_cfg and type(free_cfg.pool) == "table" and #free_cfg.pool > 0)
-    and free_cfg.pool or provider.free_fallback_pool
+-- and the caller didn't already supply a `models` array, inject one. Prefer this
+-- request's resolved capability route, then the generic admin pool, then the
+-- provider's hardcoded free_fallback_pool. OR then retries the next entry on
+-- upstream 429/provider errors, transparently to the client.
+local fallback_pool = route_models
+    or ((free_cfg and type(free_cfg.pool) == "table" and #free_cfg.pool > 0) and free_cfg.pool)
+    or provider.free_fallback_pool
 if fallback_pool and type(body_obj.models) ~= "table"
    and type(body_obj.model) == "string" and body_obj.model:sub(-5) == ":free" then
     -- OpenRouter caps the `models` array at 3 entries; truncate silently.
