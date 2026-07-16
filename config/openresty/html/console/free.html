@@ -52,6 +52,26 @@
     </div>
   </div>
 
+  <div class="sec-head">
+    <h2>Capability routes</h2>
+  </div>
+  <div class="panel">
+    <div class="panel-body">
+      <div style="color:var(--dim);font-size:12px;line-height:1.5;margin-bottom:12px">
+        Each request is classified — <b>vision</b> (image in the request), <b>long&nbsp;context</b>
+        (large prompt), <b>coding</b> (<code>x-gateii-task: coding</code> header), else <b>general</b> —
+        and routed to that category's ordered model list (first = primary, rest = fallback, max 3).
+        Empty categories fall through to <b>general</b>, then the pool/default above.
+      </div>
+      <div class="form-row" style="margin-bottom:12px">
+        <span class="form-label">Long-context threshold</span>
+        <input class="input input-sm" id="lc-threshold" type="number" min="1000" step="1000" style="width:120px">
+        <span style="color:var(--dim);font-size:11px">est. input tokens above which a request routes to <code>long_context</code></span>
+      </div>
+      <div id="routes-editor"></div>
+    </div>
+  </div>
+
   <div class="footer">
     Last refresh <span id="last-refresh">-</span> &middot; live list cached 1h
     &middot; pool changes apply within ~10s

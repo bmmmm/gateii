@@ -4,7 +4,10 @@
 // model, then PUTs both to /internal/admin/openrouter-free. Validation is
 // server-side; this UI just collects the selection.
 
-let _config = { pool: [], default: '' };
+const CATEGORIES = ['vision', 'long_context', 'coding', 'general'];
+const CAT_LABELS = { vision: 'Vision', long_context: 'Long context', coding: 'Coding', general: 'General' };
+
+let _config = { pool: [], default: '', routes: {}, long_context_threshold: 100000 };
 let _live = [];
 
 function ctxLabel(n) {
@@ -71,6 +74,49 @@ function renderModels() {
   $('default-none').checked = !_config.default;
 }
 
+function renderRoutes() {
+  const ed = $('routes-editor');
+  if (!ed) return;
+  const liveIds = _live.map(m => m.id);
+  ed.innerHTML = CATEGORIES.map(cat => {
+    const list = Array.isArray(_config.routes[cat]) ? _config.routes[cat] : [];
+    const chips = list.length
+      ? list.map((id, i) => `<span style="display:inline-flex;align-items:center;gap:4px;background:var(--accent-subtle);color:var(--accent);border-radius:10px;font-size:11px;padding:2px 6px 2px 8px;margin-right:6px">
+          <span style="opacity:.6">${i + 1}</span> ${esc(id)}
+          <button class="route-x" data-cat="${cat}" data-id="${esc(id)}" style="background:none;border:none;color:var(--accent);cursor:pointer;font-size:13px;line-height:1;padding:0 2px">×</button>
+        </span>`).join('')
+      : '<span style="color:var(--dim);font-size:12px;opacity:.7">— falls through to general —</span>';
+    // add-select: live models not already in this category, only if under cap 3
+    const addable = liveIds.filter(id => !list.includes(id));
+    const addSel = list.length >= 3
+      ? '<span style="color:var(--dim);font-size:11px">max 3</span>'
+      : `<select class="input input-sm route-add" data-cat="${cat}" style="width:230px">
+          <option value="">+ add model…</option>
+          ${addable.map(id => `<option value="${esc(id)}">${esc(id)}</option>`).join('')}
+        </select>`;
+    return `<div style="display:flex;align-items:center;gap:10px;padding:7px 0;border-top:1px solid var(--border)">
+      <span class="form-label" style="min-width:100px">${CAT_LABELS[cat]}</span>
+      <span style="flex:1">${chips}</span>
+      ${addSel}
+    </div>`;
+  }).join('');
+}
+
+function addToRoute(cat, id) {
+  if (!id) return;
+  const list = Array.isArray(_config.routes[cat]) ? _config.routes[cat] : [];
+  if (list.length >= 3) return toast('Route capped at 3 models', true);
+  if (!list.includes(id)) list.push(id);
+  _config.routes[cat] = list;
+  renderRoutes();
+}
+
+function removeFromRoute(cat, id) {
+  const list = Array.isArray(_config.routes[cat]) ? _config.routes[cat] : [];
+  _config.routes[cat] = list.filter(x => x !== id);
+  renderRoutes();
+}
+
 function togglePool(id, checked) {
   const i = _config.pool.indexOf(id);
   if (checked) {
@@ -95,20 +141,43 @@ async function loadAll() {
   ]);
   _live = (live && Array.isArray(live.models)) ? live.models : [];
   if (!live || live.error) toast('Live free-model list unavailable' + (live?.error ? ': ' + live.error : ''), true);
+  const routes = {};
+  if (cfg && cfg.routes && typeof cfg.routes === 'object') {
+    for (const cat of CATEGORIES) {
+      if (Array.isArray(cfg.routes[cat])) routes[cat] = cfg.routes[cat].slice(0, 3);
+    }
+  }
   _config = {
     pool: (cfg && Array.isArray(cfg.pool)) ? cfg.pool.slice(0, 3) : [],
     default: (cfg && typeof cfg.default === 'string') ? cfg.default : '',
+    routes,
+    long_context_threshold: (cfg && Number.isFinite(cfg.long_context_threshold)) ? cfg.long_context_threshold : 100000,
   };
+  $('lc-threshold').value = _config.long_context_threshold;
   renderModels();
+  renderRoutes();
 }
 
 async function saveFree(ev) {
+  // Drop empty routes so the stored config stays compact.
+  const routes = {};
+  for (const cat of CATEGORIES) {
+    if (Array.isArray(_config.routes[cat]) && _config.routes[cat].length) {
+      routes[cat] = _config.routes[cat];
+    }
+  }
+  const thr = parseInt($('lc-threshold').value, 10);
   await withBusy(ev?.currentTarget, async () => {
     try {
       const r = await fetch('/internal/admin/openrouter-free', {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ pool: _config.pool, default: _config.default }),
+        body: JSON.stringify({
+          pool: _config.pool,
+          default: _config.default,
+          routes,
+          long_context_threshold: (Number.isFinite(thr) && thr >= 1000) ? thr : 100000,
+        }),
       });
       if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || 'HTTP ' + r.status);
       await loadAll();  // re-sync to whatever the server normalized
@@ -139,6 +208,16 @@ async function initFree() {
     } else if (t.name === 'free-default') {
       _config.default = t.value || '';
     }
+  });
+  // Routes editor lives in a second panel: add-select changes + chip removals.
+  const ed = $('routes-editor');
+  ed.addEventListener('change', e => {
+    const sel = e.target.closest('select.route-add');
+    if (sel) { addToRoute(sel.dataset.cat, sel.value); }
+  });
+  ed.addEventListener('click', e => {
+    const x = e.target.closest('button.route-x');
+    if (x) { removeFromRoute(x.dataset.cat, x.dataset.id); }
   });
   refresh();
   pausableInterval(refresh, 60000);
