@@ -283,6 +283,7 @@ async function renderPluginsAndKeys(ov) {
     keysPanel.style.display = 'none';
   } else {
     keysPanel.style.display = '';
+    loadKeyProviders();  // fill the add-key provider dropdown (once)
     try {
       const keys = await fetch('/internal/admin/keys').then(r => r.json());
       if (_changed('keys', keys)) {
@@ -532,20 +533,43 @@ async function removeLimit(btn, user) {
   });
 }
 
+// Populate the provider <select> in the add-key form from providers.json.
+// Runs once (guarded) when the keys panel becomes visible in apikey mode.
+let _providersLoaded = false;
+async function loadKeyProviders() {
+  if (_providersLoaded) return;
+  const sel = $('add-provider');
+  if (!sel) return;
+  try {
+    const cfg = await fetch('/internal/admin/providers').then(r => r.json());
+    const provs = (cfg && cfg.providers) || [];
+    sel.innerHTML = provs
+      .map(p => `<option value="${esc(p.id)}">${esc(p.name || p.id)}</option>`)
+      .join('');
+    _providersLoaded = provs.length > 0;
+  } catch (e) { /* leave empty; addKey() guards on empty provider */ }
+}
+
 async function addKey(ev) {
   const user = $('add-user').value.trim();
   if (!user || !/^[a-zA-Z0-9_-]+$/.test(user)) return toast('Invalid username', true);
+  // addkey requires all three fields — {key, provider, upstream_key}. Sending
+  // only `key` (the old behaviour) always 400'd, so key creation was broken.
+  const provider = ($('add-provider').value || '').trim();
+  if (!provider) return toast('Pick a provider', true);
+  const upstreamKey = $('add-upstream-key').value.trim();
+  if (upstreamKey.length < 8) return toast('Upstream key too short (min 8 chars)', true);
   const key = 'sk-proxy-' + Array.from(crypto.getRandomValues(new Uint8Array(16))).map(b => b.toString(16).padStart(2,'0')).join('');
   await withBusy(ev?.currentTarget, async () => {
     try {
       const r = await fetch('/internal/admin/addkey?user=' + encodeURIComponent(user), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ key }),
+        body: JSON.stringify({ key, provider, upstream_key: upstreamKey }),
       });
       if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || 'HTTP ' + r.status);
-      toast('Key added for ' + user);
-      $('add-user').value = ''; refresh();
+      toast(`Key added for ${user} — ${key}`);
+      $('add-user').value = ''; $('add-upstream-key').value = ''; refresh();
     } catch (e) { toast('Failed: ' + e.message, true); }
   });
 }
