@@ -30,10 +30,14 @@ Without `ADMIN_TOKEN` the behaviour depends on `PROXY_MODE`:
   admin API both return `503 {"error":"Admin API disabled — set ADMIN_TOKEN in .env"}`.
   This is the default so that keys.json / limits.json cannot be mutated by
   anything reaching the admin network without operator intent.
-- **`PROXY_MODE=passthrough`** — fail-open. Login returns `{"ok":true,"auth":"none"}`
-  and the admin API accepts requests from allow-listed IPs without token.
-  There is no server-side secret to protect (passthrough forwards the
-  client's own upstream credential), so a missing token is intentional.
+- **`PROXY_MODE=passthrough`** — read-only without a token. Login returns
+  `{"ok":true,"auth":"none"}` and `GET` requests from allow-listed IPs are
+  served without a token (so the console dashboard works zero-config). Every
+  mutating method (`POST`/`PUT`/`DELETE`) is refused with
+  `403 {"error":"Admin mutations require ADMIN_TOKEN — set it in .env"}` —
+  there is no server-side secret to protect state mutation with, so it's
+  disabled rather than left open (also closes browser CSRF for mutations
+  and unauthenticated sibling-container lateral movement).
 
 Production: always set `ADMIN_TOKEN` (≥ 32 random hex bytes) regardless
 of mode.
@@ -68,6 +72,9 @@ for alerting on brute-force attempts.
 | `GET` | `/internal/admin/bootstrap` | Pending codes + active confirm sessions |
 | `GET` | `/internal/admin/agents` | Local-omlx-agent state: active, recent runs, routing, bench matrix, omlx_status |
 | `GET` | `/internal/admin/diagnostics?include=agents` | Agents-page diagnostics: omlx connectivity, file sizes, bench freshness, smart-skip log |
+| `GET` | `/internal/admin/services` | All compose services + their state (proxied through the `compose-ctl` sidecar). Includes services never started (`state: "not_created"`) |
+| `GET` | `/internal/admin/git-tracking` | Current per-repo git-tracking config; `{"default_author":"","interval":300,"repos":[]}` if no config file yet |
+| `GET` | `/internal/admin/agents/idle-config` | Per-model idle-unload TTL config (proxied through `compose-ctl`): `{models:{"<id>":{ttl_seconds,enabled}},default_ttl_seconds}` |
 
 ---
 
@@ -75,29 +82,13 @@ for alerting on brute-force attempts.
 
 ### Keys
 
-```http
-POST /internal/admin/addkey?user=<u>
-Content-Type: application/json
+| Method | Path | Body | Effect |
+|---|---|---|---|
+| `POST` | `/internal/admin/addkey?user=<u>` | `{key, provider, upstream_key}` | Add a proxy key. All three fields required (`key` and `upstream_key` length/format-checked, `provider` must match `^[a-z][a-z0-9_]+$`). `409` if the key already exists — pass `?force=1` to overwrite (response includes `overwrote: true`). Clears the `auth_cache` entry for the key. |
+| `POST` | `/internal/admin/revoke-key` | `{key}` | Evict the key's `auth_cache` entry (both cache directions) across all workers so revocation is immediate instead of waiting out the TTL. `400` if `key` is missing. Doesn't touch `keys.json` — remove the entry there separately. |
 
-{ "key": "sk-proxy-...", "provider": "<p>", "upstream_key": "<k>" }
-```
-
-All three JSON fields required. Writes the structured entry via atomic
-temp + rename, clears the auth cache for that key. Re-adding an existing
-key reports `overwrote: true`. See [keys.md](keys.md) for the schema.
-
-```http
-POST /internal/admin/revoke-key
-Content-Type: application/json
-
-{ "key": "sk-proxy-..." }
-```
-
-Deletes the key's `auth_cache` entry across all workers and returns
-`{ "ok": true }` (`400` if `key` is missing). `lua_shared_dict` survives
-`nginx -s reload`, so `admin.sh revoke`/`rotate` call this to make a
-revocation effective immediately instead of waiting out the cache TTL.
-This only evicts the cache — remove the key from `keys.json` separately.
+Writes go through atomic temp + rename. See [keys.md](keys.md) for the
+full `keys.json` schema.
 
 ### Blocking + limits
 
@@ -120,12 +111,32 @@ Limits persist to `data/limits.json` via the proxy (loaded at startup by
 The create response is the only place the HMAC secret is disclosed — it is
 not stored in a reversible form. See [bootstrap.md](bootstrap.md).
 
+### Services
+
+| Method | Path | Body | Effect |
+|---|---|---|---|
+| `POST` | `/internal/admin/services/<name>/<action>` | — | `<action>` is one of `start\|stop\|restart\|recreate`, forwarded to the `compose-ctl` sidecar. `400` for an unknown action or a service not in `docker compose config --services`. Restarting/recreating the proxy itself (`openresty`) is scheduled async and returns `202` immediately (the request would otherwise die mid-flight when the container restarts). `504` if the underlying `docker compose` call times out (30 s). |
+
+Requires `INTERNAL_TOKEN` to be set — without it, `compose-ctl` runs in a
+degraded mode that serves only `/health` and 503s every other path,
+including this one.
+
+### Git tracking
+
+| Method | Path | Body | Effect |
+|---|---|---|---|
+| `PUT` | `/internal/admin/git-tracking` | Full config: `{default_author?, interval?, platform_authors?, repos:[{path, author?, platform?, alias?}]}` | Replaces `data/git-tracking.json`. `repos[].path` must be absolute and must not contain `..`; `platform` (if set) must match `[a-z0-9_-]+`. `400` on invalid JSON, a path-traversal attempt, or a schema violation; `500` on write failure. Returns `{ok: true, repos: <count>}`. |
+
+Consumed by `scripts/git-tracking.sh` in the git-tracking sidecar and by
+the `/console/git` tab.
+
 ### Local agents (omlx)
 
 | Method | Path | Body | Effect |
 |--------|------|------|--------|
 | `POST` | `/internal/admin/models` | `{action:"load"\|"unload",model:"<id>"}` | Proxy to oMLX `/v1/models/<id>/(load\|unload)`. Model id validated against `^[A-Za-z0-9._-]+$` |
 | `POST` | `/internal/admin/agents/bench` | `{force?:bool}` | Spawn `scripts/agent-bench` via the `compose-ctl` sidecar. 202 on start, 409 if a bench is already in flight. `force=true` bypasses smart-skip |
+| `PUT`/`POST` | `/internal/admin/agents/idle-config` | `{models?:{"<id>":{ttl_seconds:0-86400, enabled?:bool}}, default_ttl_seconds?:0-86400}` | Replaces the per-model idle-unload TTL config used by `compose-ctl`'s idle watcher (unloads a loaded model after `ttl_seconds` without use). Always forwarded downstream as `POST` — `compose-ctl` only implements GET/POST. `400` on an out-of-range or wrong-typed value. |
 
 See [agents.md](agents.md) for the full feature description.
 
@@ -140,9 +151,11 @@ All errors use the same JSON envelope:
 ```
 
 HTTP codes in use: `400` (bad request body / params), `401` (auth), `403` (IP
-allow-list rejection, returned by nginx), `404` (unknown endpoint / unknown
-resource), `405` (wrong method), `500` (persist failure), `503` (`ADMIN_TOKEN`
-unset on login).
+allow-list rejection from nginx, or a mutating call in `passthrough` mode
+with no `ADMIN_TOKEN` set), `404` (unknown endpoint / unknown resource),
+`405` (wrong method), `409` (conflicting key / bench already running),
+`500` (persist failure), `503` (`ADMIN_TOKEN` unset on login/apikey mode),
+`504` (a proxied `compose-ctl` action timed out).
 
 ---
 

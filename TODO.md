@@ -53,6 +53,35 @@ Orchestrator: distribute to agents when prioritized.
   body. Boundary-only relevance, but log and replace with "upstream
   unavailable".
 
+## Deferred from the 2026-07 review
+
+- **Console "Revoke key" button**
+  The console lists keys (masked) and can add them, but has no revoke UI. Not a
+  one-line fix: `/internal/admin/revoke-key` only evicts the auth cache — it does
+  NOT remove the entry from `keys.json`, so the key re-validates on the next
+  request — and the key list is masked, so the browser never has the full key.
+  Needs a revoke-by-user endpoint that deletes from keys.json AND evicts the cache
+  (what `admin.sh revoke` does in two steps), then a per-row button.
+  Files: `admin_api.lua`, `html/console/static/overview.js`.
+
+- **OpenRouter free-tier budget gauge**
+  The unfunded OR account is capped at 20 req/min, 50 req/day. gateii now rejects
+  non-`:free` models (handler.lua), but the remaining budget is invisible —
+  `track_rl_window` only parses Anthropic's unified headers. Parse OpenRouter's
+  `X-RateLimit-Remaining/Limit/Reset` when `provider_name=="openrouter"` and emit
+  a `gateii_openrouter_free_remaining` gauge for the console/Grafana.
+  Files: `handler.lua`, `tracking.lua`, `metrics.lua`.
+
+- **Low-severity shell edge cases** (no current failure, left as-is)
+  - `git-tracking.sh`: two tracked repos with the same basename collide on the
+    staged symlink (second silently wins). Disambiguate + warn.
+  - `proxy-hint.sh`: PID-keyed hint-count file in /tmp is never pruned; PID reuse
+    can carry a stale ≥MAX counter into an unrelated session.
+  - `compose-ctl.py`: `list_services` comma-splits the flat Docker Labels string;
+    a label VALUE containing a comma (compose injects one for `config_files` with
+    an override) mis-parses. Harmless today (that key is never read); switch to
+    `docker inspect --format '{{json .Config.Labels}}'` if it ever matters.
+
 ## Plumbing
 
 - **`shortModel()` helper duplicated**
