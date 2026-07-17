@@ -4,6 +4,15 @@
 Minimal self-hosted Anthropic API proxy. 3 containers: OpenResty (nginx + LuaJIT), Prometheus, Grafana.
 No Redis, no external dependencies, no application framework.
 
+**Production runs on nutc** (since 2026-07-17): openresty-only under
+`~/docker/gateii` on the server, reachable at `http://100.64.0.2:8888`
+(Tailscale) — deploy with `scripts/deploy-nutc.sh` (rsyncs compose + config,
+force-recreates the proxy; server-owned `.env`/`data/` are never overwritten).
+Prometheus/Grafana are NOT deployed there (nutc convention: garage scrapes).
+The local Colima stack is dev-only now — start it for development, don't
+leave it running: two gateii instances = two drifting estimates of the
+account-wide OpenRouter free-tier budget.
+
 ## Domain contexts (for agent spawning)
 `.claude/domains/` contains per-domain context files — include the relevant file when spawning a
 domain-specific agent. Domains: `bench`, `grafana`, `console`, `lua-core`, `omlx`, `infra`.
@@ -118,6 +127,7 @@ company proxies) are left alone.
 | `scripts/git-tracking.sh` | Plugin script: reads `data/git-tracking.json` if present (per-repo author + platform), else falls back to filesystem scan. Auto-detects platform from `git remote -v` if not pinned |
 | `scripts/proxy-hint.sh` | The reminder itself — `UserPromptSubmit` hook body; warns ≤3×/session when `ANTHROPIC_BASE_URL` is not this gateii. Not wired up by default |
 | `scripts/proxy-hook.sh` | Opt-in installer (`gateii hook install/uninstall/status`) — registers/removes `proxy-hint.sh` in `~/.claude/settings.json` via jq (idempotent, atomic). Not global: you wire it in when setting gateii up |
+| `scripts/deploy-nutc.sh` | Production deploy: rsync compose+config to nutc `~/docker/gateii`, seed `.env` once, `up -d --force-recreate openresty` (proxy only), health-poll. `NUTC_SERVER_HOST=100.64.0.2` when off-LAN (Tailscale) |
 
 ## Architecture decisions
 
