@@ -28,6 +28,23 @@ Orchestrator: distribute to agents when prioritized.
 
 ## Architecture
 
+- **Move the :free ingress (and the daily worker-free sweep) to nutc**
+  Decided direction 2026-07-17: budget-metered always-on jobs belong on the
+  24/7 server, not a sleeping laptop — and ONE gateii instance counting the
+  account-wide OpenRouter budget beats two drifting estimates. Groundwork
+  exists: `~/servers/nutc/server.conf` already has `LOCAL_GATEII_DIR`, the
+  `claude-agent` deploy identity + sandbox-usable SSH are in place
+  (scalendarii pattern), and nutc's convention is openresty-only stacks
+  (Prometheus/Grafana live on garage → add a scrape job there instead of
+  shipping gateii's own). Work items: openresty-only compose variant +
+  secrets (`OPENROUTER_API_KEY`) on nutc; garage Prometheus scrape job +
+  dashboard row; claude CLI headless on Ubuntu incl. **verifying the Linux
+  sandbox (bubblewrap)** — the eval-escape lesson makes an unsandboxed
+  harness a hard no; futurenotsub clone + systemd timer running
+  `sweep-free.sh` with results committed+pushed by a bot identity. Until
+  then a durable Mac cron (09:37, 7-day auto-expiry) bridges the mini-matrix.
+  Needs an interactive session with server access — not a headless-worker task.
+
 - **Route `agent-bench` through gateii**
   Currently the wrapper goes via gateii (passthrough) but `agent-bench` posts
   directly to oMLX. Two paths exercise different auth + bench results don't
