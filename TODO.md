@@ -35,10 +35,12 @@ Orchestrator: distribute to agents when prioritized.
     Grafana dashboards to garage's Grafana (until then: no metric history,
     live gauges only).
   - nutc-side systemd timer for the futurenotsub sweep: claude CLI headless
-    on Ubuntu incl. **verifying the Linux sandbox (bubblewrap)** — the
-    eval-escape lesson makes an unsandboxed harness a hard no; futurenotsub
-    clone + results committed+pushed by a bot identity. Until then a durable
-    Mac cron (09:37, 7-day auto-expiry, GATEII_URL=nutc) bridges.
+    on Ubuntu. **Linux sandbox verified (2026-07-18):** srt 0.0.66 +
+    bubblewrap canary-green on nutc + garage (see futurenotsub PLAN.md for the
+    Ubuntu 24.04 dependency stack + the /tmp-tmpfs workdir fix in run.sh).
+    Still open: the systemd timer itself + futurenotsub clone with results
+    committed+pushed by a bot identity. Until then a durable Mac cron (09:37,
+    7-day auto-expiry, GATEII_URL=nutc) bridges.
   - both need an interactive session with server access — not
     headless-worker tasks.
 
