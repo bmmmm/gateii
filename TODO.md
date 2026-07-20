@@ -52,10 +52,20 @@ Orchestrator: distribute to agents when prioritized.
     container via the docker group (claude-agent can't read bmadmin's gateii
     `.env`). Scheduling is a **crontab**, not systemd (claude-agent has no
     sudo), UTC-pinned to 00:15 — just after the free-budget reset. The Mac
-    bridge is RETIRED (was producing only 503/api_error). Still gated on
-    explicit approval: arming the cron + an observed first run (needs a budget
-    reset) + the results commit/push-back step (bot identity TBD). The 50/day
-    free budget stays the real bottleneck regardless of venue.
+    bridge is RETIRED (was producing only 503/api_error).
+    **First real run (2026-07-20) validated the pipeline end-to-end** and
+    surfaced two Linux-only srt faults the 2026-07-18 "sandbox verified" never
+    caught — because that was only the canary (a workdir-write test), blind to
+    both: (1) srt 1.0.0 forces `TMPDIR=/tmp/claude` but leaves `/tmp` read-only
+    → claude EROFS, never starts (fixed in run.sh: pre-create + allowWrite
+    exactly `/tmp/claude`); (2) srt runs claude in its own network namespace, so
+    `127.0.0.1` is the sandbox's loopback, not the host's → gateii unreachable
+    (fixed in nutc-sweep.sh: reach gateii via the tailnet IP `100.64.0.2`, which
+    routes through srt's net proxy; gateii binds `0.0.0.0`). After both fixes
+    claude reaches gateii and gets its 503 budget response. Still gated: a real
+    result (budget reset 00:00 UTC), then arming the cron + results push-back
+    (bot identity TBD; clean nutc's test-run junk from results.jsonl first). The
+    50/day free budget stays the real bottleneck regardless of venue.
   - both need an interactive session with server access — not
     headless-worker tasks.
 
