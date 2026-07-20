@@ -44,9 +44,18 @@ Orchestrator: distribute to agents when prioritized.
     `~/.local/bin`, added only by the login shell (`.profile`); a
     non-interactive `ssh host cmd` does not see them. The timer must run a
     login shell or set `PATH=$HOME/.local/bin:$PATH` explicitly.
-    Still open: the systemd timer itself + futurenotsub clone with results
-    committed+pushed by a bot identity. Until then a durable Mac cron (09:37,
-    7-day auto-expiry, GATEII_URL=nutc) bridges.
+    **Deploy status (2026-07-20):** claude-code 2.1.215 installed on nutc
+    (pnpm-global; the native binary needs the manual `install.cjs` run since
+    pnpm blocks build scripts), futurenotsub git-cloned as claude-agent
+    (Forgejo token in `~/.git-credentials`), runner `scripts/nutc-sweep.sh`
+    committed — it fetches `OPENROUTER_API_KEY` at run time from the gateii
+    container via the docker group (claude-agent can't read bmadmin's gateii
+    `.env`). Scheduling is a **crontab**, not systemd (claude-agent has no
+    sudo), UTC-pinned to 00:15 — just after the free-budget reset. The Mac
+    bridge is RETIRED (was producing only 503/api_error). Still gated on
+    explicit approval: arming the cron + an observed first run (needs a budget
+    reset) + the results commit/push-back step (bot identity TBD). The 50/day
+    free budget stays the real bottleneck regardless of venue.
   - both need an interactive session with server access — not
     headless-worker tasks.
 
