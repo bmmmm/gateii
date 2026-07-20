@@ -35,9 +35,15 @@ Orchestrator: distribute to agents when prioritized.
     Grafana dashboards to garage's Grafana (until then: no metric history,
     live gauges only).
   - nutc-side systemd timer for the futurenotsub sweep: claude CLI headless
-    on Ubuntu. **Linux sandbox verified (2026-07-18):** srt 0.0.66 +
-    bubblewrap canary-green on nutc + garage (see futurenotsub PLAN.md for the
-    Ubuntu 24.04 dependency stack + the /tmp-tmpfs workdir fix in run.sh).
+    on Ubuntu. **Linux sandbox verified 2026-07-18, re-verified 2026-07-20:**
+    srt (now **1.0.0**, parity with the Mac — the 0.0.66→1.0.0 bump kept the
+    run.sh/sandbox.sh config schema, canary still green) + bubblewrap
+    canary-green on nutc + garage (see futurenotsub PLAN.md for the Ubuntu
+    24.04 dependency stack + the /tmp-tmpfs workdir fix in run.sh).
+    **PATH caveat for the timer:** srt/node live in `claude-agent`'s
+    `~/.local/bin`, added only by the login shell (`.profile`); a
+    non-interactive `ssh host cmd` does not see them. The timer must run a
+    login shell or set `PATH=$HOME/.local/bin:$PATH` explicitly.
     Still open: the systemd timer itself + futurenotsub clone with results
     committed+pushed by a bot identity. Until then a durable Mac cron (09:37,
     7-day auto-expiry, GATEII_URL=nutc) bridges.
