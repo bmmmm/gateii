@@ -4,11 +4,16 @@
 Minimal self-hosted Anthropic API proxy. 3 containers: OpenResty (nginx + LuaJIT), Prometheus, Grafana.
 No Redis, no external dependencies, no application framework.
 
-**Production runs on nutc** (since 2026-07-17): openresty-only under
-`~/docker/gateii` on the server, reachable at `http://100.64.0.2:8888`
-(Tailscale) — deploy with `scripts/deploy-nutc.sh` (rsyncs compose + config,
-force-recreates the proxy; server-owned `.env`/`data/` are never overwritten).
-Prometheus/Grafana are NOT deployed there (nutc convention: garage scrapes).
+**Production runs on nutc** (since 2026-07-17) under `~/docker/gateii` on the
+server, reachable at `http://100.64.0.2:8888` (Tailscale) — deploy with
+`scripts/deploy-nutc.sh` (rsyncs compose + config, force-recreates the proxy
+only; server-owned `.env`/`data/` are never overwritten).
+`deploy-nutc.sh` deploys the proxy only, but the full stack was brought up
+manually during the move: **prometheus + grafana also run on nutc right now**
+(verified 2026-07-22, Up 4 days) as a metric-history stopgap until garage's
+scrape job for `nutc:8888/metrics` lands (TODO). End-state is openresty-only +
+garage scrapes. (compose-ctl also came up but crash-loops — its source is never
+deployed to nutc; it should be removed, `docker rm -f gateii-compose-ctl`.)
 The local Colima stack is dev-only now — start it for development, don't
 leave it running: two gateii instances = two drifting estimates of the
 account-wide OpenRouter free-tier budget.
