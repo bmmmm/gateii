@@ -62,10 +62,15 @@ Orchestrator: distribute to agents when prioritized.
     `127.0.0.1` is the sandbox's loopback, not the host's → gateii unreachable
     (fixed in nutc-sweep.sh: reach gateii via the tailnet IP `100.64.0.2`, which
     routes through srt's net proxy; gateii binds `0.0.0.0`). After both fixes
-    claude reaches gateii and gets its 503 budget response. Still gated: a real
-    result (budget reset 00:00 UTC), then arming the cron + results push-back
-    (bot identity TBD; clean nutc's test-run junk from results.jsonl first). The
-    50/day free budget stays the real bottleneck regardless of venue.
+    claude reaches gateii and gets its 503 budget response. Run 0 is captured in the
+    futurenotsub run chronicle (`results/runs/index.html`).
+    **Push-back built + verified 2026-07-23** (`scripts/push-results.sh`, wired
+    into nutc-sweep.sh; data-only commits, `.gitattributes merge=union`; nutc git
+    identity `nutc-sweep`; push write-access dry-run-confirmed). The "test-run
+    junk" cleanup was moot — the budget-blocked bringups never wrote a line.
+    compose-ctl (crash-looping leftover of a manual full `compose up`) removed.
+    **Only gate left: arm the cron (00:15 UTC) for the first real budget-window
+    run.** The 50/day free budget stays the real bottleneck regardless of venue.
   - both need an interactive session with server access — not
     headless-worker tasks.
 
