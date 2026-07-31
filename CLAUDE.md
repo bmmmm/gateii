@@ -100,6 +100,11 @@ company proxies) are left alone.
 - `data/keys.json` must use the structured schema (`{user, provider, upstream_key}`); flat `{key: "user"}` format is rejected by `schema.validate_keys` on startup — proxy then runs with empty auth cache (all requests 401)
 - `nginx.conf` is a single-file bind mount → every Edit forces a `compose up -d --force-recreate openresty` to be visible in the container. Batch all changes for a feature into ONE Edit. Lua under `config/openresty/lua/` is dir-mounted → no recreate needed
 - Console routes: `/console` → 302 → `/console/`; subpages `/console/compare`, `/console/git`, `/console/agents`, `/console/free`; static assets at `/console/static/*` served with explicit MIME types (default `text/plain` trips strict-MIME on .css/.js)
+- `resolver 127.0.0.11 valid=30s ipv6=off;` in nginx.conf is required — Lua cosockets do NOT use the system resolver
+- `localhost` ≠ `127.0.0.1` on Alpine (IPv6 preferred) — always use `127.0.0.1` in health checks
+- lua-resty-http 0.16+ requires BOTH `http.lua` AND `http_connect.lua` in `resty/`
+- `ssl_verify=false` is intentional (Alpine has no CA bundle) — do not "fix" without adding ca-certificates to the image
+- openresty runs as uid 65534 (non-root, since `47a4f09`) — every tmpfs mount it writes to needs explicit `:mode=1777` (default tmpfs is 755/root). Missing mode on one of the six temp dirs manifests as: small POSTs/GETs fine, but a POST whose body spills to `client_body_temp` (over `client_body_buffer_size`) 500s — Claude Code sessions randomly break on large messages (vision, long history) while `/health`/`/metrics` stay green
 
 ## Key files
 
@@ -164,6 +169,23 @@ the caller decides the next model per *task*. On free-tier budget exhaustion the
 proxy returns a clean 503 + reset time rather than silently downgrading; the caller
 decides whether to escalate.
 
+## Sibling project (futurenotsub)
+
+`~/offline_coding/futurenotsub` ("future, not subscription", private Forgejo
+origin) and gateii share one goal: reduce dependence on paid frontier models, maximize
+free/local — be able to flip off the Claude Max subscription within a day.
+
+- **futurenotsub = measurement + tier-routing brain.** Eval suite (real task
+  fixtures, N=3, pass/fail) scores which model tier solves which task class;
+  its `routing.json` owns the tier-alias contract (`worker-local/-small/-mid/-big`)
+  + per-class ladders. It names gateii as an eventual consumer of those alias
+  names.
+- **gateii = per-request router** (see Routing boundary above) — the free-tier
+  capability router (`openrouter_free.lua` + handler `routes{}`).
+- **Candidate integration:** OpenRouter `:free` as a measured `worker-free` tier;
+  futurenotsub's matrix could data-drive gateii's `routes{}` via
+  `FNS_BASE_URL`→gateii→openrouter. Not started.
+
 ## Providers
 
 Each provider in `config/openresty/lua/providers/` must export:
@@ -182,6 +204,21 @@ curl http://localhost:8888/health
 curl http://localhost:8888/metrics | grep gateii_
 bash scripts/smoke-test.sh
 ```
+
+**Local CI-parity (luacheck + busted) via throwaway containers**
+(`bash scripts/docker-colima.sh run ...`):
+- **luacheck**: `pipelinecomponents/luacheck` image, `luacheck config/openresty/lua/`.
+  Vendored `resty/` is excluded via `.luacheckrc`; expect 0/0.
+- **busted**: use **Alpine + apk**, NOT apt/ubuntu — in the colima network,
+  `apt-get` fails to fetch `.deb` pool packages, and luarocks-compiling cjson
+  needs build-base. Alpine is reliable: `alpine:3.20` →
+  `apk add lua5.1 lua5.1-cjson lua5.1-busted lua5.1-bitop` → `busted-5.1 spec/`
+  (binaries are versioned — `busted-5.1`, not `busted`).
+- `bootstrap.lua` requires the `bit` module. LuaJIT (production) has it built
+  in; CI's PUC lua5.1 does NOT — without `lua5.1-bitop`, `bootstrap_spec`
+  errors on load. Keep it installed in `ci.yml`.
+- Full suite: 73 `busted` tests + `spec/admin_sh_test.sh` (29-test bash suite,
+  run separately), both wired into CI.
 
 ## Admin-API quick-access (`scripts/gctl.sh`)
 

@@ -5,6 +5,27 @@ Orchestrator: distribute to agents when prioritized.
 
 ---
 
+## Active blockers
+
+- **OpenRouter `:free` tier account-wide blocked (since 2026-07-31)**
+  All tested `:free` models return HTTP 404 "No endpoints available matching
+  your guardrail restrictions and data policy" via gateii's OpenRouter
+  passthrough — including `cohere/north-mini-code:free`, which worked (HTTP
+  200) on 2026-07-20. Tested 0/4 reachable: cohere/north-mini-code:free,
+  google/gemma-4-31b-it:free, openai/gpt-oss-20b:free,
+  nvidia/nemotron-3-super-120b-a12b:free.
+  **Cause:** OpenRouter gates free-tier access behind a training-data opt-in
+  at `openrouter.ai/settings/privacy`. Earlier assumption (only nemotron/
+  poolside families needed it) is now wrong — the requirement appears
+  extended account-wide, blocking the whole `:free` tier regardless of model.
+  **Effect:** the entire free-model fallback path (`openrouter_free.lua`,
+  `data/openrouter-free.json`, futurenotsub's candidate `worker-free` tier)
+  is non-functional until the opt-in is enabled — verify with a live call,
+  not the old per-model list. Budget gauges (`gateii_openrouter_free_*`)
+  still report `exhausted=0`/`remaining=N` correctly since this is a
+  routing-level 404, not a rate-limit — the metrics don't surface the
+  failure mode, so don't trust them alone to confirm free-tier health.
+
 ## Performance / Scaling
 
 - **Prefix-based iteration in hot paths**
@@ -80,6 +101,28 @@ Orchestrator: distribute to agents when prioritized.
   appear in gateii's per-user metrics. Single ingress would simplify.
 
 - ~~Single source of truth for task definitions~~ ✅ Done — `config/agents/tasks.json`
+
+## Competitive landscape (not urgent)
+
+- **Benchmark proxy core against LiteLLM**
+  gateii is the youngest of the three self-hosted-proxy candidates compared
+  2026-07-31: LiteLLM (BerriAI/litellm, created 2023-07-27, 55k★, Python/Rust,
+  cost tracking + virtual keys + budgets + 100+ providers) is ~2 years more
+  mature than gateii (first commit 2026-04-04) and was mistakenly assumed to
+  be a later/smaller entrant. router-for-me/CLIProxyAPI (created 2025-07-01,
+  45k★, Go) solves a different problem (OAuth/subscription-account wrapping +
+  protocol translation, not cost/budget governance) and isn't the right
+  comparison target for this.
+  Plan: check whether gateii's proxy core (cost tracking, rate limits,
+  provider routing) can hold up against LiteLLM feature-for-feature. If
+  LiteLLM's lead is real (it is — not hype, genuine 3-year maturity) and not
+  worth re-competing with, consider porting gateii's bespoke pieces (omlx
+  local-model routing via `scripts/agent`, git-tracking sidecar, claudii
+  statusline integration, agents console) onto LiteLLM as an extension/plugin
+  instead of maintaining the standalone Lua/nginx stack. Those pieces aren't
+  LLM-gateway problems LiteLLM would ever solve itself — they're this
+  project's own workflow layer, so switching the proxy core wouldn't remove
+  that work, only change what it sits on top of.
 
 ## Defense in depth
 
