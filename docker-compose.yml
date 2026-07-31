@@ -176,7 +176,13 @@ services:
       # Writable layer for agent-bench: it writes to data/agents/. Mounted
       # AFTER the read-only :ro mount so this overrides for that subdir only.
       - ./data/agents:/workspace/data/agents:rw
-      - ./scripts/compose-ctl.py:/app/compose-ctl.py:ro
+      # No single-file mount for compose-ctl.py — the entrypoint reads it out of
+      # /workspace above. It used to be bind-mounted to /app/compose-ctl.py, the
+      # exact pattern the comment three lines up warns about, and that bit on a
+      # real deployment: the file had not been shipped, docker created an empty
+      # DIRECTORY in its place, and the container restarted for two weeks
+      # reporting "can't find '__main__' module". Recovery needed root, because
+      # a directory docker creates that way belongs to root.
     working_dir: /workspace
     environment:
       - COMPOSE_PROJECT_NAME=${COMPOSE_PROJECT_NAME:-gateii}
@@ -202,7 +208,11 @@ services:
       - -c
       - |
         apk add --no-cache docker-cli docker-cli-compose >/dev/null 2>&1
-        exec python3 /app/compose-ctl.py
+        test -f /workspace/scripts/compose-ctl.py || {
+          echo "compose-ctl: /workspace/scripts/compose-ctl.py is missing — the file was never shipped to this host" >&2
+          exit 1
+        }
+        exec python3 /workspace/scripts/compose-ctl.py
     healthcheck:
       test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8090/health',timeout=2)"]
       interval: 15s
