@@ -80,6 +80,8 @@ Full walkthrough: [Getting started](docs/getting-started.md).
 | [Local agents (omlx)](docs/agents.md) | Route simple tasks (commits, summaries, …) to a local Apple-Silicon LLM |
 | [Providers](docs/providers.md) | Adding a new upstream provider |
 | [Architecture](docs/architecture.md) | Three containers, shared dicts, why no Redis |
+| [Key files](docs/key-files.md) | Component map — which module does what |
+| [Testing](docs/testing.md) | Suite layout, running the tests, CI parity |
 | [Security](docs/security.md) | Admin API hardening, secrets hygiene, network exposure |
 | [keys.json schema](docs/keys.md) | Structured key storage (`apikey` mode) |
 | [Bootstrap handshake](docs/bootstrap.md) | Self-provisioning keys over HMAC |

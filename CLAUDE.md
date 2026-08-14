@@ -7,9 +7,9 @@ No Redis, no external deps, no application framework.
 **Production runs on nutc** (since 2026-07-17) under `~/docker/gateii`, at
 `http://100.64.0.2:8888` (Tailscale). Deploy with `scripts/deploy-nutc.sh`
 (rsyncs compose + config, force-recreates the proxy only; server-owned
-`.env`/`data/` are never overwritten). It deploys the proxy only, but the stack
-came up manually during the move: **prometheus + grafana also run on nutc right
-now** (verified 2026-07-22), a metric-history stopgap until garage's scrape job
+`.env`/`data/` are never overwritten). The stack came up manually during the
+move, so **prometheus + grafana also run on nutc**
+(verified 2026-07-22), a metric-history stopgap until garage's scrape job
 for `nutc:8888/metrics` lands (TODO). End-state: openresty-only + garage
 scrapes. (compose-ctl came up too but crash-loops; its source is never deployed
 to nutc — remove it: `docker rm -f gateii-compose-ctl`.)
