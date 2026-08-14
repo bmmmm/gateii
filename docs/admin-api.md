@@ -42,6 +42,24 @@ Without `ADMIN_TOKEN` the behaviour depends on `PROXY_MODE`:
 Production: always set `ADMIN_TOKEN` (≥ 32 random hex bytes) regardless
 of mode.
 
+## Quick access — `scripts/gctl.sh`
+
+Helper that reads `ADMIN_TOKEN` from `.env`, logs in once, caches the session
+cookie under `/tmp/gctl-session-$UID` (mode 600, 55-min TTL), and proxies
+subsequent calls. Saves spelling out `curl` + login + cookie every time.
+
+```bash
+bash scripts/gctl.sh get  '/internal/admin/diagnostics?include=plugins'
+bash scripts/gctl.sh post /internal/admin/services/git-tracking/restart
+bash scripts/gctl.sh put  /internal/admin/git-tracking '{"interval":300,"repos":[]}'
+bash scripts/gctl.sh raw  /metrics                            # no auth, no /internal prefix
+```
+
+It is allow-listed in `.claude/settings.local.json` so it runs without a
+permission prompt. Pair Bash calls with `dangerouslyDisableSandbox: true` —
+the curl hits localhost, and the sandbox rule is unaffected by the allow-list
+(see the `feedback_smoke_test_sandbox_bypass.md` project memory).
+
 ---
 
 ## Session endpoints

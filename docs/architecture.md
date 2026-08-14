@@ -74,6 +74,9 @@ Claude Code (streaming response)
 | `config/openresty/lua/schema.lua` | Startup validation for `keys.json` and `limits.json` |
 | `config/openresty/lua/circuit_breaker.lua` | Per-upstream breaker for repeated failures |
 
+Full component map including scripts, console assets, and the free-tier and
+oMLX modules: [key-files.md](key-files.md).
+
 ## Design decisions
 
 ### `ngx.ctx` for request-scoped auth state
@@ -122,6 +125,78 @@ replaces `:|` with `_`.
 N failures, opens the breaker for a cooldown period — requests to that
 upstream fail fast with 503 instead of waiting for timeout. Closes
 automatically on cooldown expiry.
+
+### `providers.json` is the pricing source of truth
+
+`metrics.lua` reads it at export time and logs a WARN if the file is
+missing — cost metrics silently reading zeroes would be worse than a noisy
+log line. Details: [monitoring.md](monitoring.md#how-cost-is-calculated).
+
+### OpenRouter comparison list is fetched, not pinned
+
+The console fetches the top-10 weekly programming models from OpenRouter and
+caches them for 12 h in the `counters` dict. `comparison_models` in
+`providers.json` is the static fallback when the fetch fails.
+
+### Per-key upstream routing beats the `x-provider` header
+
+Each `keys.json` entry pins its own `provider` + `upstream_key`; the
+`x-provider` request header is only a fallback/override, never the primary
+routing signal. See [keys.md](keys.md#per-key-upstream-routing).
+
+### Rate-limit state is persisted, counters are not
+
+`rl_persist.lua` flushes rate-limit gauges to `data/ratelimit_state.json`
+every 30 s and reloads them on worker-0 startup, so a container restart
+doesn't hand every blocked user a fresh budget. Plain request/token counters
+deliberately stay volatile — Prometheus is their store.
+
+### openresty runs unprivileged (uid 65534)
+
+Since `47a4f09` the proxy drops to uid 65534 (nobody). Consequence: every tmpfs
+mount it writes to needs an explicit `:mode=1777` in the compose file — the
+default tmpfs mode is 755/root, which the unprivileged worker cannot write.
+
+There are six temp dirs, and missing the mode on one of them fails in a way
+that looks like anything but a permissions bug: small POSTs and GETs work
+fine, `/health` and `/metrics` stay green, but a POST whose body spills to
+`client_body_temp` (i.e. exceeds `client_body_buffer_size`) returns 500. In
+practice that reads as "Claude Code sessions randomly break on large messages"
+— vision payloads, long histories — while every health check says the proxy is
+fine.
+
+### Service control lives in a sidecar, not the proxy
+
+`gateii-compose-ctl` holds the docker socket; the proxy reverse-proxies
+`/internal/admin/services/*` to it under `ADMIN_TOKEN`. The sidecar is
+whitelisted to services in the gateii compose project and actions are limited
+to start/stop/restart/recreate. Self-restart of openresty is async with a
+delay so the request can return first.
+
+### Per-repo git tracking carries a `platform` label
+
+`data/git-tracking.json` (managed via `/console/git`) drives the git-tracking
+sidecar. Each repo can pin its `platform` (forgejo/github/gitlab/…), which is
+auto-detected from `git remote get-url origin` when not pinned. The metric
+label `platform=` lets dashboards group across hosts. See
+[plugins.md](plugins.md#git-tracking).
+
+## Routing boundary (proxy vs. orchestration)
+
+gateii routes per *request*, by capability — the OpenRouter free-tier router
+(`openrouter_free.lua` + handler `routes{}`) sends a vision request to a
+vision model and a large-context request to a big-context model.
+
+It deliberately does **not** do quality/cost escalation (cheap→expensive model
+swaps). A proxy cannot judge output quality, and swapping models mid-multi-turn
+is semantic chaos. Escalation belongs one layer up, in whatever orchestration
+drives gateii — the caller decides the next model per *task*. On free-tier
+budget exhaustion the proxy returns a clean 503 + reset time rather than
+silently downgrading; the caller decides whether to escalate.
+
+This boundary is cited from `handler.lua` and `openrouter_free.lua` as
+"CLAUDE.md § Routing boundary"; `CLAUDE.md` keeps the rule, this section keeps
+the rationale.
 
 ## Admin surface
 

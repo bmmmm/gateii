@@ -77,16 +77,52 @@ scripts/agent count-tokens            # POST /v1/messages/count_tokens (no LLM c
 | `error-explain` | Stack trace / error message → one-sentence cause |
 | `keywords` | Text → JSON array of top 5 keywords |
 
-Lock is mkdir-based (`data/agents/lock.d`), max one concurrent agent.
+Each task pins its own system prompt and `max_tokens` cap. Lock is mkdir-based
+(`data/agents/lock.d`), max one concurrent agent.
+
+### Feedback loop
+
+Run immediately after each call — this is what keeps the bench honest about
+which tasks the local models actually carry:
+
+```bash
+scripts/agent feedback <task> used                # output used as-is
+scripts/agent feedback <task> improved format     # minor formatting fix
+scripts/agent feedback <task> improved content    # minor content fix
+scripts/agent feedback <task> replaced format     # discarded: wrong format
+scripts/agent feedback <task> replaced content    # discarded: wrong content
+scripts/agent feedback <task> replaced capability # discarded: model can't do this
+scripts/agent feedback <task> replaced length     # discarded: too long/short
+```
+
+### When not to delegate
+
+Keep on Claude: multi-step reasoning, math, architecture decisions, code over
+250 tokens of output, anything needing tools (Read/Edit/Bash), and
+format-critical output. If `scripts/agent` exits non-zero or the output is
+clearly bad — too long, wrong format, empty, or an `AMBIGUOUS:` prefix —
+generate it yourself, silently. `CLAUDE.md § oMLX Routing — Claude-Side Guide`
+states this as the session-level rule.
 
 ## Bench-driven model picker
 
 ```bash
-scripts/agent-bench               # default: smart re-run, skips models with cached results
+scripts/agent-bench               # `--smart` is the default: skips models with cached results
+                                  #   full suite on Qwen3.5-9B + small models,
+                                  #   comparison-only on big models,
+                                  #   + claude-haiku reference if the claude CLI is on PATH
 scripts/agent-bench --force       # re-bench every cell from scratch (slow)
-scripts/agent-bench --quick       # 1 trial, default model only
+scripts/agent-bench --quick       # 1 trial, default model only (no reference)
 scripts/agent-bench --task TASK   # bench only this task across all models
+scripts/agent-bench --no-reference                                # skip Haiku even if the claude CLI is available
+scripts/agent-bench --reference-model claude-haiku-4-5-20251001   # override the reference model
 ```
+
+**Reference model.** Haiku appears in the bench matrix for quality comparison
+but is never written into `routing.json` — it is excluded from local routing
+decisions. It runs via `claude --print` on the existing Claude Code auth, so no
+separate API key is needed. Smart-skip applies here too: the reference re-runs
+only once per day, or with `--force`.
 
 Outputs to `data/agents/`:
 - `bench-results.json` — per-trial raw data with `model_created` map for smart-skip
@@ -145,8 +181,8 @@ the agent wrapper goes through gateii so its calls are labeled
 
 The data file `data/agents/active.json` is the source of truth for "what's
 running right now". Display logic lives in
-[claudii](https://github.com/bmmmm/claudii) — run `claudii omlx connect`
-once to wire it up. While an agent runs, the cc-statusline shows
+[claudii](https://github.com/bmmmm/claudii) (`~/offline_coding/claudii`) — run
+`claudii omlx connect` once to wire it up. While an agent runs, the cc-statusline shows
 `⚡ <task> <model-short> <Xs>`. Updates at Claude Code turn boundaries
 (real-time view → Console).
 
@@ -162,7 +198,7 @@ All under `/internal/admin/` — same auth (session cookie or
 |--------|------|------|
 | `GET`  | `/internal/admin/agents` | `{active, recent, routing, bench, usage, omlx_status}` for the Console |
 | `POST` | `/internal/admin/agents/bench` | Body `{force:bool}` — fires `scripts/agent-bench` via compose-ctl. 202 on start, 409 if already running |
-| `POST` | `/internal/admin/models` | Body `{action:"load"\|"unload", model:"<id>"}` — proxies to oMLX. Model id validated against `[A-Za-z0-9._-]+` |
+| `POST` | `/internal/admin/models` | Body `{action:"load|unload",model:"<id>"}` — proxies to oMLX `/v1/models/<id>/(load|unload)`. Model id validated against `[A-Za-z0-9._-]+` |
 | `GET`  | `/internal/admin/diagnostics?include=agents` | omlx connectivity, file sizes, bench freshness, smart-skip log |
 
 ## Files

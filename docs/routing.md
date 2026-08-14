@@ -90,6 +90,26 @@ gateii rescue --no-restart
 # or directly: scripts/rescue.sh --no-restart
 ```
 
+### What the project sweep does
+
+`scripts/rescue.sh` fixes the global `~/.claude/settings.json` and then sweeps
+per-project settings files:
+
+```bash
+./scripts/rescue.sh              # global + project sweep + restart
+./scripts/rescue.sh --no-restart # global + project sweep only (if Docker is down too)
+./scripts/rescue.sh --no-sweep   # global + restart only (skip project sweep)
+```
+
+The sweep walks `$GATEII_PROJECT_ROOTS` (`:`-separated, PATH-style — so roots
+may contain spaces) plus any of `~/offline_coding ~/coding ~/projects ~/dev
+~/src` that exist, at `maxdepth 4`. The defaults are always appended, never
+replaced.
+
+It only resets `ANTHROPIC_BASE_URL` keys whose host is `localhost` /
+`127.0.0.1`, or that match the normalized `$REMOTE_URL` from `.env`.
+Non-gateii overrides — a company proxy, say — are left alone.
+
 ## Operational rules
 
 - **Always `switch direct` before stopping the stack.** Otherwise Claude
